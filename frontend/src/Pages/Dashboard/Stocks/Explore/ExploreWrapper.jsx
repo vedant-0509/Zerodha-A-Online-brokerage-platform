@@ -4,7 +4,7 @@ import ExploreSection1 from "./ExploreSection1.jsx";
 import ExploreSection2 from "./ExploreSection2.jsx";
 import ExploreSection3 from "./ExploreSection3.jsx";
 import ExploreSection5 from "./ExploreSection5.jsx";
-import TransactionHistory from "./TransactionHistory.jsx";
+
 
 
 export default function ExploreWrapper() {
@@ -23,7 +23,6 @@ export default function ExploreWrapper() {
                 </div>
 
                 <ExploreSection3 />
-                <TransactionHistory />
             </div>
         </>
     );
