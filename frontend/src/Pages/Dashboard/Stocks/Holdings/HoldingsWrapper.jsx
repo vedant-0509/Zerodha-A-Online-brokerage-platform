@@ -9,7 +9,7 @@ import HoldingsSection1 from "./HoldingsSection1.jsx";
 export default function HoldingsWrapper() {
     return (
         <>
-            <div className="home">
+            <div className="home" style={{paddingTop:"1.5rem"}}>
                 <HoldingsSection1 />
                 {/* <HoldingsSection2 /> */}
             </div>

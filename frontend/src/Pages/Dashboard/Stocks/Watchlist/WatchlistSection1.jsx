@@ -79,22 +79,22 @@ export default function WatchlistDashboard() {
                     <thead>
                         <tr>
                             <th className="sortable text-left" style={{ width: "20%" }}>
-                                <p style={{ margin: "0", marginLeft: "1.25rem" }}>Company ({stocks.length})</p>
+                                <p style={{ margin: "0", marginLeft: "1.25rem",color:"#777" }}>Company ({stocks.length})</p>
                             </th>
                             <th className="sortable" style={{ width: "10%" }}>
-                                <p style={{ margin: "0", textAlign: "center" }}>Trend</p>
+                                <p style={{ margin: "0", textAlign: "center", color:"#777" }}>Trend</p>
                             </th>
                             <th className="sortable" style={{ width: "10%" }}>
-                                <p style={{ margin: "0", textAlign: "center" }}>Mkt Price<span className="sort-icon">⇅</span></p>
+                                <p style={{ margin: "0", textAlign: "center", color:"#777" }}>Mkt Price<span className="sort-icon">⇅</span></p>
                             </th>
                             <th className="sortable" style={{ width: "10%" }}>
-                                <p style={{ margin: "0", textAlign: "center" }}>1D Change<span className="sort-icon">⇅</span></p>
+                                <p style={{ margin: "0", textAlign: "center", color:"#777" }}>1D Change<span className="sort-icon">⇅</span></p>
                             </th>
-                            <th className="sortable" style={{ width: "10%" }}>
+                            <th className="sortable" style={{ width: "10%", color:"#777" }}>
                                 <p style={{ margin: "0", textAlign: "center" }}>1D Volume<span className="sort-icon">⇅</span></p>
                             </th>
                             <th className="text-right sortable" style={{ width: "10%" }}>
-                                <p style={{ margin: "0", textAlign: "center" }}>52W PERF</p>
+                                <p style={{ margin: "0", textAlign: "center", color:"#777" }}>52W PERF</p>
                             </th>
                         </tr>
                     </thead>

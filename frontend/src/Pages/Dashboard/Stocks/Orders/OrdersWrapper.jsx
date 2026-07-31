@@ -9,7 +9,7 @@ import OrdersSection1 from "./OrdersSection1.jsx";
 export default function OrdersWrapper() {
     return (
         <>
-            <div className="home">
+            <div className="home" style={{paddingTop:"1.5rem"}}>
                 <OrdersSection1 />
                 {/* <OrdersSection2 /> */}
             </div>

@@ -15,14 +15,9 @@ export default function Stocks() {
             <Routes>
                 <Route index element={<Explore />} />
                 <Route path="explore" element={<Explore />} />
-
                 <Route path="holdings" element={<Holdings />} />
                 <Route path="orders" element={<Orders />} />
-                <Route path="watchlist" element={<Watchlist />} /> 
-
-                {/* // <Route path="positions" element={<Temp />} />
-                // <Route path="orders" element={<Temp />} />*/}
-                
+                <Route path="watchlist" element={<Watchlist />} />
             </Routes>
         </>
     );

@@ -10,14 +10,14 @@ import ExploreSection5 from "./ExploreSection5.jsx";
 export default function ExploreWrapper() {
     return (
         <>
-            <div className="home" style={{ paddingTop: "0" }}>
-                <div style={{ display: "grid", gridTemplateColumns:"auto 1fr", gap:"2.5rem", alignItems:"start", marginTop:"1.5rem"}}>
+            <div className="home" style={{ paddingTop: "1.5rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns:"auto 1fr", gap:"2.5rem", alignItems:"start"}}>
                     <div className="left-panel">
                         <ExploreSection1 />
                         <ExploreSection2 />
                     </div>
 
-                    <div className="right-panel" style={{width:"auto", position:"sticky", top:"120px"}}>
+                    <div className="right-panel" style={{width:"auto", position:"sticky", top:"145px"}}>
                         <ExploreSection5 />
                     </div>
                 </div>

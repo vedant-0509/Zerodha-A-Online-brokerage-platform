@@ -44,14 +44,14 @@ export default function SearchModal({ open, onClose }) {
                 <div className="search-results">
                     {results.map((stock) => (
                         <div key={stock.instrument_key} className="result" onClick={() => { onClose() }}>
-                            <div className="">
+                            <div>
                                 <div style={{ height: "2.5rem", width: "2.5rem", border: "2px solid balck", borderRadius: "50%", backgroundColor: "#f7f7f7", alignItems: "center", justifyContent: "center", marginLeft: ".5rem" }}>
                                     <div style={{ fontSize: ".9rem", color: "#4f4f4f" }}>
                                         <i class="fa-solid fa-arrow-trend-up"></i>
                                     </div>
                                 </div>
 
-                                <div style={{ display: "flex", flexDirection: "column", marginLeft: "1.5rem" }}>
+                                <div style={{ display: "flex", flexDirection: "column", marginLeft: "1.5rem", alignItems:"baseline"}}>
                                     <div className="name">{stock.name}</div>
                                     <div className="symbol">Stock | {stock.symbol.split(".")[0]}</div>
                                 </div>

@@ -565,29 +565,9 @@ code {
   align-items: center;
 }
 
-.StocksSection1-div a {
-  cursor: pointer;
-  font-size: 1.5rem;
-  font-weight: 500;
-}
-
-.StocksSection1-div a {
-  color: #424242;
-}
-
-.StocksSection1-div a:hover {
-  border-bottom: 2.5px solid black;
-  line-height: 1.7;
-  color: #387ed1;
-  border-color: #387ed1;
-  scale: 1;
-  translateY: -5px;
-}
-
-.StocksSection1-div a:hover {
+.navlink:hover {
   color: #387ed1;
 }
-
 
 .btnhov button:hover {
   background-color: white;
@@ -1011,7 +991,7 @@ code {
   height: 36.5rem;
   background: white;
   border-radius: 18px;
-  /* overflow: hidden; */
+  overflow: clip;
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 50px rgba(0, 0, 0, .15);
@@ -1038,6 +1018,7 @@ code {
   outline: none;
   width: 100%;
   font-size: 1rem;
+  background-color: #f9fafb;
 }
 
 .search-results {
@@ -1124,7 +1105,6 @@ code {
 
 .history-page {
   background: #fff;
-  margin-top: -2rem;
 }
 
 .history-title {
@@ -1585,4 +1565,23 @@ code {
 
 .label-high {
   right: -1rem;
+}
+
+.StocksSection1-div .navlink {
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: #424242;
+  padding-bottom: 5px;
+}
+
+.StocksSection1-div .navlink:hover {
+  color: #387ed1;
+  border-bottom: 2.5px solid #387ed1;
+}
+
+.StocksSection1-div .active-link {
+  color: #387ed1;
+  border-bottom: 2.5px solid #387ed1;
 }

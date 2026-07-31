@@ -9,7 +9,7 @@ import WatchlistSection1 from "./WatchlistSection1.jsx";
 export default function WatchlistWrapper() {
     return (
         <>
-            <div className="home">
+            <div className="home" style={{paddingTop:"1.5rem"}}>
                 <WatchlistSection1 />
                 {/* <WatchlistSection2 /> */}
             </div>

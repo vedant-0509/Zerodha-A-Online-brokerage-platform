@@ -60,7 +60,7 @@ export default function ExploreSection5() {
 
     return (
         <div style={{ display: "sticky", top: "0", left: "75%", zIndex: "-1" }}>
-            <h2 style={{ fontSize: "1.4rem", fontWeight: "500", lineHeight: "1.5", color: "#424242", marginBottom: "1.2rem", }}            >
+            <h2 style={{ fontSize: "1.4rem", fontWeight: "500", lineHeight: "1.5", color: "#424242", marginBottom: "1.2rem", marginTop:"0"}}            >
                 Your's Investments
             </h2>
 

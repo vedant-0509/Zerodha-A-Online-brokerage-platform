@@ -35,7 +35,7 @@ export default function ExploreSection1() {
     return (
         <>
             <div style={{ display: "flex", flexDirection: "column", width: "53.49rem" }}>
-                <h2 style={{ margin: "0", marginBottom: "1.2rem", fontSize: "1.4rem", fontWeight: "500" }}>Top movers today</h2>
+                <h2 style={{ margin: "0", marginBottom: "1.2rem", fontSize: "1.4rem", fontWeight: "500", marginTop:"0rem"}}>Top movers today</h2>
 
                 <div className="btnhov" style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
 
