@@ -1522,12 +1522,6 @@ code {
   color: #ea580c;
 }
 
-
-/* Performance Indicator Bar */
-.perf-cell {
-  padding-right: 1.5rem !important;
-}
-
 .range-bar-container {
   display: flex;
   justify-content: center;
