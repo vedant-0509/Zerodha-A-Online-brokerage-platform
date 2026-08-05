@@ -2,6 +2,8 @@ const cors = require("cors");
 const express = require("express");
 const app = express();
 
+const { isMarketOpen } = require("../indexMarket/isMarketOpen");
+
 app.use(cors());
 
 const port = 3006;
