@@ -8,10 +8,11 @@ import Pricing from './Pages/Pricing/Pricing.js';
 import Product from './Pages/Product/Product.js';
 import Support from './Pages/Support/Support.js';
 import Dashboard from './Pages/Dashboard/Dashboard.js';
+import Signup from './Pages/Signup/Signup.js';
 
 import {BrowserRouter, Routes, Route} from 'react-router-dom';
 
-import Signup from './Boiler/Signup';
+// import Signup from './Boiler/Signup';
 import Navbar from './Boiler/Navbar';
 import Footer from './Boiler/Footer';
 
@@ -28,6 +29,7 @@ root.render(
       <Route path="/product" element={<Product />} />
       <Route path="/support" element={<Support />} />
       <Route path="/dashboard/*" element={<Dashboard />} />
+      <Route path="/signup" element={<Signup />} />
     </Routes>
     <Footer />
   </BrowserRouter>

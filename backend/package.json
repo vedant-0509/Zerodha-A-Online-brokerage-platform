@@ -1,12 +1,15 @@
 {
   "dependencies": {
-    "axios": "^1.18.1",
+    "axios": "^1.19.0",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "mysql": "^2.18.1",
-    "mysql2": "^3.22.6",
+    "mysql2": "^3.23.2",
     "node-cron": "^4.6.0",
+    "nodemon": "^3.1.14",
     "redis": "^3.1.2",
     "socket.io": "^4.8.3",
     "upstox-js-sdk": "^2.29.0",
