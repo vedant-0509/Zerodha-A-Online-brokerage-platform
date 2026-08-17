@@ -11,7 +11,7 @@ export default function ExploreWrapper() {
     return (
         <>
             <div className="home" style={{ paddingTop: "1.5rem" }}>
-                <div style={{ display: "grid", gridTemplateColumns:"auto 1fr", gap:"2.5rem", alignItems:"start"}}>
+                <div style={{ display: "grid", gridTemplateColumns:"auto 1fr", gap:"2rem", alignItems:"start"}}>
                     <div className="left-panel">
                         <ExploreSection1 />
                         <ExploreSection2 />

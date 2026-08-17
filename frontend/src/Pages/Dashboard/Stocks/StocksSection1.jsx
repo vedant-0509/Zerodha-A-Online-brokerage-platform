@@ -48,6 +48,10 @@ export default function StocksSection1() {
                     <NavLink to="/dashboard/stocks/watchlist" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
                         Watchlist
                     </NavLink>
+
+                    <NavLink to="/dashboard/stocks/detailStock" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+                        detailStock
+                    </NavLink>
                 </div>
 
                 <div className="searchbar" style={{ marginLeft: "17rem", paddingTop: "1rem", position: "relative", }}>
