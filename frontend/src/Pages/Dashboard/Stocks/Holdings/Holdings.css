@@ -2,13 +2,6 @@
     letter-spacing:.5px;
 }
 
-.holdings-page {
-    /* padding: 30px; */
-    /* background: #f7f7f7;
-    min-height: 100vh;
-    font-family: Inter, sans-serif; */
-}
-
 .holdings-loading{
     height:100vh;
     display:flex;
