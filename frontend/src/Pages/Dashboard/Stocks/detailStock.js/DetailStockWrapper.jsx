@@ -1,5 +1,4 @@
 import React from "react";
-import DetailStock from "./DetailStock.jsx";
 import ShareholdingPattern from "./ShareholdingPattern.jsx";
 
 

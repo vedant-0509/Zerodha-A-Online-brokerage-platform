@@ -1,46 +1,70 @@
-const { createClient } = require("redis");
+const {
+  createClient
+} = require("redis");
 
-const redisUrl =
-    process.env.REDIS_URL || "redis://127.0.0.1:6379";
+const env = require("./env");
 
-const client = createClient({
-    url: redisUrl,
+const redis = createClient({
+  url: env.redisUrl
 });
 
-client.on("error", (err) => {
-    console.error("Redis Error:", err);
-});
+redis.on(
+  "error",
+  (error) => {
+    console.error(
+      "Redis Error:",
+      error
+    );
+  }
+);
 
-client.on("connect", () => {
-    console.log("Redis connecting...");
-});
+redis.on(
+  "connect",
+  () => {
+    console.log(
+      "Redis connecting..."
+    );
+  }
+);
 
-client.on("ready", () => {
-    console.log("Redis ready");
-});
+redis.on(
+  "ready",
+  () => {
+    console.log(
+      "Redis ready"
+    );
+  }
+);
 
-client.on("reconnecting", () => {
-    console.log("Redis reconnecting...");
-});
+redis.on(
+  "reconnecting",
+  () => {
+    console.log(
+      "Redis reconnecting..."
+    );
+  }
+);
 
 async function connectRedis() {
-    if (client.isOpen) {
-        return client;
-    }
+  if (redis.isOpen) {
+    return redis;
+  }
 
-    await client.connect();
+  await redis.connect();
 
-    return client;
+  return redis;
 }
 
 async function closeRedis() {
-    if (client.isOpen) {
-        await client.quit();
-    }
+  if (!redis.isOpen) {
+    return;
+  }
+
+  await redis.quit();
 }
 
 module.exports = {
-    client,
-    connectRedis,
-    closeRedis,
+  redis,
+  connectRedis,
+  closeRedis
 };

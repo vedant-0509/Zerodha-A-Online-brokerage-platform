@@ -1,11 +1,11 @@
 {
   "name": "detailstock-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "axios": "^1.19.0",
@@ -14,6 +14,7 @@
     "express": "^5.2.1",
     "mysql2": "^3.23.2",
     "node-cron": "^4.2.1",
+    "nodemon": "^3.1.14",
     "redis": "^4.7.1",
     "socket.io": "^4.8.3",
     "upstox-js-sdk": "^2.29.0"
