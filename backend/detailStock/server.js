@@ -1897,6 +1897,10 @@
 
 
 
+
+
+
+
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -1998,11 +2002,7 @@ const FUNDAMENTALS_TTL = 15 * 60 * 1000;
 ========================================================= */
 
 function validKey(key) {
-  return (
-    typeof key === "string" &&
-    key.length >= 5 &&
-    key.length <= 180
-  );
+  return typeof key === "string" && key.length >= 5 && key.length <= 180;
 }
 
 function validIsin(isin) {
@@ -2018,8 +2018,7 @@ function historyKey(key, unit, interval, from, to) {
 }
 
 function isinFromInstrumentKey(key) {
-  const candidate =
-    String(key || "").split("|")[1] || "";
+  const candidate = String(key || "").split("|")[1] || "";
 
   return validIsin(candidate) ? candidate : null;
 }
@@ -2059,7 +2058,7 @@ function timeToWeekdayCron(value, fallback) {
 
   if (!match) {
     throw new Error(
-      `Invalid cron time "${raw}". Expected HH:MM, for example 15:35`
+      `Invalid cron time "${raw}". Expected HH:MM, for example 15:35`,
     );
   }
 
@@ -2075,7 +2074,7 @@ function timeToWeekdayCron(value, fallback) {
     minute > 59
   ) {
     throw new Error(
-      `Invalid cron time "${raw}". Expected HH:MM between 00:00 and 23:59`
+      `Invalid cron time "${raw}". Expected HH:MM between 00:00 and 23:59`,
     );
   }
 
@@ -2109,25 +2108,10 @@ function getCronTimeFromEnv(key, fallback) {
   return fallback;
 }
 
-const closeJobTime = getCronTimeFromEnv(
-  "CLOSE_JOB_TIME",
-  "15:35"
-);
-
-const closeRetryTime = getCronTimeFromEnv(
-  "CLOSE_RETRY_TIME",
-  "15:45"
-);
-
-const closeCron = timeToWeekdayCron(
-  closeJobTime,
-  "15:35"
-);
-
-const closeRetryCron = timeToWeekdayCron(
-  closeRetryTime,
-  "15:45"
-);
+const closeJobTime = getCronTimeFromEnv("CLOSE_JOB_TIME", "15:35");
+const closeRetryTime = getCronTimeFromEnv("CLOSE_RETRY_TIME", "15:45");
+const closeCron = timeToWeekdayCron(closeJobTime, "15:35");
+const closeRetryCron = timeToWeekdayCron(closeRetryTime, "15:45");
 
 logger.info("Cron configuration loaded", {
   closeJobTime,
@@ -2146,10 +2130,7 @@ async function cacheSnapshot(snapshot) {
     return;
   }
 
-  snapshots.set(
-    snapshot.instrumentKey,
-    snapshot
-  );
+  snapshots.set(snapshot.instrumentKey, snapshot);
 
   if (env.redisEnabled) {
     await redis.set(
@@ -2157,7 +2138,7 @@ async function cacheSnapshot(snapshot) {
       JSON.stringify(snapshot),
       {
         EX: env.snapshotCacheSeconds,
-      }
+      },
     );
   }
 }
@@ -2171,9 +2152,7 @@ async function getSnapshot(key) {
     return null;
   }
 
-  const raw = await redis.get(
-    snapshotKey(key)
-  );
+  const raw = await redis.get(snapshotKey(key));
 
   if (!raw) {
     return null;
@@ -2200,10 +2179,7 @@ async function enrichWithStoredPreviousClose(snapshot) {
     MySQL is only a fallback.
   */
 
-  if (
-    !snapshot ||
-    Number(snapshot.previousClose) > 0
-  ) {
+  if (!snapshot || Number(snapshot.previousClose) > 0) {
     return snapshot;
   }
 
@@ -2214,41 +2190,32 @@ async function enrichWithStoredPreviousClose(snapshot) {
   try {
     const previous = await getPreviousStoredClose(
       snapshot.instrumentKey,
-      indiaDate()
+      indiaDate(),
     );
 
     if (previous?.close != null) {
       const close = Number(previous.close);
       const price = Number(snapshot.price);
 
-      if (
-        Number.isFinite(close) &&
-        close > 0
-      ) {
+      if (Number.isFinite(close) && close > 0) {
         snapshot.previousClose = close;
 
         if (Number.isFinite(price)) {
           snapshot.change = price - close;
 
-          snapshot.changePercent =
-            ((price - close) / close) * 100;
+          snapshot.changePercent = ((price - close) / close) * 100;
         }
 
-        snapshot.previousCloseDate =
-          previous.trading_date;
+        snapshot.previousCloseDate = previous.trading_date;
 
-        snapshot.previousCloseSource =
-          "database-fallback";
+        snapshot.previousCloseSource = "database-fallback";
       }
     }
   } catch (err) {
-    logger.warn(
-      "Previous close fallback lookup failed",
-      {
-        instrumentKey: snapshot.instrumentKey,
-        error: err.message,
-      }
-    );
+    logger.warn("Previous close fallback lookup failed", {
+      instrumentKey: snapshot.instrumentKey,
+      error: err.message,
+    });
   }
 
   return snapshot;
@@ -2263,29 +2230,20 @@ async function getInstrumentContext(instrumentKey) {
     return null;
   }
 
-  const marketRow =
-    await getMarketStockByInstrumentKey(
-      instrumentKey
-    );
+  const marketRow = await getMarketStockByInstrumentKey(instrumentKey);
 
-  const master =
-    await getInstrumentMaster(
-      instrumentKey
-    );
+  const master = await getInstrumentMaster(instrumentKey);
 
   if (!marketRow && !master) {
     return null;
   }
 
-  const isin =
-    master?.isin ||
-    isinFromInstrumentKey(instrumentKey);
+  const isin = master?.isin || isinFromInstrumentKey(instrumentKey);
 
   let bse = null;
 
   if (isin) {
-    bse =
-      await getBseInstrumentByIsin(isin);
+    bse = await getBseInstrumentByIsin(isin);
   }
 
   return {
@@ -2293,20 +2251,10 @@ async function getInstrumentContext(instrumentKey) {
     master,
     bse,
     isin,
-    symbol:
-      master?.trading_symbol ||
-      marketRow?.symbol ||
-      null,
-    name:
-      master?.name ||
-      marketRow?.name ||
-      null,
-    exchange:
-      master?.exchange ||
-      "NSE",
-    segment:
-      master?.segment ||
-      null,
+    symbol: master?.trading_symbol || marketRow?.symbol || null,
+    name: master?.name || marketRow?.name || null,
+    exchange: master?.exchange || "NSE",
+    segment: master?.segment || null,
   };
 }
 
@@ -2315,16 +2263,12 @@ async function getInstrumentContext(instrumentKey) {
 ========================================================= */
 
 async function primeSnapshot(instrumentKey) {
-  const context =
-    await getInstrumentContext(
-      instrumentKey
-    );
+  const context = await getInstrumentContext(instrumentKey);
 
   const today = indiaDate();
   const marketOpen = isMarketOpen();
 
-  const existing =
-    await getSnapshot(instrumentKey);
+  const existing = await getSnapshot(instrumentKey);
 
   /*
     Never reuse yesterday's snapshot.
@@ -2333,61 +2277,31 @@ async function primeSnapshot(instrumentKey) {
     closing snapshot is considered authoritative.
   */
 
-  const existingIsFresh =
-    existing?.marketDate === today &&
-    (
-      marketOpen
-        ? existing?.marketStatus !== "CLOSED"
-        : existing?.marketStatus === "CLOSED" &&
-          existing?.source ===
-            "upstox-close-reconciliation"
-    );
+  const existingIsFresh = existing?.marketDate === today && (marketOpen
+    ? existing?.marketStatus !== "CLOSED"
+    : existing?.marketStatus === "CLOSED" &&
+    existing?.source === "upstox-close-reconciliation");
 
-  if (
-    existing &&
-    existingIsFresh
-  ) {
+  if (existing && existingIsFresh) {
     return existing;
   }
 
-  const snapshot =
-    await upstox.fetchOhlc(
-      instrumentKey
-    );
+  const snapshot = await upstox.fetchOhlc(instrumentKey);
 
   if (context) {
-    snapshot.symbol =
-      context.symbol;
-
-    snapshot.name =
-      context.name;
-
-    snapshot.exchange =
-      context.exchange;
-
-    snapshot.segment =
-      context.segment;
-
-    snapshot.isin =
-      context.isin;
-
-    snapshot.sector =
-      context.marketRow?.sector ||
-      null;
+    snapshot.symbol = context.symbol;
+    snapshot.name = context.name;
+    snapshot.exchange = context.exchange;
+    snapshot.segment = context.segment;
+    snapshot.isin = context.isin;
+    snapshot.sector = context.marketRow?.sector || null;
   }
 
   snapshot.marketDate = today;
   snapshot.marketOpen = marketOpen;
+  snapshot.marketStatus = marketOpen ? "OPEN" : "CLOSED";
 
-  snapshot.marketStatus =
-    marketOpen
-      ? "OPEN"
-      : "CLOSED";
-
-  await enrichWithStoredPreviousClose(
-    snapshot
-  );
-
+  await enrichWithStoredPreviousClose(snapshot);
   await cacheSnapshot(snapshot);
 
   return snapshot;
@@ -2398,24 +2312,17 @@ async function primeSnapshot(instrumentKey) {
 ========================================================= */
 
 async function getFundamentalsCached(isin) {
-  const cached =
-    fundamentalsByIsin.get(isin);
+  const cached = fundamentalsByIsin.get(isin);
 
-  if (
-    cached &&
-    cached.expiresAt > Date.now()
-  ) {
+  if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
-  const data =
-    await upstox.getFundamentals(isin);
+  const data = await upstox.getFundamentals(isin);
 
   fundamentalsByIsin.set(isin, {
     data,
-    expiresAt:
-      Date.now() +
-      FUNDAMENTALS_TTL,
+    expiresAt: Date.now() + FUNDAMENTALS_TTL,
   });
 
   return data;
@@ -2425,70 +2332,39 @@ async function getFundamentalsCached(isin) {
    MARKET DATE HELPERS
 ========================================================= */
 
-function isAfterMarketClose(
-  date = new Date()
-) {
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-GB",
-      {
-        timeZone: env.timezone,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }
-    ).formatToParts(date);
+function isAfterMarketClose(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: env.timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
 
-  const hour = Number(
-    parts.find(
-      (x) => x.type === "hour"
-    )?.value || 0
-  );
+  const hour = Number(parts.find((x) => x.type === "hour")?.value || 0);
 
-  const minute = Number(
-    parts.find(
-      (x) => x.type === "minute"
-    )?.value || 0
-  );
+  const minute = Number(parts.find((x) => x.type === "minute")?.value || 0);
 
-  const [
-    closeHour,
-    closeMinute,
-  ] = String(env.marketClose)
+  const [closeHour, closeMinute] = String(env.marketClose)
     .split(":")
     .map(Number);
 
-  return (
-    hour * 60 + minute >=
-    closeHour * 60 + closeMinute
-  );
+  return hour * 60 + minute >= closeHour * 60 + closeMinute;
 }
 
-function previousTradingDate(
-  date = new Date()
-) {
+function previousTradingDate(date = new Date()) {
   const d = new Date(date);
 
-  d.setDate(
-    d.getDate() - 1
-  );
+  d.setDate(d.getDate() - 1);
 
   while (!isTradingDay(d)) {
-    d.setDate(
-      d.getDate() - 1
-    );
+    d.setDate(d.getDate() - 1);
   }
 
   return indiaDate(d);
 }
 
-function latestCompletedTradingDate(
-  date = new Date()
-) {
-  if (
-    isTradingDay(date) &&
-    isAfterMarketClose(date)
-  ) {
+function latestCompletedTradingDate(date = new Date()) {
+  if (isTradingDay(date) && isAfterMarketClose(date)) {
     return indiaDate(date);
   }
 
@@ -2499,16 +2375,10 @@ function latestCompletedTradingDate(
    CLOSING SNAPSHOT NORMALIZATION
 ========================================================= */
 
-function normalizeClosingSnapshot(
-  key,
-  q,
-  row
-) {
-  const ohlc =
-    q?.ohlc || {};
+function normalizeClosingSnapshot(key, q, row) {
+  const ohlc = q?.ohlc || {};
 
-  const price =
-    Number(q?.last_price);
+  const price = Number(q?.last_price);
 
   if (!Number.isFinite(price)) {
     return null;
@@ -2526,186 +2396,61 @@ function normalizeClosingSnapshot(
     Do NOT use q.ohlc.close as previous close.
   */
 
-  const netChange =
-    Number(q?.net_change);
+  const netChange = Number(q?.net_change);
 
-  let previousClose =
-    Number.NaN;
+  let previousClose = Number.NaN;
 
-  if (
-    Number.isFinite(netChange)
-  ) {
-    previousClose =
-      price - netChange;
-  } else if (
-    Number.isFinite(
-      Number(q?.cp)
-    )
-  ) {
-    previousClose =
-      Number(q.cp);
-  } else if (
-    Number.isFinite(
-      Number(q?.prev_close)
-    )
-  ) {
-    previousClose =
-      Number(q.prev_close);
-  } else if (
-    Number.isFinite(
-      Number(q?.previous_close)
-    )
-  ) {
-    previousClose =
-      Number(q.previous_close);
+  if (Number.isFinite(netChange)) {
+    previousClose = price - netChange;
+  } else if (Number.isFinite(Number(q?.cp))) {
+    previousClose = Number(q.cp);
+  } else if (Number.isFinite(Number(q?.prev_close))) {
+    previousClose = Number(q.prev_close);
+  } else if (Number.isFinite(Number(q?.previous_close))) {
+    previousClose = Number(q.previous_close);
   }
 
   /*
     Last-resort compatibility fallback.
   */
 
-  if (
-    !Number.isFinite(previousClose) ||
-    previousClose <= 0
-  ) {
-    const fallback =
-      Number(ohlc.close);
+  if (!Number.isFinite(previousClose) || previousClose <= 0) {
+    const fallback = Number(ohlc.close);
 
-    if (
-      Number.isFinite(fallback) &&
-      fallback > 0
-    ) {
-      previousClose =
-        fallback;
+    if (Number.isFinite(fallback) && fallback > 0) {
+      previousClose = fallback;
     }
   }
 
-  const change =
-    Number.isFinite(previousClose)
-      ? price - previousClose
-      : null;
+  const change = Number.isFinite(previousClose) ? price - previousClose : null;
 
   return {
     instrumentKey: key,
-
-    symbol:
-      row?.symbol ||
-      q?.symbol ||
-      null,
-
-    tradingSymbol:
-      row?.symbol ||
-      q?.symbol ||
-      null,
-
-    name:
-      row?.name ||
-      null,
-
-    companyName:
-      row?.name ||
-      null,
-
-    exchange:
-      env.marketStockExchange,
-
-    segment:
-      env.marketStockSegment,
-
-    sector:
-      row?.sector ||
-      null,
-
+    symbol: row?.symbol || q?.symbol || null,
+    tradingSymbol: row?.symbol || q?.symbol || null,
+    name: row?.name || null,
+    companyName: row?.name || null,
+    exchange: env.marketStockExchange,
+    segment: env.marketStockSegment,
+    sector: row?.sector || null,
     ltp: price,
-
     price,
-
     dayClose: price,
-
-    previousClose:
-      Number.isFinite(previousClose)
-        ? previousClose
-        : null,
-
+    previousClose: Number.isFinite(previousClose) ? previousClose : null,
     change,
-
-    changePercent:
-      Number.isFinite(previousClose) &&
-      previousClose
-        ? (change / previousClose) * 100
-        : null,
-
-    open:
-      Number.isFinite(
-        Number(ohlc.open)
-      )
-        ? Number(ohlc.open)
-        : null,
-
-    high:
-      Number.isFinite(
-        Number(ohlc.high)
-      )
-        ? Number(ohlc.high)
-        : null,
-
-    low:
-      Number.isFinite(
-        Number(ohlc.low)
-      )
-        ? Number(ohlc.low)
-        : null,
-
-    volume:
-      Number.isFinite(
-        Number(q?.volume)
-      )
-        ? Number(q.volume)
-        : null,
-
-    upperCircuit:
-      Number.isFinite(
-        Number(
-          q?.upper_circuit_limit
-        )
-      )
-        ? Number(
-            q.upper_circuit_limit
-          )
-        : null,
-
-    lowerCircuit:
-      Number.isFinite(
-        Number(
-          q?.lower_circuit_limit
-        )
-      )
-        ? Number(
-            q.lower_circuit_limit
-          )
-        : null,
-
-    lastTradeTime:
-      Number.isFinite(
-        Number(q?.last_trade_time)
-      )
-        ? Number(q.last_trade_time)
-        : null,
-
-    timestamp:
-      Date.now(),
-
-    marketDate:
-      indiaDate(),
-
-    marketOpen:
-      false,
-
-    marketStatus:
-      "CLOSED",
-
-    source:
-      "upstox-close-reconciliation",
+    changePercent: Number.isFinite(previousClose) && previousClose ? (change / previousClose) * 100 : null,
+    open: Number.isFinite(Number(ohlc.open)) ? Number(ohlc.open) : null,
+    high: Number.isFinite(Number(ohlc.high)) ? Number(ohlc.high) : null,
+    low: Number.isFinite(Number(ohlc.low)) ? Number(ohlc.low) : null,
+    volume: Number.isFinite(Number(q?.volume)) ? Number(q.volume) : null,
+    upperCircuit: Number.isFinite(Number(q?.upper_circuit_limit)) ? Number(q.upper_circuit_limit) : null,
+    lowerCircuit: Number.isFinite(Number(q?.lower_circuit_limit)) ? Number(q.lower_circuit_limit) : null,
+    lastTradeTime: Number.isFinite(Number(q?.last_trade_time)) ? Number(q.last_trade_time) : null,
+    timestamp: Date.now(),
+    marketDate: indiaDate(),
+    marketOpen: false,
+    marketStatus: "CLOSED",
+    source: "upstox-close-reconciliation",
   };
 }
 
@@ -2717,14 +2462,10 @@ let closingSyncPromise = null;
 
 async function reconcileAllMarketStocks(
   reason,
-  targetTradingDate =
-    latestCompletedTradingDate()
+  targetTradingDate = latestCompletedTradingDate(),
 ) {
   if (!env.mysqlEnabled) {
-    logger.warn(
-      "Closing reconciliation skipped: MySQL disabled",
-      { reason }
-    );
+    logger.warn("Closing reconciliation skipped: MySQL disabled", { reason });
 
     return {
       total: 0,
@@ -2736,164 +2477,92 @@ async function reconcileAllMarketStocks(
     return closingSyncPromise;
   }
 
-  closingSyncPromise =
-    (async () => {
-      const tradingDate =
-        targetTradingDate;
+  closingSyncPromise = (async () => {
+    const tradingDate = targetTradingDate;
+    const rows = await getMarketStockInstruments();
 
-      const rows =
-        await getMarketStockInstruments();
+    if (!rows.length) {
+      logger.warn("No market stocks found for closing reconciliation");
 
-      if (!rows.length) {
-        logger.warn(
-          "No market stocks found for closing reconciliation"
-        );
+      return {
+        total: 0,
+        saved: 0,
+      };
+    }
 
-        return {
-          total: 0,
-          saved: 0,
-        };
-      }
+    const rowByKey = new Map(rows.map((row) => [row.instrument_key, row]));
+    const keys = rows.map((row) => row.instrument_key).filter(Boolean);
 
-      const rowByKey =
-        new Map(
-          rows.map((row) => [
-            row.instrument_key,
-            row,
-          ])
-        );
+    let saved = 0;
 
-      const keys =
-        rows
-          .map(
-            (row) =>
-              row.instrument_key
-          )
-          .filter(Boolean);
-
-      let saved = 0;
-
-      /*
+    /*
         Upstox Full Market Quote supports
         maximum 500 keys per request.
       */
 
-      for (
-        let i = 0;
-        i < keys.length;
-        i += 500
-      ) {
-        const chunk =
-          keys.slice(
-            i,
-            i + 500
-          );
+    for (let i = 0; i < keys.length; i += 500) {
+      const chunk = keys.slice(i, i + 500);
 
-        try {
-          const quotes =
-            await upstox.fetchQuotes(
-              chunk
-            );
+      try {
+        const quotes = await upstox.fetchQuotes(chunk);
 
-          for (
-            const key of chunk
-          ) {
-            const q =
-              quotes[key] ||
-              quotes[
-                key.replace(
-                  "|",
-                  ":"
-                )
-              ] ||
-              Object.values(
-                quotes
-              ).find(
-                (x) =>
-                  x?.instrument_token ===
-                  key
-              );
+        for (const key of chunk) {
+          const q = quotes[key] || quotes[key.replace("|", ":")] || Object.values(quotes).find((x) => x?.instrument_token === key);
 
-            if (!q) {
-              continue;
-            }
+          if (!q) {
+            continue;
+          }
 
-            const snapshot =
-              normalizeClosingSnapshot(
-                key,
-                q,
-                rowByKey.get(key)
-              );
+          const snapshot = normalizeClosingSnapshot(key, q, rowByKey.get(key));
 
-            if (!snapshot) {
-              continue;
-            }
+          if (!snapshot) {
+            continue;
+          }
 
-            await saveDailyClose(
-              snapshot,
-              tradingDate
-            );
+          await saveDailyClose(snapshot, tradingDate);
 
-            const finalSnapshot = {
-              ...snapshot,
-              marketOpen: false,
-              marketStatus: "CLOSED",
-              marketDate:
-                tradingDate,
-            };
+          const finalSnapshot = {
+            ...snapshot,
+            marketOpen: false,
+            marketStatus: "CLOSED",
+            marketDate: tradingDate,
+          };
 
-            await cacheSnapshot(
-              finalSnapshot
-            );
+          await cacheSnapshot(finalSnapshot);
 
-            /*
+          /*
               Push final closing snapshot
               to connected browser pages.
             */
 
-            if (
-              subscribers.has(key)
-            ) {
-              io
-                .to(`stock:${key}`)
-                .emit(
-                  "detailStock:snapshot",
-                  finalSnapshot
-                );
-            }
-
-            saved++;
+          if (subscribers.has(key)) {
+            io.to(`stock:${key}`).emit("detailStock:snapshot", finalSnapshot);
           }
-        } catch (err) {
-          logger.error(
-            "Closing quote batch failed",
-            {
-              reason,
-              batchStart: i,
-              batchSize:
-                chunk.length,
-              error:
-                errorMessage(err),
-            }
-          );
-        }
-      }
 
-      logger.info(
-        "Market-stock closing reconciliation complete",
-        {
+          saved++;
+        }
+      } catch (err) {
+        logger.error("Closing quote batch failed", {
           reason,
-          tradingDate,
-          total: keys.length,
-          saved,
-        }
-      );
+          batchStart: i,
+          batchSize: chunk.length,
+          error: errorMessage(err),
+        });
+      }
+    }
 
-      return {
-        total: keys.length,
-        saved,
-      };
-    })();
+    logger.info("Market-stock closing reconciliation complete", {
+      reason,
+      tradingDate,
+      total: keys.length,
+      saved,
+    });
+
+    return {
+      total: keys.length,
+      saved,
+    };
+  })();
 
   try {
     return await closingSyncPromise;
@@ -2907,105 +2576,63 @@ async function reconcileAllMarketStocks(
 ========================================================= */
 
 async function reconcileOnStartup() {
-  if (
-    !env.startupReconcileClosed ||
-    isMarketOpen()
-  ) {
+  if (!env.startupReconcileClosed || isMarketOpen()) {
     return;
   }
 
-  const rows =
-    await getMarketStockInstruments();
+  const rows = await getMarketStockInstruments();
 
-  if (!rows.length) {
-    return;
-  }
+  if (!rows.length) return;
 
-  const date =
-    latestCompletedTradingDate();
-
-  const totalStocks =
-    rows.length;
-
-  const savedToday =
-    await getDailyCloseCount(
-      date
-    );
-
-  const markerKey =
-    `detailstock:close-reconciled:v2:${date}`;
+  const date = latestCompletedTradingDate();
+  const totalStocks = rows.length;
+  const savedToday = await getDailyCloseCount(date);
+  const markerKey = `detailstock:close-reconciled:v2:${date}`;
 
   let marker = null;
 
   if (env.redisEnabled) {
     try {
-      marker =
-        await redis.get(
-          markerKey
-        );
+      marker = await redis.get(markerKey);
     } catch (err) {
-      logger.warn(
-        "Close reconciliation marker read failed",
-        {
-          error: err.message,
-        }
-      );
+      logger.warn("Close reconciliation marker read failed", {
+        error: err.message,
+      });
     }
   }
 
-  const needsRepair =
-    savedToday < totalStocks ||
-    marker !== "ok";
+  const needsRepair = savedToday < totalStocks || marker !== "ok";
 
   if (needsRepair) {
-    logger.info(
-      "Startup close reconciliation required",
-      {
-        date,
-        totalStocks,
-        savedToday,
-        marker,
-      }
+    logger.info("Startup close reconciliation required", {
+      date,
+      totalStocks,
+      savedToday,
+      marker,
+    });
+
+    const result = await reconcileAllMarketStocks(
+      "startup-after-market-hours-v2",
+      date,
     );
 
-    const result =
-      await reconcileAllMarketStocks(
-        "startup-after-market-hours-v2",
-        date
-      );
-
-    if (
-      env.redisEnabled &&
-      result.saved > 0
-    ) {
+    if (env.redisEnabled && result.saved > 0) {
       try {
-        await redis.set(
-          markerKey,
-          "ok",
-          {
-            EX:
-              3 * 24 * 60 * 60,
-          }
-        );
+        await redis.set(markerKey, "ok", {
+          EX: 3 * 24 * 60 * 60,
+        });
       } catch (err) {
-        logger.warn(
-          "Close reconciliation marker write failed",
-          {
-            error:
-              err.message,
-          }
-        );
+        logger.warn("Close reconciliation marker write failed", {
+          error: err.message,
+        });
       }
     }
   } else {
-    logger.info(
-      "Startup close reconciliation already complete",
-      {
-        date,
-        totalStocks,
-        savedToday,
-      }
-    );
+    logger.info("Startup close reconciliation already complete", {
+      date,
+      totalStocks,
+      savedToday,
+    });
   }
 }
 
@@ -3013,417 +2640,229 @@ async function reconcileOnStartup() {
    UPSTOX LIVE TICK HANDLER
 ========================================================= */
 
-upstox.setTickHandler(
-  (tick) => {
-    const previous =
-      snapshots.get(
-        tick.instrumentKey
-      ) || {};
+upstox.setTickHandler((tick) => {
+  const previous = snapshots.get(tick.instrumentKey) || {};
 
-    const snapshot = {
-      ...previous,
-      ...tick,
+  const snapshot = {
+    ...previous,
+    ...tick,
 
-      instrumentKey:
-        tick.instrumentKey,
+    instrumentKey: tick.instrumentKey,
+    marketDate: indiaDate(),
+    marketOpen: true,
+    marketStatus: "OPEN",
+    source: "upstox-websocket",
+  };
 
-      marketDate:
-        indiaDate(),
-
-      marketOpen:
-        true,
-
-      marketStatus:
-        "OPEN",
-
-      source:
-        "upstox-websocket",
-    };
-
-    /*
+  /*
       If partial feed omits a field,
       keep the previous known value.
     */
 
-    for (
-      const field of [
-        "previousClose",
-        "open",
-        "high",
-        "low",
-        "volume",
-        "upperCircuit",
-        "lowerCircuit",
-        "lastTradeTime",
-      ]
-    ) {
-      if (
-        snapshot[field] == null &&
-        previous[field] != null
-      ) {
-        snapshot[field] =
-          previous[field];
-      }
+  for (const field of [
+    "previousClose",
+    "open",
+    "high",
+    "low",
+    "volume",
+    "upperCircuit",
+    "lowerCircuit",
+    "lastTradeTime",
+  ]) {
+    if (snapshot[field] == null && previous[field] != null) {
+      snapshot[field] = previous[field];
     }
+  }
 
-    if (
-      snapshot.price != null &&
-      snapshot.previousClose != null
-    ) {
-      snapshot.change =
-        Number(snapshot.price) -
-        Number(
-          snapshot.previousClose
-        );
+  if (snapshot.price != null && snapshot.previousClose != null) {
+    snapshot.change = Number(snapshot.price) - Number(snapshot.previousClose);
 
-      snapshot.changePercent =
-        Number(
-          snapshot.previousClose
-        )
-          ? (
-              snapshot.change /
-              Number(
-                snapshot.previousClose
-              )
-            ) * 100
-          : null;
-    }
+    snapshot.changePercent = Number(snapshot.previousClose)
+      ? (snapshot.change / Number(snapshot.previousClose)) * 100
+      : null;
+  }
 
-    snapshots.set(
-      tick.instrumentKey,
-      snapshot
-    );
+  snapshots.set(tick.instrumentKey, snapshot);
 
-    if (env.redisEnabled) {
-      redis
-        .set(
-          snapshotKey(
-            tick.instrumentKey
-          ),
-          JSON.stringify(
-            snapshot
-          ),
-          {
-            EX:
-              env.snapshotCacheSeconds,
-          }
-        )
-        .catch((err) =>
-          logger.warn(
-            "Tick cache write failed",
-            {
-              error:
-                err.message,
-            }
-          )
-        );
-    }
-
-    io
-      .to(
-        `stock:${tick.instrumentKey}`
-      )
-      .emit(
-        "detailStock:tick",
-        snapshot
+  if (env.redisEnabled) {
+    redis
+      .set(snapshotKey(tick.instrumentKey), JSON.stringify(snapshot), {
+        EX: env.snapshotCacheSeconds,
+      })
+      .catch((err) =>
+        logger.warn("Tick cache write failed", {
+          error: err.message,
+        }),
       );
   }
-);
+
+  io.to(`stock:${tick.instrumentKey}`).emit("detailStock:tick", snapshot);
+});
 
 /* =========================================================
    SOCKET.IO
 ========================================================= */
 
-io.on(
-  "connection",
-  (socket) => {
-    socket.on(
-      "detailStock:subscribe",
-      async (
-        payload,
-        ack = () => {}
-      ) => {
-        const key =
-          payload?.instrumentKey;
+io.on("connection", (socket) => {
+  socket.on("detailStock:subscribe", async (payload, ack = () => { }) => {
+    const key = payload?.instrumentKey;
 
-        if (!validKey(key)) {
-          return ack({
-            success: false,
-            message:
-              "Valid instrumentKey is required",
-          });
-        }
+    if (!validKey(key)) {
+      return ack({
+        success: false,
+        message: "Valid instrumentKey is required",
+      });
+    }
 
-        try {
-          const context =
-            await getInstrumentContext(
-              key
-            );
+    try {
+      const context = await getInstrumentContext(key);
 
-          /*
+      /*
             Do not allow arbitrary instruments
             to consume Upstox subscription budget.
           */
 
-          if (
-            !context?.master &&
-            env.mysqlEnabled
-          ) {
-            return ack({
-              success: false,
-              message:
-                "Instrument is not in the stock universe",
-            });
-          }
-
-          socket.join(
-            `stock:${key}`
-          );
-
-          if (
-            !subscribers.has(key)
-          ) {
-            subscribers.set(
-              key,
-              new Set()
-            );
-          }
-
-          const set =
-            subscribers.get(key);
-
-          const first =
-            set.size === 0;
-
-          set.add(
-            socket.id
-          );
-
-          if (first) {
-            await upstox.subscribe(
-              key
-            );
-          }
-
-          let snapshot =
-            await primeSnapshot(
-              key
-            );
-
-          if (context) {
-            snapshot = {
-              ...snapshot,
-
-              instrumentKey:
-                key,
-
-              symbol:
-                context.symbol,
-
-              name:
-                context.name,
-
-              exchange:
-                context.exchange,
-
-              segment:
-                context.segment,
-
-              isin:
-                context.isin,
-
-              sector:
-                context.marketRow
-                  ?.sector ||
-                null,
-
-              bseInstrumentKey:
-                context.bse
-                  ?.instrument_key ||
-                null,
-            };
-          }
-
-          const isin =
-            snapshot.isin ||
-            context?.isin;
-
-          if (isin) {
-            try {
-              const fundamentals =
-                await getFundamentalsCached(
-                  isin
-                );
-
-              snapshot = {
-                ...snapshot,
-                ...fundamentals,
-                isin,
-              };
-            } catch (err) {
-              logger.warn(
-                "Fundamentals unavailable on subscribe",
-                {
-                  instrumentKey:
-                    key,
-
-                  isin,
-
-                  error:
-                    errorMessage(
-                      err
-                    ),
-                }
-              );
-            }
-          }
-
-          await cacheSnapshot(
-            snapshot
-          );
-
-          socket.emit(
-            "detailStock:snapshot",
-            {
-              ...snapshot,
-              marketOpen:
-                isMarketOpen(),
-            }
-          );
-
-          ack({
-            success: true,
-            subscribed: true,
-            deduplicated:
-              !first,
-            subscriberCount:
-              set.size,
-            snapshot,
-          });
-        } catch (err) {
-          logger.error(
-            "Detail stock subscribe failed",
-            {
-              instrumentKey:
-                key,
-
-              socketId:
-                socket.id,
-
-              error:
-                errorMessage(
-                  err
-                ),
-            }
-          );
-
-          ack({
-            success: false,
-            message:
-              errorMessage(err),
-          });
-        }
-      }
-    );
-
-    socket.on(
-      "detailStock:unsubscribe",
-      async (
-        payload,
-        ack = () => {}
-      ) => {
-        const key =
-          payload?.instrumentKey;
-
-        if (!validKey(key)) {
-          return ack({
-            success: false,
-          });
-        }
-
-        await release(
-          key,
-          socket.id
-        );
-
-        socket.leave(
-          `stock:${key}`
-        );
-
-        ack({
-          success: true,
+      if (!context?.master && env.mysqlEnabled) {
+        return ack({
+          success: false,
+          message: "Instrument is not in the stock universe",
         });
       }
-    );
 
-    socket.on(
-      "disconnect",
-      async () => {
-        for (
-          const [
-            key,
-            set,
-          ] of subscribers.entries()
-        ) {
-          if (
-            set.has(
-              socket.id
-            )
-          ) {
-            await release(
-              key,
-              socket.id
-            );
-          }
+      socket.join(`stock:${key}`);
+
+      if (!subscribers.has(key)) {
+        subscribers.set(key, new Set());
+      }
+
+      const set = subscribers.get(key);
+      const first = set.size === 0;
+
+      set.add(socket.id);
+
+      if (first) {
+        await upstox.subscribe(key);
+      }
+
+      let snapshot = await primeSnapshot(key);
+
+      if (context) {
+        snapshot = {
+          ...snapshot,
+          instrumentKey: key,
+          symbol: context.symbol,
+          name: context.name,
+          exchange: context.exchange,
+          segment: context.segment,
+          isin: context.isin,
+          sector: context.marketRow?.sector || null,
+          bseInstrumentKey: context.bse?.instrument_key || null,
+        };
+      }
+
+      const isin = snapshot.isin || context?.isin;
+
+      if (isin) {
+        try {
+          const fundamentals = await getFundamentalsCached(isin);
+
+          snapshot = {
+            ...snapshot,
+            ...fundamentals,
+            isin,
+          };
+        } catch (err) {
+          logger.warn("Fundamentals unavailable on subscribe", {
+            instrumentKey: key,
+            isin,
+
+            error: errorMessage(err),
+          });
         }
       }
-    );
-  }
-);
+
+      await cacheSnapshot(snapshot);
+
+      socket.emit("detailStock:snapshot", {
+        ...snapshot,
+        marketOpen: isMarketOpen(),
+      });
+
+      ack({
+        success: true,
+        subscribed: true,
+        deduplicated: !first,
+        subscriberCount: set.size,
+        snapshot,
+      });
+    } catch (err) {
+      logger.error("Detail stock subscribe failed", {
+        instrumentKey: key,
+        socketId: socket.id,
+
+        error: errorMessage(err),
+      });
+
+      ack({
+        success: false,
+        message: errorMessage(err),
+      });
+    }
+  });
+
+  socket.on("detailStock:unsubscribe", async (payload, ack = () => { }) => {
+    const key = payload?.instrumentKey;
+
+    if (!validKey(key)) {
+      return ack({
+        success: false,
+      });
+    }
+
+    await release(key, socket.id);
+
+    socket.leave(`stock:${key}`);
+
+    ack({
+      success: true,
+    });
+  });
+
+  socket.on("disconnect", async () => {
+    for (const [key, set] of subscribers.entries()) {
+      if (set.has(socket.id)) {
+        await release(key, socket.id);
+      }
+    }
+  });
+});
 
 /* =========================================================
    RELEASE SUBSCRIPTION
 ========================================================= */
 
-async function release(
-  key,
-  socketId
-) {
-  const set =
-    subscribers.get(key);
+async function release(key, socketId) {
+  const set = subscribers.get(key);
 
   if (!set) {
     return;
   }
 
-  set.delete(
-    socketId
-  );
+  set.delete(socketId);
 
-  if (
-    set.size === 0
-  ) {
-    subscribers.delete(
-      key
-    );
+  if (set.size === 0) {
+    subscribers.delete(key);
 
     /*
       Grace period is handled inside
       upstox.js if supported.
     */
 
-    await upstox.unsubscribe(
-      key,
-      false
-    );
+    await upstox.unsubscribe(key, false);
 
-    logger.info(
-      "Stock room became empty",
-      {
-        instrumentKey:
-          key,
-      }
-    );
+    logger.info("Stock room became empty", {
+      instrumentKey: key,
+    });
   }
 }
 
@@ -3431,945 +2870,563 @@ async function release(
    HEALTH
 ========================================================= */
 
-app.get(
-  "/health",
-  async (req, res) => {
-    const status =
-      marketStatus();
+app.get("/health", async (req, res) => {
+  const status = marketStatus();
 
-    res.json({
-      success: true,
-
-      service:
-        "detail-stock",
-
-      uptimeSeconds:
-        Math.round(
-          process.uptime()
-        ),
-
-      ...status,
-
-      redis:
-        env.redisEnabled
-          ? redis.isReady
-          : false,
-
-      mysql:
-        env.mysqlEnabled,
-
-      upstoxConnected:
-        upstox.isConnected(),
-
-      upstoxSubscribed:
-        upstox
-          .getSubscribed()
-          .length,
-
-      activeRooms:
-        subscribers.size,
-
-      time:
-        new Date().toISOString(),
-    });
-  }
-);
+  res.json({
+    success: true,
+    service: "detail-stock",
+    uptimeSeconds: Math.round(process.uptime()),
+    ...status,
+    redis: env.redisEnabled ? redis.isReady : false,
+    mysql: env.mysqlEnabled,
+    upstoxConnected: upstox.isConnected(),
+    upstoxSubscribed: upstox.getSubscribed().length,
+    activeRooms: subscribers.size,
+    time: new Date().toISOString(),
+  });
+});
 
 /* =========================================================
    MARKET STOCKS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/market-stocks",
-  async (req, res) => {
-    if (!env.mysqlEnabled) {
-      return res.status(503).json({
-        success: false,
-        message:
-          "MySQL disabled",
-      });
-    }
-
-    try {
-      const rows =
-        await getMarketStockInstruments();
-
-      res.json({
-        success: true,
-
-        marketOpen:
-          isMarketOpen(),
-
-        count:
-          rows.length,
-
-        data:
-          rows,
-      });
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+app.get("/api/detail-stock/market-stocks", async (req, res) => {
+  if (!env.mysqlEnabled) {
+    return res.status(503).json({
+      success: false,
+      message: "MySQL disabled",
+    });
   }
-);
+
+  try {
+    const rows = await getMarketStockInstruments();
+
+    res.json({
+      success: true,
+      marketOpen: isMarketOpen(),
+      count: rows.length,
+      data: rows,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    INSTRUMENT
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/instrument/:instrumentKey",
-  async (req, res) => {
-    const key =
-      req.params.instrumentKey;
+app.get("/api/detail-stock/instrument/:instrumentKey", async (req, res) => {
+  const key = req.params.instrumentKey;
 
-    if (!validKey(key)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid instrumentKey",
-      });
-    }
-
-    try {
-      const context =
-        await getInstrumentContext(
-          key
-        );
-
-      if (!context) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Instrument not found",
-        });
-      }
-
-      res.json({
-        success: true,
-        data:
-          context,
-      });
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validKey(key)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid instrumentKey",
+    });
   }
-);
+
+  try {
+    const context = await getInstrumentContext(key);
+
+    if (!context) {
+      return res.status(404).json({
+        success: false,
+        message: "Instrument not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: context,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    SNAPSHOT
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/snapshot/:instrumentKey",
-  async (req, res) => {
-    const key =
-      req.params.instrumentKey;
+app.get("/api/detail-stock/snapshot/:instrumentKey", async (req, res) => {
+  const key = req.params.instrumentKey;
 
-    if (!validKey(key)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid instrumentKey",
-      });
-    }
-
-    try {
-      const snapshot =
-        await primeSnapshot(
-          key
-        );
-
-      res.json({
-        success: true,
-
-        marketOpen:
-          isMarketOpen(),
-
-        data:
-          snapshot,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validKey(key)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid instrumentKey",
+    });
   }
-);
+
+  try {
+    const snapshot = await primeSnapshot(key);
+
+    res.json({
+      success: true,
+      marketOpen: isMarketOpen(),
+      data: snapshot,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    HISTORY
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/history/:instrumentKey",
-  async (req, res) => {
-    const key =
-      req.params.instrumentKey;
+app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
+  const key = req.params.instrumentKey;
 
-    if (!validKey(key)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid instrumentKey",
+  if (!validKey(key)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid instrumentKey",
+    });
+  }
+
+  const allowedUnits = new Set(["minutes", "hours", "days", "weeks", "months"]);
+  const unit = allowedUnits.has(req.query.unit) ? req.query.unit : "days";
+  const interval = String(req.query.interval || "1");
+  const to = String(req.query.to || indiaDate());
+  const from = req.query.from ? String(req.query.from) : "";
+  const cacheKey = historyKey(key, unit, interval, from, to);
+
+  try {
+    if (env.redisEnabled) {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        return res.json({
+          success: true,
+          source: "cache",
+          marketOpen: isMarketOpen(),
+          data: JSON.parse(cached),
+        });
+      }
+    }
+
+    const data = await upstox.fetchHistory(
+      key,
+      unit,
+      interval,
+      to,
+      from || undefined,
+    );
+
+    if (env.redisEnabled) {
+      await redis.set(cacheKey, JSON.stringify(data), {
+        EX: env.historyCacheSeconds,
       });
     }
 
-    const allowedUnits =
-      new Set([
-        "minutes",
-        "hours",
-        "days",
-        "weeks",
-        "months",
-      ]);
-
-    const unit =
-      allowedUnits.has(
-        req.query.unit
-      )
-        ? req.query.unit
-        : "days";
-
-    const interval =
-      String(
-        req.query.interval ||
-          "1"
-      );
-
-    const to =
-      String(
-        req.query.to ||
-          indiaDate()
-      );
-
-    const from =
-      req.query.from
-        ? String(
-            req.query.from
-          )
-        : "";
-
-    const cacheKey =
-      historyKey(
-        key,
-        unit,
-        interval,
-        from,
-        to
-      );
-
-    try {
-      if (env.redisEnabled) {
-        const cached =
-          await redis.get(
-            cacheKey
-          );
-
-        if (cached) {
-          return res.json({
-            success: true,
-            source:
-              "cache",
-
-            marketOpen:
-              isMarketOpen(),
-
-            data:
-              JSON.parse(
-                cached
-              ),
-          });
-        }
-      }
-
-      const data =
-        await upstox.fetchHistory(
-          key,
-          unit,
-          interval,
-          to,
-          from ||
-            undefined
-        );
-
-      if (env.redisEnabled) {
-        await redis.set(
-          cacheKey,
-          JSON.stringify(
-            data
-          ),
-          {
-            EX:
-              env.historyCacheSeconds,
-          }
-        );
-      }
-
-      res.json({
-        success: true,
-
-        source:
-          "upstox",
-
-        marketOpen:
-          isMarketOpen(),
-
-        data:
-          data,
-      });
-    } catch (err) {
-      /*
+    res.json({
+      success: true,
+      source: "upstox",
+      marketOpen: isMarketOpen(),
+      data: data,
+    });
+  } catch (err) {
+    /*
         Database fallback for longer ranges.
       */
 
-      if (
-        env.mysqlEnabled &&
-        [
-          "days",
-          "weeks",
-          "months",
-        ].includes(unit)
-      ) {
-        try {
-          const dbData =
-            await getDbHistory(
-              key,
-              from ||
-                "2000-01-01",
-              to
-            );
+    if (env.mysqlEnabled && ["days", "weeks", "months"].includes(unit)) {
+      try {
+        const dbData = await getDbHistory(key, from || "2000-01-01", to);
 
-          if (
-            dbData.length
-          ) {
-            return res.json({
-              success: true,
-
-              source:
-                "database",
-
-              marketOpen:
-                isMarketOpen(),
-
-              data:
-                dbData,
-            });
-          }
-        } catch {}
-      }
-
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
+        if (dbData.length) {
+          return res.json({
+            success: true,
+            source: "database",
+            marketOpen: isMarketOpen(),
+            data: dbData,
+          });
+        }
+      } catch { }
     }
+
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
   }
-);
+});
 
 /* =========================================================
    FUNDAMENTALS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/fundamentals/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+app.get("/api/detail-stock/fundamentals/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      const data =
-        await getFundamentalsCached(
-          isin
-        );
-
-      res.json({
-        success: true,
-        isin,
-        ...data,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
   }
-);
 
-app.get(
-  "/api/detail-stock/shareholding/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+  try {
+    const data = await getFundamentalsCached(isin);
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      const data =
-        await getFundamentalsCached(
-          isin
-        );
-
-      res.json({
-        success: true,
-
-        isin,
-
-        shareholding:
-          data.shareholding ||
-          [],
-
-        mutualFunds:
-          data.mutualFunds ||
-          [],
-
-        updatedAt:
-          data.updatedAt,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+    res.json({
+      success: true,
+      isin,
+      ...data,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
   }
-);
+});
 
-app.get(
-  "/api/detail-stock/about/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+app.get("/api/detail-stock/shareholding/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      res.json({
-        success: true,
-        isin,
-
-        profile:
-          await upstox.getProfile(
-            isin
-          ),
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
   }
-);
 
-app.get(
-  "/api/detail-stock/ratios/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+  try {
+    const data = await getFundamentalsCached(isin);
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      const data =
-        await getFundamentalsCached(
-          isin
-        );
-
-      res.json({
-        success: true,
-
-        isin,
-
-        ratios:
-          data.ratios ||
-          [],
-
-        updatedAt:
-          data.updatedAt,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+    res.json({
+      success: true,
+      isin,
+      shareholding: data.shareholding || [],
+      mutualFunds: data.mutualFunds || [],
+      updatedAt: data.updatedAt,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
   }
-);
+});
+
+app.get("/api/detail-stock/about/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
+
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
+  }
+
+  try {
+    res.json({
+      success: true,
+      isin,
+
+      profile: await upstox.getProfile(isin),
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
+
+app.get("/api/detail-stock/ratios/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
+
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
+  }
+
+  try {
+    const data = await getFundamentalsCached(isin);
+
+    res.json({
+      success: true,
+      isin,
+      ratios: data.ratios || [],
+      updatedAt: data.updatedAt,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    CORPORATE ACTIONS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/corporate-actions/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+app.get("/api/detail-stock/corporate-actions/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      res.json({
-        success: true,
-
-        isin,
-
-        data:
-          await upstox.getCorporateActions(
-            isin
-          ),
-
-        updatedAt:
-          Date.now(),
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
   }
-);
+
+  try {
+    res.json({
+      success: true,
+      isin,
+      data: await upstox.getCorporateActions(isin),
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    COMPETITORS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/competitors/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+app.get("/api/detail-stock/competitors/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      res.json({
-        success: true,
-
-        isin,
-
-        data:
-          await upstox.getCompetitors(
-            isin
-          ),
-
-        updatedAt:
-          Date.now(),
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
   }
-);
+
+  try {
+    res.json({
+      success: true,
+      isin,
+      data: await upstox.getCompetitors(isin),
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    FINANCIAL PERFORMANCE
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/financial-performance/:isin",
-  async (req, res) => {
-    const isin =
-      String(
-        req.params.isin ||
-          ""
-      ).toUpperCase();
+app.get("/api/detail-stock/financial-performance/:isin", async (req, res) => {
+  const isin = String(req.params.isin || "").toUpperCase();
 
-    if (!validIsin(isin)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid ISIN",
-      });
-    }
-
-    try {
-      const data =
-        await upstox.getFundamentals(
-          isin
-        );
-
-      res.json({
-        success: true,
-
-        isin,
-
-        incomeStatement:
-          data.incomeStatement ||
-          null,
-
-        balanceSheet:
-          data.balanceSheet ||
-          null,
-
-        cashFlow:
-          data.cashFlow ||
-          null,
-
-        updatedAt:
-          data.updatedAt,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validIsin(isin)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ISIN",
+    });
   }
-);
+
+  try {
+    const data = await upstox.getFundamentals(isin);
+
+    res.json({
+      success: true,
+      isin,
+      incomeStatement: data.incomeStatement || null,
+      balanceSheet: data.balanceSheet || null,
+      cashFlow: data.cashFlow || null,
+      updatedAt: data.updatedAt,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    FUNDS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/funds",
-  async (req, res) => {
-    try {
-      const data =
-        await upstox.getFunds();
+app.get("/api/detail-stock/funds", async (req, res) => {
+  try {
+    const data = await upstox.getFunds();
 
-      res.json({
-        success: true,
-        data,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
   }
-);
+});
 
 /* =========================================================
    ORDER
 ========================================================= */
 
-app.post(
-  "/api/detail-stock/order",
-  async (req, res) => {
-    const body =
-      req.body || {};
+app.post("/api/detail-stock/order", async (req, res) => {
+  const body = req.body || {};
 
-    if (
-      !validKey(
-        body.instrumentKey
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Valid instrumentKey is required",
-      });
-    }
-
-    const quantity =
-      Number(
-        body.quantity
-      );
-
-    if (
-      !Number.isInteger(
-        quantity
-      ) ||
-      quantity <= 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Quantity must be a positive integer",
-      });
-    }
-
-    if (
-      ![
-        "BUY",
-        "SELL",
-      ].includes(
-        body.transactionType
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "transactionType must be BUY or SELL",
-      });
-    }
-
-    const orderType =
-      body.orderType ||
-      "LIMIT";
-
-    if (
-      ![
-        "MARKET",
-        "LIMIT",
-        "SL",
-        "SL-M",
-      ].includes(
-        orderType
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid orderType",
-      });
-    }
-
-    try {
-      const context =
-        await getInstrumentContext(
-          body.instrumentKey
-        );
-
-      if (!context?.master) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Instrument not found in instrument master",
-        });
-      }
-
-      const result =
-        await upstox.placeOrder({
-          ...body,
-
-          orderType,
-
-          quantity,
-
-          instrumentKey:
-            context.master
-              .instrument_key,
-
-          product:
-            body.product ||
-            "D",
-
-          price:
-            orderType === "MARKET"
-              ? 0
-              : Number(
-                  body.price ||
-                    0
-                ),
-        });
-
-      res.json({
-        success: true,
-        data:
-          result,
-      });
-    } catch (err) {
-      res.status(502).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+  if (!validKey(body.instrumentKey)) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid instrumentKey is required",
+    });
   }
-);
+
+  const quantity = Number(body.quantity);
+
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Quantity must be a positive integer",
+    });
+  }
+
+  if (!["BUY", "SELL"].includes(body.transactionType)) {
+    return res.status(400).json({
+      success: false,
+      message: "transactionType must be BUY or SELL",
+    });
+  }
+
+  const orderType = body.orderType || "LIMIT";
+
+  if (!["MARKET", "LIMIT", "SL", "SL-M"].includes(orderType)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid orderType",
+    });
+  }
+
+  try {
+    const context = await getInstrumentContext(body.instrumentKey);
+
+    if (!context?.master) {
+      return res.status(404).json({
+        success: false,
+        message: "Instrument not found in instrument master",
+      });
+    }
+
+    const result = await upstox.placeOrder({
+      ...body,
+      orderType,
+      quantity,
+      instrumentKey: context.master.instrument_key,
+      product: body.product || "D",
+      price: orderType === "MARKET" ? 0 : Number(body.price || 0),
+    });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    res.status(502).json({
+      success: false,
+      message: errorMessage(err),
+    });
+  }
+});
 
 /* =========================================================
    MARKET STOCK COUNT
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/market-stocks-count",
-  async (req, res) => {
-    try {
-      res.json({
-        success: true,
+app.get("/api/detail-stock/market-stocks-count", async (req, res) => {
+  try {
+    res.json({
+      success: true,
 
-        count:
-          env.mysqlEnabled
-            ? await getMarketStockCount()
-            : 0,
-      });
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        message:
-          errorMessage(err),
-      });
-    }
+      count: env.mysqlEnabled ? await getMarketStockCount() : 0,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: errorMessage(err),
+    });
   }
-);
+});
 
 /* =========================================================
    STOCK STATUS
 ========================================================= */
 
-app.get(
-  "/api/detail-stock/status/:instrumentKey",
-  async (req, res) => {
-    const key =
-      req.params.instrumentKey;
+app.get("/api/detail-stock/status/:instrumentKey", async (req, res) => {
+  const key = req.params.instrumentKey;
 
-    res.json({
-      success: true,
-
-      instrumentKey:
-        key,
-
-      marketOpen:
-        isMarketOpen(),
-
-      subscriberCount:
-        subscribers.get(key)
-          ?.size || 0,
-
-      subscribed:
-        upstox
-          .getSubscribed()
-          .includes(key),
-
-      snapshot:
-        await getSnapshot(key),
-    });
-  }
-);
+  res.json({
+    success: true,
+    instrumentKey: key,
+    marketOpen: isMarketOpen(),
+    subscriberCount: subscribers.get(key)?.size || 0,
+    subscribed: upstox.getSubscribed().includes(key),
+    snapshot: await getSnapshot(key),
+  });
+});
 
 /* =========================================================
    CLOSE PERSISTENCE
 ========================================================= */
 
-async function persistClosingPrices(
-  reason = "scheduled-close"
-) {
+async function persistClosingPrices(reason = "scheduled-close") {
   if (!isTradingDay()) {
-    logger.info(
-      "Close persistence skipped on non-trading day",
-      {
-        date:
-          indiaDate(),
-
-        reason,
-      }
-    );
+    logger.info("Close persistence skipped on non-trading day", {
+      date: indiaDate(),
+      reason,
+    });
 
     return;
   }
 
   if (!isMarketOpen()) {
-    const result =
-      await reconcileAllMarketStocks(
-        reason,
-        indiaDate()
-      );
+    const result = await reconcileAllMarketStocks(reason, indiaDate());
 
-    if (
-      env.redisEnabled &&
-      result.saved > 0
-    ) {
+    if (env.redisEnabled && result.saved > 0) {
       try {
         await redis.set(
           `detailstock:close-reconciled:v2:${indiaDate()}`,
           "ok",
           {
-            EX:
-              3 * 24 * 60 * 60,
-          }
+            EX: 3 * 24 * 60 * 60,
+          },
         );
       } catch (err) {
-        logger.warn(
-          "Close reconciliation marker write failed",
-          {
-            error:
-              err.message,
-          }
-        );
+        logger.warn("Close reconciliation marker write failed", {
+          error: err.message,
+        });
       }
     }
   } else {
-    logger.warn(
-      "Closing persistence job ran while market was open",
-      {
-        reason,
-      }
-    );
+    logger.warn("Closing persistence job ran while market was open", {
+      reason,
+    });
   }
 }
 
@@ -4400,56 +3457,38 @@ async function persistClosingPrices(
 cron.schedule(
   closeCron,
   () => {
-    persistClosingPrices(
-      "scheduled-close"
-    ).catch((err) => {
-      logger.error(
-        "Scheduled close persistence failed",
-        {
-          error:
-            errorMessage(err),
-        }
-      );
+    persistClosingPrices("scheduled-close").catch((err) => {
+      logger.error("Scheduled close persistence failed", {
+        error: errorMessage(err),
+      });
     });
   },
   {
-    timezone:
-      env.timezone,
-  }
+    timezone: env.timezone,
+  },
 );
 
 cron.schedule(
   closeRetryCron,
   () => {
-    persistClosingPrices(
-      "scheduled-close-retry"
-    ).catch((err) => {
-      logger.error(
-        "Scheduled close retry failed",
-        {
-          error:
-            errorMessage(err),
-        }
-      );
+    persistClosingPrices("scheduled-close-retry").catch((err) => {
+      logger.error("Scheduled close retry failed", {
+        error: errorMessage(err),
+      });
     });
   },
   {
-    timezone:
-      env.timezone,
-  }
+    timezone: env.timezone,
+  },
 );
 
-logger.info(
-  "Closing cron jobs registered",
-  {
-    closeJobTime,
-    closeRetryTime,
-    closeCron,
-    closeRetryCron,
-    timezone:
-      env.timezone,
-  }
-);
+logger.info("Closing cron jobs registered", {
+  closeJobTime,
+  closeRetryTime,
+  closeCron,
+  closeRetryCron,
+  timezone: env.timezone,
+});
 
 /* =========================================================
    STARTUP
@@ -4457,43 +3496,22 @@ logger.info(
 
 async function startup() {
   await connectRedis();
-
   await initDb();
-
   await reconcileOnStartup();
 
-  server.listen(
-    env.port,
-    () => {
-      logger.info(
-        "detail-stock server started",
-        {
-          port:
-            env.port,
-
-          nodeEnv:
-            env.nodeEnv,
-
-          marketOpen:
-            isMarketOpen(),
-
-          origins:
-            env.origins,
-
-          closeJobTime,
-
-          closeRetryTime,
-
-          closeCron,
-
-          closeRetryCron,
-
-          timezone:
-            env.timezone,
-        }
-      );
-    }
-  );
+  server.listen(env.port, () => {
+    logger.info("detail-stock server started", {
+      port: env.port,
+      nodeEnv: env.nodeEnv,
+      marketOpen: isMarketOpen(),
+      origins: env.origins,
+      closeJobTime,
+      closeRetryTime,
+      closeCron,
+      closeRetryCron,
+      timezone: env.timezone,
+    });
+  });
 }
 
 /* =========================================================
@@ -4502,50 +3520,40 @@ async function startup() {
 
 let shuttingDown = false;
 
-async function shutdown(
-  signal
-) {
+async function shutdown(signal) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
 
-  logger.info(
-    "Shutdown requested",
-    {
-      signal,
-    }
-  );
+  logger.info("Shutdown requested", {
+    signal,
+  });
 
   try {
-    for (
-      const key of upstox.getSubscribed()
-    ) {
-      await upstox.unsubscribe(
-        key,
-        true
-      );
+    for (const key of upstox.getSubscribed()) {
+      await upstox.unsubscribe(key, true);
     }
-  } catch {}
+  } catch { }
 
   try {
     io.close();
-  } catch {}
+  } catch { }
 
   try {
     server.close();
-  } catch {}
+  } catch { }
 
   try {
     await closeDb();
-  } catch {}
+  } catch { }
 
   try {
     if (env.redisEnabled) {
       await redis.quit();
     }
-  } catch {}
+  } catch { }
 
   process.exit(0);
 }
@@ -4554,61 +3562,30 @@ async function shutdown(
    PROCESS HANDLERS
 ========================================================= */
 
-process.on(
-  "SIGTERM",
-  () =>
-    shutdown("SIGTERM")
-);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-process.on(
-  "SIGINT",
-  () =>
-    shutdown("SIGINT")
-);
+process.on("SIGINT", () => shutdown("SIGINT"));
 
-process.on(
-  "uncaughtException",
-  (err) => {
-    logger.error(
-      "Uncaught exception",
-      {
-        error:
-          err.stack ||
-          err.message,
-      }
-    );
-  }
-);
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught exception", {
+    error: err.stack || err.message,
+  });
+});
 
-process.on(
-  "unhandledRejection",
-  (err) => {
-    logger.error(
-      "Unhandled rejection",
-      {
-        error:
-          err?.stack ||
-          String(err),
-      }
-    );
-  }
-);
+process.on("unhandledRejection", (err) => {
+  logger.error("Unhandled rejection", {
+    error: err?.stack || String(err),
+  });
+});
 
 /* =========================================================
    START APPLICATION
 ========================================================= */
 
-startup().catch(
-  (err) => {
-    logger.error(
-      "Startup failed",
-      {
-        error:
-          err.stack ||
-          err.message,
-      }
-    );
+startup().catch((err) => {
+  logger.error("Startup failed", {
+    error: err.stack || err.message,
+  });
 
-    process.exit(1);
-  }
-);
+  process.exit(1);
+});
