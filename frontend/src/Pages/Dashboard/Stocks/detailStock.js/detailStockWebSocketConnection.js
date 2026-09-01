@@ -1,9 +1,9 @@
-import { io } from 'socket.io-client';
+import { io } from "socket.io-client";
 
-const URL = process.env.REACT_APP_DETAIL_STOCK_SOCKET || 'http://localhost:3011';
+const URL = process.env.REACT_APP_DETAIL_STOCK_SOCKET || "http://localhost:3011";
 
 const detailStockSocket = io(URL, {
-  transports: ['websocket'],
+  transports: ["websocket"],
   autoConnect: true,
   reconnection: true,
   reconnectionAttempts: Infinity,

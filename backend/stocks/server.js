@@ -1,3 +1,372 @@
+// require("dotenv").config();
+
+// const mysql = require("mysql2/promise");
+// const axios = require("axios");
+// const express = require("express");
+// const cors = require("cors");
+
+// const app = express();
+
+// app.use(cors());
+// app.use(express.json());
+
+// const searchRoutes = require("./search");
+// const { fetchNews } = require("./news");
+// const updatePreviousClose = require("./reInit"); // <-- fixed case, was "./reinit"
+
+// // MySQL (single shared pool used everywhere, including reInit.js)
+// const db = mysql.createPool({
+//     host: "localhost",
+//     user: "root",
+//     password: "root",
+//     database: "zerodha",
+// });
+
+// // Upstox
+// const ACCESS_TOKEN = process.env.UPSTOX_ANALYTIC_TOKEN;
+
+// // Time after which today's update is allowed to run (24hr, IST)
+// // NOTE: 15:30 is the exact close. A couple of minutes' buffer (e.g. 15:32)
+// // is usually safer since the exchange/Upstox can lag slightly at the bell.
+// const CUTOFF_HOUR = 15;
+// const CUTOFF_MIN = 30;
+
+// app.use("/search", searchRoutes);
+
+// // TOP GAINERS
+// app.get("/top-gainers", async (req, res) => {
+//     try {
+//         const [rows] = await db.execute(`
+//             SELECT
+//                 symbol,
+//                 company_name AS name,
+//                 close_price AS price,
+//                 volume,
+//                 change_percent,
+//                 change_points,
+//                 exchange
+//             FROM market_gainerloser
+//             ORDER BY change_percent DESC
+//             LIMIT 10
+//         `);
+//         res.json(rows);
+//     } catch (err) {
+//         console.log(err);
+//         res.status(500).json(err);
+//     }
+// });
+
+// // TOP LOSERS
+// app.get("/top-losers", async (req, res) => {
+//     try {
+//         const [rows] = await db.execute(`
+//             SELECT
+//                 symbol,
+//                 company_name AS name,
+//                 close_price AS price,
+//                 volume,
+//                 change_percent,
+//                 change_points,
+//                 exchange
+//             FROM market_gainerloser
+//             ORDER BY change_percent ASC
+//             LIMIT 10
+//         `);
+//         res.json(rows);
+//     } catch (err) {
+//         console.log(err);
+//         res.status(500).json(err);
+//     }
+// });
+
+// // VOLUME SHOCKERS
+// app.get("/volume-shockers", async (req, res) => {
+//     try {
+//         const [rows] = await db.execute(`
+//             SELECT
+//                 symbol,
+//                 company_name AS name,
+//                 close_price AS price,
+//                 volume,
+//                 change_percent,
+//                 change_points,
+//                 exchange
+//             FROM market_gainerloser
+//             ORDER BY volume DESC
+//             LIMIT 10
+//         `);
+//         res.json(rows);
+//     } catch (err) {
+//         console.log(err);
+//         res.status(500).json(err);
+//     }
+// });
+
+// // SECTOR TRENDS
+// app.get("/sector-trends", async (req, res) => {
+//     try {
+//         const [gainers] = await db.execute(`
+//             SELECT
+//                 sector,
+//                 COUNT(*) AS total,
+//                 SUM(change_percent > 0) AS gainers,
+//                 SUM(change_percent < 0) AS losers,
+//                 ROUND(AVG(change_percent),2) AS avg_change
+//             FROM market_gainerloser
+//             WHERE sector IS NOT NULL
+//             GROUP BY sector
+//             ORDER BY avg_change DESC
+//             LIMIT 5
+//         `);
+
+//         const [losers] = await db.execute(`
+//             SELECT
+//                 sector,
+//                 COUNT(*) AS total,
+//                 SUM(change_percent > 0) AS gainers,
+//                 SUM(change_percent < 0) AS losers,
+//                 ROUND(AVG(change_percent),2) AS avg_change
+//             FROM market_gainerloser
+//             WHERE sector IS NOT NULL
+//             GROUP BY sector
+//             ORDER BY avg_change ASC
+//             LIMIT 5
+//         `);
+//         res.json([...gainers, ...losers]);
+//     } catch (err) {
+//         console.log(err);
+//         res.status(500).json(err);
+//     }
+// });
+
+// // NEWS
+// app.get("/market-news", async (req, res) => {
+//     try {
+//         const [rows] = await db.execute(`
+//         SELECT m.symbol,
+//         m.heading AS title,
+//         m.summary AS description,
+//         m.thumbnail AS image,
+//         m.article_link AS link,
+//         m.published_time AS published_at,
+//         'Upstox News' AS source
+//         FROM market_news m
+//         INNER JOIN (
+//         SELECT MIN(id) AS id
+//         FROM market_news
+//         GROUP BY article_link
+//     ) x
+//     ON m.id = x.id
+// ORDER BY m.published_time DESC
+// LIMIT 50;
+// `);
+//         res.json(rows);
+//     } catch (err) {
+//         console.log(err);
+//         res.status(500).json(err);
+//     }
+// });
+
+// // ============================================================
+// // ONE-TIME-PER-DAY UPDATE, ONLY AFTER MARKET CLOSE, ONLY ON WEEKDAYS
+// // ============================================================
+
+// // Returns the current time as its IST wall-clock fields (works regardless of
+// // the server's own timezone, e.g. if hosted on a UTC VPS).
+// function getISTNow() {
+//     return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+// }
+
+// function formatDate(d) {
+//     const y = d.getFullYear();
+//     const m = String(d.getMonth() + 1).padStart(2, "0");
+//     const day = String(d.getDate()).padStart(2, "0");
+//     return `${y}-${m}-${day}`;
+// }
+
+// async function ensureLogTable() {
+//     await db.execute(`
+//         CREATE TABLE IF NOT EXISTS market_update_log (
+//             id INT PRIMARY KEY,
+//             last_run_date DATE NULL
+//         )
+//     `);
+//     await db.execute(`
+//         INSERT INTO market_update_log (id, last_run_date)
+//         VALUES (1, NULL)
+//         ON DUPLICATE KEY UPDATE id = id
+//     `);
+// }
+
+// async function hasAlreadyRunToday(todayStr) {
+//     const [[row]] = await db.execute(`
+//         SELECT DATE_FORMAT(last_run_date, '%Y-%m-%d') AS last_run_date
+//         FROM market_update_log
+//         WHERE id = 1
+//     `);
+//     return row && row.last_run_date === todayStr;
+// }
+
+// async function markRunAsDone(todayStr) {
+//     await db.execute(`UPDATE market_update_log SET last_run_date = ? WHERE id = 1`, [todayStr]);
+// }
+
+// async function getPreviousTradingDay() {
+//     const now = getISTNow();
+//     const d = new Date(now);
+
+//     // Before market closes -> "previous close" means yesterday's close
+//     if (now.getHours() < CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() < CUTOFF_MIN)) {
+//         d.setDate(d.getDate() - 1);
+//     }
+
+//     while (d.getDay() === 0 || d.getDay() === 6) {
+//         d.setDate(d.getDate() - 1);
+//     }
+
+//     return formatDate(d);
+// }
+
+// async function updateMarketData() {
+//     console.log("\nFetching today's market data...\n");
+
+//     let success = true;
+
+//     const [stocks] = await db.execute(`
+//         SELECT
+//             instrument_key,
+//             previous_close
+//         FROM market_gainerloser
+//         ORDER BY instrument_key
+//     `);
+
+//     console.log(`Found ${stocks.length} stocks\n`);
+
+//     for (const stock of stocks) {
+//         try {
+//             const previousClose = Number(stock.previous_close);
+//             const url = `https://api.upstox.com/v3/historical-candle/intraday/${encodeURIComponent(stock.instrument_key)}/days/1`;
+
+//             const { data } = await axios.get(url, {
+//                 headers: {
+//                     Authorization: `Bearer ${ACCESS_TOKEN}`,
+//                     Accept: "application/json",
+//                 },
+//             });
+
+//             const candle = data?.data?.candles?.[0];
+
+//             if (!candle) {
+//                 console.log(`No candle : ${stock.instrument_key}`);
+//                 continue;
+//             }
+
+//             const open = Number(candle[1]);
+//             const high = Number(candle[2]);
+//             const low = Number(candle[3]);
+//             const close = Number(candle[4]);
+//             const volume = Number(candle[5]);
+
+//             let changePoints = 0;
+//             let changePercent = 0;
+
+//             if (previousClose > 0) {
+//                 changePoints = +(close - previousClose).toFixed(2);
+//                 changePercent = +((changePoints / previousClose) * 100).toFixed(2);
+//             }
+
+//             console.log({ symbol: stock.instrument_key, previousClose, close, changePoints, changePercent });
+
+//             await db.execute(`
+//                 UPDATE market_gainerloser
+//                 SET
+//                     trading_date = CURDATE(),
+//                     open_price=?,
+//                     high_price=?,
+//                     low_price=?,
+//                     close_price=?,
+//                     change_points=?,
+//                     change_percent=?,
+//                     volume=?,
+//                     updated_at = NOW()
+//                 WHERE instrument_key=?
+//             `, [
+//                 open,
+//                 high,
+//                 low,
+//                 close,
+//                 changePoints,
+//                 changePercent,
+//                 volume,
+//                 stock.instrument_key
+//             ]);
+
+//             console.log(`✓ ${stock.instrument_key}  ${previousClose} -> ${close} (${changePercent}%)`);
+//         }
+//         catch (err) {
+//             success = false;
+//             console.log(`Error : ${stock.instrument_key}`);
+
+//             if (err.response) console.log(err.response.data);
+//             else console.log(err.message);
+//         }
+//     }
+
+//     if (success) {
+//         await db.execute(`
+//         UPDATE market_gainerloser
+//         SET previous_close = close_price`);
+//     } else {
+//         console.log("⚠ Some stocks failed. previous_close NOT updated.");
+//     }
+// }
+
+// async function checkAndRunDailyUpdate() {
+//     try {
+//         const now = getISTNow();
+//         const day = now.getDay();
+
+//         if (day === 0 || day === 6) return; // weekend, do nothing
+
+//         const afterCutoff = now.getHours() > CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() >= CUTOFF_MIN);
+//         if (!afterCutoff) return; // market still open (or not yet closed), do nothing
+
+//         const todayStr = formatDate(now);
+//         if (await hasAlreadyRunToday(todayStr)) return; // already ran today, do nothing
+
+//         console.log(`\n[${todayStr}] Running post-market-close update...`);
+
+//         const previousTradingDay = await getPreviousTradingDay();
+//         console.log("Previous Trading Day:", previousTradingDay);
+
+//         await updatePreviousClose(db, previousTradingDay);
+//         await fetchNews();
+//         await updateMarketData();
+//         await markRunAsDone(todayStr);
+
+//         console.log(`[${todayStr}] Daily update marked as done.\n`);
+//     } catch (err) {
+//         console.error("checkAndRunDailyUpdate error:", err);
+//         // NOTE: markRunAsDone was never called, so a failed run will be
+//         // retried automatically on the next 60s tick.
+//     }
+// }
+
+// // ============================================================
+// // START SERVER
+// // ============================================================
+
+// (async () => {
+//     await ensureLogTable();
+//     await checkAndRunDailyUpdate(); // covers the case where server restarts after 3:30pm
+
+//     setInterval(checkAndRunDailyUpdate, 60 * 1000); // poll every 60s
+
+//     app.listen(3001, () => {
+//         console.log("Server Running...");
+//     });
+// })();
+
 require("dotenv").config();
 
 const mysql = require("mysql2/promise");
@@ -12,9 +381,12 @@ app.use(express.json());
 
 const searchRoutes = require("./search");
 const { fetchNews } = require("./news");
-const updatePreviousClose = require("./reInit"); // <-- fixed case, was "./reinit"
+const updatePreviousClose = require("./reInit");
 
-// MySQL (single shared pool used everywhere, including reInit.js)
+// ============================================================
+// MYSQL
+// ============================================================
+
 const db = mysql.createPool({
     host: "localhost",
     user: "root",
@@ -22,25 +394,33 @@ const db = mysql.createPool({
     database: "zerodha",
 });
 
-// Upstox
+// ============================================================
+// UPSTOX
+// ============================================================
+
 const ACCESS_TOKEN = process.env.UPSTOX_ANALYTIC_TOKEN;
 
-// Time after which today's update is allowed to run (24hr, IST)
-// NOTE: 15:30 is the exact close. A couple of minutes' buffer (e.g. 15:32)
-// is usually safer since the exchange/Upstox can lag slightly at the bell.
 const CUTOFF_HOUR = 15;
 const CUTOFF_MIN = 30;
 
 app.use("/search", searchRoutes);
 
+// ============================================================
 // TOP GAINERS
+// ============================================================
+
 app.get("/top-gainers", async (req, res) => {
     try {
         const [rows] = await db.execute(`
             SELECT
+                instrument_key,
                 symbol,
                 company_name AS name,
                 close_price AS price,
+                open_price,
+                high_price,
+                low_price,
+                previous_close,
                 volume,
                 change_percent,
                 change_points,
@@ -49,21 +429,34 @@ app.get("/top-gainers", async (req, res) => {
             ORDER BY change_percent DESC
             LIMIT 10
         `);
+
         res.json(rows);
     } catch (err) {
-        console.log(err);
-        res.status(500).json(err);
+        console.error("top-gainers error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch top gainers",
+        });
     }
 });
 
+// ============================================================
 // TOP LOSERS
+// ============================================================
+
 app.get("/top-losers", async (req, res) => {
     try {
         const [rows] = await db.execute(`
             SELECT
+                instrument_key,
                 symbol,
                 company_name AS name,
                 close_price AS price,
+                open_price,
+                high_price,
+                low_price,
+                previous_close,
                 volume,
                 change_percent,
                 change_points,
@@ -72,21 +465,34 @@ app.get("/top-losers", async (req, res) => {
             ORDER BY change_percent ASC
             LIMIT 10
         `);
+
         res.json(rows);
     } catch (err) {
-        console.log(err);
-        res.status(500).json(err);
+        console.error("top-losers error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch top losers",
+        });
     }
 });
 
+// ============================================================
 // VOLUME SHOCKERS
+// ============================================================
+
 app.get("/volume-shockers", async (req, res) => {
     try {
         const [rows] = await db.execute(`
             SELECT
+                instrument_key,
                 symbol,
                 company_name AS name,
                 close_price AS price,
+                open_price,
+                high_price,
+                low_price,
+                previous_close,
                 volume,
                 change_percent,
                 change_points,
@@ -95,14 +501,107 @@ app.get("/volume-shockers", async (req, res) => {
             ORDER BY volume DESC
             LIMIT 10
         `);
+
         res.json(rows);
     } catch (err) {
-        console.log(err);
-        res.status(500).json(err);
+        console.error("volume-shockers error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch volume shockers",
+        });
     }
 });
 
+// ============================================================
+// GET SINGLE STOCK
+//
+// Used by ShareholdingPattern when:
+// 1. User clicks a stock
+// 2. User refreshes the detail page
+// 3. User directly opens /dashboard/stocks/explore/:symbol
+// ============================================================
+
+app.get("/stock/:symbol", async (req, res) => {
+    try {
+        const symbol = decodeURIComponent(req.params.symbol).trim();
+
+        if (!symbol) {
+            return res.status(400).json({
+                success: false,
+                message: "Symbol is required",
+            });
+        }
+
+        const [rows] = await db.execute(
+            `
+            SELECT
+                instrument_key,
+                symbol,
+                company_name AS name,
+                close_price AS price,
+                open_price,
+                high_price,
+                low_price,
+                previous_close,
+                volume,
+                change_percent,
+                change_points,
+                exchange,
+                trading_date,
+                updated_at
+            FROM market_gainerloser
+            WHERE symbol = ?
+            LIMIT 1
+            `,
+            [symbol],
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({
+                success: false,
+                message: `Stock ${symbol} not found`,
+            });
+        }
+
+        const stock = rows[0];
+
+        const price = Number(stock.price || 0);
+        const previousClose = Number(stock.previous_close || 0);
+
+        const changePoints =
+            previousClose > 0
+                ? Number((price - previousClose).toFixed(2))
+                : Number(stock.change_points || 0);
+
+        const changePercent =
+            previousClose > 0
+                ? Number(((changePoints / previousClose) * 100).toFixed(2))
+                : Number(stock.change_percent || 0);
+
+        res.json({
+            success: true,
+            data: {
+                ...stock,
+                price,
+                change_points: changePoints,
+                change_percent: changePercent,
+            },
+        });
+    } catch (err) {
+        console.error("stock lookup error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch stock",
+        });
+    }
+});
+
+// ============================================================
 // SECTOR TRENDS
+// ============================================================
+
 app.get("/sector-trends", async (req, res) => {
     try {
         const [gainers] = await db.execute(`
@@ -111,7 +610,7 @@ app.get("/sector-trends", async (req, res) => {
                 COUNT(*) AS total,
                 SUM(change_percent > 0) AS gainers,
                 SUM(change_percent < 0) AS losers,
-                ROUND(AVG(change_percent),2) AS avg_change
+                ROUND(AVG(change_percent), 2) AS avg_change
             FROM market_gainerloser
             WHERE sector IS NOT NULL
             GROUP BY sector
@@ -125,65 +624,85 @@ app.get("/sector-trends", async (req, res) => {
                 COUNT(*) AS total,
                 SUM(change_percent > 0) AS gainers,
                 SUM(change_percent < 0) AS losers,
-                ROUND(AVG(change_percent),2) AS avg_change
+                ROUND(AVG(change_percent), 2) AS avg_change
             FROM market_gainerloser
             WHERE sector IS NOT NULL
             GROUP BY sector
             ORDER BY avg_change ASC
             LIMIT 5
         `);
+
         res.json([...gainers, ...losers]);
     } catch (err) {
-        console.log(err);
-        res.status(500).json(err);
+        console.error("sector-trends error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch sector trends",
+        });
     }
 });
 
+// ============================================================
 // NEWS
+// ============================================================
+
 app.get("/market-news", async (req, res) => {
     try {
         const [rows] = await db.execute(`
-        SELECT m.symbol,
-        m.heading AS title,
-        m.summary AS description,
-        m.thumbnail AS image,
-        m.article_link AS link,
-        m.published_time AS published_at,
-        'Upstox News' AS source
-        FROM market_news m
-        INNER JOIN (
-        SELECT MIN(id) AS id
-        FROM market_news
-        GROUP BY article_link
-    ) x
-    ON m.id = x.id
-ORDER BY m.published_time DESC
-LIMIT 50;
-`);
+            SELECT
+                m.symbol,
+                m.heading AS title,
+                m.summary AS description,
+                m.thumbnail AS image,
+                m.article_link AS link,
+                m.published_time AS published_at,
+                'Upstox News' AS source
+            FROM market_news m
+            INNER JOIN (
+                SELECT MIN(id) AS id
+                FROM market_news
+                GROUP BY article_link
+            ) x
+            ON m.id = x.id
+            ORDER BY m.published_time DESC
+            LIMIT 50
+        `);
+
         res.json(rows);
     } catch (err) {
-        console.log(err);
-        res.status(500).json(err);
+        console.error("market-news error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch market news",
+        });
     }
 });
 
-
 // ============================================================
-// ONE-TIME-PER-DAY UPDATE, ONLY AFTER MARKET CLOSE, ONLY ON WEEKDAYS
+// IST HELPERS
 // ============================================================
 
-// Returns the current time as its IST wall-clock fields (works regardless of
-// the server's own timezone, e.g. if hosted on a UTC VPS).
 function getISTNow() {
-    return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    return new Date(
+        new Date().toLocaleString("en-US", {
+            timeZone: "Asia/Kolkata",
+        }),
+    );
 }
 
 function formatDate(d) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
+
     return `${y}-${m}-${day}`;
 }
+
+// ============================================================
+// DAILY UPDATE LOG
+// ============================================================
 
 async function ensureLogTable() {
     await db.execute(`
@@ -192,6 +711,7 @@ async function ensureLogTable() {
             last_run_date DATE NULL
         )
     `);
+
     await db.execute(`
         INSERT INTO market_update_log (id, last_run_date)
         VALUES (1, NULL)
@@ -205,19 +725,34 @@ async function hasAlreadyRunToday(todayStr) {
         FROM market_update_log
         WHERE id = 1
     `);
+
     return row && row.last_run_date === todayStr;
 }
 
 async function markRunAsDone(todayStr) {
-    await db.execute(`UPDATE market_update_log SET last_run_date = ? WHERE id = 1`, [todayStr]);
+    await db.execute(
+        `
+        UPDATE market_update_log
+        SET last_run_date = ?
+        WHERE id = 1
+        `,
+        [todayStr],
+    );
 }
+
+// ============================================================
+// PREVIOUS TRADING DAY
+// ============================================================
 
 async function getPreviousTradingDay() {
     const now = getISTNow();
+
     const d = new Date(now);
 
-    // Before market closes -> "previous close" means yesterday's close
-    if (now.getHours() < CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() < CUTOFF_MIN)) {
+    if (
+        now.getHours() < CUTOFF_HOUR ||
+        (now.getHours() === CUTOFF_HOUR && now.getMinutes() < CUTOFF_MIN)
+    ) {
         d.setDate(d.getDate() - 1);
     }
 
@@ -227,6 +762,10 @@ async function getPreviousTradingDay() {
 
     return formatDate(d);
 }
+
+// ============================================================
+// UPDATE MARKET DATA AFTER MARKET CLOSE
+// ============================================================
 
 async function updateMarketData() {
     console.log("\nFetching today's market data...\n");
@@ -246,7 +785,10 @@ async function updateMarketData() {
     for (const stock of stocks) {
         try {
             const previousClose = Number(stock.previous_close);
-            const url = `https://api.upstox.com/v3/historical-candle/intraday/${encodeURIComponent(stock.instrument_key)}/days/1`;
+
+            const url =
+                `https://api.upstox.com/v3/historical-candle/intraday/` +
+                `${encodeURIComponent(stock.instrument_key)}/days/1`;
 
             const { data } = await axios.get(url, {
                 headers: {
@@ -258,7 +800,7 @@ async function updateMarketData() {
             const candle = data?.data?.candles?.[0];
 
             if (!candle) {
-                console.log(`No candle : ${stock.instrument_key}`);
+                console.log(`No candle: ${stock.instrument_key}`);
                 continue;
             }
 
@@ -272,84 +814,113 @@ async function updateMarketData() {
             let changePercent = 0;
 
             if (previousClose > 0) {
-                changePoints = +(close - previousClose).toFixed(2);
-                changePercent = +((changePoints / previousClose) * 100).toFixed(2);
+                changePoints = Number((close - previousClose).toFixed(2));
+
+                changePercent = Number(
+                    ((changePoints / previousClose) * 100).toFixed(2),
+                );
             }
 
-            console.log({ symbol: stock.instrument_key, previousClose, close, changePoints, changePercent });
-
-            await db.execute(`
+            await db.execute(
+                `
                 UPDATE market_gainerloser
                 SET
                     trading_date = CURDATE(),
-                    open_price=?,
-                    high_price=?,
-                    low_price=?,
-                    close_price=?,
-                    change_points=?,
-                    change_percent=?,
-                    volume=?,
+                    open_price = ?,
+                    high_price = ?,
+                    low_price = ?,
+                    close_price = ?,
+                    change_points = ?,
+                    change_percent = ?,
+                    volume = ?,
                     updated_at = NOW()
-                WHERE instrument_key=?
-            `, [
-                open,
-                high,
-                low,
-                close,
-                changePoints,
-                changePercent,
-                volume,
-                stock.instrument_key
-            ]);
+                WHERE instrument_key = ?
+                `,
+                [
+                    open,
+                    high,
+                    low,
+                    close,
+                    changePoints,
+                    changePercent,
+                    volume,
+                    stock.instrument_key,
+                ],
+            );
 
-            console.log(`✓ ${stock.instrument_key}  ${previousClose} -> ${close} (${changePercent}%)`);
-        }
-        catch (err) {
+            console.log(
+                `✓ ${stock.instrument_key} ` +
+                `${previousClose} -> ${close} ` +
+                `(${changePercent}%)`,
+            );
+        } catch (err) {
             success = false;
-            console.log(`Error : ${stock.instrument_key}`);
 
-            if (err.response) console.log(err.response.data);
-            else console.log(err.message);
+            console.log(`Error: ${stock.instrument_key}`);
+
+            if (err.response) {
+                console.log(err.response.data);
+            } else {
+                console.log(err.message);
+            }
         }
     }
 
     if (success) {
         await db.execute(`
-        UPDATE market_gainerloser
-        SET previous_close = close_price`);
+            UPDATE market_gainerloser
+            SET previous_close = close_price
+        `);
     } else {
         console.log("⚠ Some stocks failed. previous_close NOT updated.");
     }
 }
 
+// ============================================================
+// DAILY POST-MARKET UPDATE
+// ============================================================
+
 async function checkAndRunDailyUpdate() {
     try {
         const now = getISTNow();
+
         const day = now.getDay();
 
-        if (day === 0 || day === 6) return; // weekend, do nothing
+        if (day === 0 || day === 6) {
+            return;
+        }
 
-        const afterCutoff = now.getHours() > CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() >= CUTOFF_MIN);
-        if (!afterCutoff) return; // market still open (or not yet closed), do nothing
+        const afterCutoff =
+            now.getHours() > CUTOFF_HOUR ||
+            (now.getHours() === CUTOFF_HOUR && now.getMinutes() >= CUTOFF_MIN);
+
+        if (!afterCutoff) {
+            return;
+        }
 
         const todayStr = formatDate(now);
-        if (await hasAlreadyRunToday(todayStr)) return; // already ran today, do nothing
+
+        if (await hasAlreadyRunToday(todayStr)) {
+            return;
+        }
 
         console.log(`\n[${todayStr}] Running post-market-close update...`);
 
         const previousTradingDay = await getPreviousTradingDay();
+
         console.log("Previous Trading Day:", previousTradingDay);
 
         await updatePreviousClose(db, previousTradingDay);
+
         await fetchNews();
+
         await updateMarketData();
+
         await markRunAsDone(todayStr);
 
         console.log(`[${todayStr}] Daily update marked as done.\n`);
     } catch (err) {
         console.error("checkAndRunDailyUpdate error:", err);
-        // NOTE: markRunAsDone was never called, so a failed run will be
-        // retried automatically on the next 60s tick.
     }
 }
 
@@ -358,12 +929,19 @@ async function checkAndRunDailyUpdate() {
 // ============================================================
 
 (async () => {
-    await ensureLogTable();
-    await checkAndRunDailyUpdate(); // covers the case where server restarts after 3:30pm
+    try {
+        await ensureLogTable();
 
-    setInterval(checkAndRunDailyUpdate, 60 * 1000); // poll every 60s
+        await checkAndRunDailyUpdate();
 
-    app.listen(3001, () => {
-        console.log("Server Running...");
-    });
+        setInterval(checkAndRunDailyUpdate, 60 * 1000);
+
+        app.listen(3001, () => {
+            console.log("Server Running on http://localhost:3001");
+        });
+    } catch (err) {
+        console.error("Startup failed:", err);
+
+        process.exit(1);
+    }
 })();

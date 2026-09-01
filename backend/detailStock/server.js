@@ -1869,38 +1869,6 @@
 
 // start();
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -2277,10 +2245,12 @@ async function primeSnapshot(instrumentKey) {
     closing snapshot is considered authoritative.
   */
 
-  const existingIsFresh = existing?.marketDate === today && (marketOpen
-    ? existing?.marketStatus !== "CLOSED"
-    : existing?.marketStatus === "CLOSED" &&
-    existing?.source === "upstox-close-reconciliation");
+  const existingIsFresh =
+    existing?.marketDate === today &&
+    (marketOpen
+      ? existing?.marketStatus !== "CLOSED"
+      : existing?.marketStatus === "CLOSED" &&
+      existing?.source === "upstox-close-reconciliation");
 
   if (existing && existingIsFresh) {
     return existing;
@@ -2438,14 +2408,23 @@ function normalizeClosingSnapshot(key, q, row) {
     dayClose: price,
     previousClose: Number.isFinite(previousClose) ? previousClose : null,
     change,
-    changePercent: Number.isFinite(previousClose) && previousClose ? (change / previousClose) * 100 : null,
+    changePercent:
+      Number.isFinite(previousClose) && previousClose
+        ? (change / previousClose) * 100
+        : null,
     open: Number.isFinite(Number(ohlc.open)) ? Number(ohlc.open) : null,
     high: Number.isFinite(Number(ohlc.high)) ? Number(ohlc.high) : null,
     low: Number.isFinite(Number(ohlc.low)) ? Number(ohlc.low) : null,
     volume: Number.isFinite(Number(q?.volume)) ? Number(q.volume) : null,
-    upperCircuit: Number.isFinite(Number(q?.upper_circuit_limit)) ? Number(q.upper_circuit_limit) : null,
-    lowerCircuit: Number.isFinite(Number(q?.lower_circuit_limit)) ? Number(q.lower_circuit_limit) : null,
-    lastTradeTime: Number.isFinite(Number(q?.last_trade_time)) ? Number(q.last_trade_time) : null,
+    upperCircuit: Number.isFinite(Number(q?.upper_circuit_limit))
+      ? Number(q.upper_circuit_limit)
+      : null,
+    lowerCircuit: Number.isFinite(Number(q?.lower_circuit_limit))
+      ? Number(q.lower_circuit_limit)
+      : null,
+    lastTradeTime: Number.isFinite(Number(q?.last_trade_time))
+      ? Number(q.last_trade_time)
+      : null,
     timestamp: Date.now(),
     marketDate: indiaDate(),
     marketOpen: false,
@@ -2507,7 +2486,10 @@ async function reconcileAllMarketStocks(
         const quotes = await upstox.fetchQuotes(chunk);
 
         for (const key of chunk) {
-          const q = quotes[key] || quotes[key.replace("|", ":")] || Object.values(quotes).find((x) => x?.instrument_token === key);
+          const q =
+            quotes[key] ||
+            quotes[key.replace("|", ":")] ||
+            Object.values(quotes).find((x) => x?.instrument_token === key);
 
           if (!q) {
             continue;
@@ -3122,8 +3104,14 @@ app.get("/api/detail-stock/shareholding/:isin", async (req, res) => {
   }
 });
 
+/* =========================================================
+   COMPANY PROFILE / ABOUT
+   ========================================================= */
+
 app.get("/api/detail-stock/about/:isin", async (req, res) => {
-  const isin = String(req.params.isin || "").toUpperCase();
+  const isin = String(req.params.isin || "")
+    .trim()
+    .toUpperCase();
 
   if (!validIsin(isin)) {
     return res.status(400).json({
@@ -3133,14 +3121,35 @@ app.get("/api/detail-stock/about/:isin", async (req, res) => {
   }
 
   try {
-    res.json({
+    const profile = await upstox.getProfile(isin);
+
+    return res.json({
       success: true,
       isin,
 
-      profile: await upstox.getProfile(isin),
+      profile: {
+        company_profile: profile?.company_profile ?? null,
+        sector: profile?.sector ?? null,
+        sector_market_cap_inr: {
+          value: profile?.sector_market_cap_inr?.value ?? null,
+          unit: profile?.sector_market_cap_inr?.unit ?? "crore",
+          formatted: profile?.sector_market_cap_inr?.formatted ?? null,
+        },
+
+        sector_market_cap_usd: {
+          value: profile?.sector_market_cap_usd?.value ?? null,
+          unit: profile?.sector_market_cap_usd?.unit ?? null,
+          formatted: profile?.sector_market_cap_usd?.formatted ?? null,
+        },
+      },
     });
   } catch (err) {
-    res.status(502).json({
+    logger.error("Company profile fetch failed", {
+      isin,
+      error: errorMessage(err),
+    });
+
+    return res.status(502).json({
       success: false,
       message: errorMessage(err),
     });

@@ -1,1358 +1,88 @@
-// import React, { useEffect, useMemo, useState } from "react";
-// import detailStockSocket from "./detailStockWebSocketConnection";
-// // import "./FinancialDashboard.css";
-
-// const API = process.env.REACT_APP_DETAIL_STOCK_API || "http://localhost:3011";
-// const DEFAULT_INSTRUMENT = "NSE_EQ|INE020B01018";
-// const RANGES = ["1D", "1W", "1M", "3M", "6M", "1Y", "3Y", "5Y", "All"];
-
-// // Raw Financial Data
-// const RAW_FINANCIAL_DATA = [
-//   { quarter: "Jun '25", revenue: 280, profit: 30 },
-//   { quarter: "Sep '25", revenue: 280, profit: 24 },
-//   { quarter: "Dec '25", revenue: 290, profit: 25 },
-//   { quarter: "Mar '26", revenue: 330, profit: 22 },
-//   { quarter: "Jun '26", revenue: 350, profit: 24, active: true },
-// ];
-
-// /* =========================================================
-//    HELPERS
-// ========================================================= */
-
-// function numberValue(value, fallback = 0) {
-//   const n = Number(value);
-//   return Number.isFinite(n) ? n : fallback;
-// }
-
-// function formatNumber(value, digits = 2) {
-//   const n = numberValue(value);
-//   return n.toLocaleString("en-IN", {
-//     minimumFractionDigits: digits,
-//     maximumFractionDigits: digits,
-//   });
-// }
-
-// function formatCurrency(value) {
-//   const n = numberValue(value);
-//   return new Intl.NumberFormat("en-IN", {
-//     style: "currency",
-//     currency: "INR",
-//     minimumFractionDigits: 2,
-//     maximumFractionDigits: 2,
-//   }).format(n);
-// }
-
-// function formatCompact(value) {
-//   const n = numberValue(value);
-//   return n.toLocaleString("en-IN");
-// }
-
-// function formatPercent(value) {
-//   const n = numberValue(value);
-//   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-// }
-
-// function getDateDaysAgo(days) {
-//   const date = new Date();
-//   date.setDate(date.getDate() - days);
-//   return date.toISOString().slice(0, 10);
-// }
-
-// function getHistoryParams(range) {
-//   switch (range) {
-//     case "1D":
-//       return { unit: "minutes", interval: "1", from: getDateDaysAgo(1) };
-//     case "1W":
-//       return { unit: "minutes", interval: "5", from: getDateDaysAgo(7) };
-//     case "1M":
-//       return { unit: "days", interval: "1", from: getDateDaysAgo(31) };
-//     case "3M":
-//       return { unit: "days", interval: "1", from: getDateDaysAgo(92) };
-//     case "6M":
-//       return { unit: "days", interval: "1", from: getDateDaysAgo(183) };
-//     case "1Y":
-//       return { unit: "days", interval: "1", from: getDateDaysAgo(365) };
-//     case "3Y":
-//       return { unit: "weeks", interval: "1", from: getDateDaysAgo(1095) };
-//     case "5Y":
-//       return { unit: "weeks", interval: "1", from: getDateDaysAgo(1825) };
-//     case "All":
-//       return { unit: "months", interval: "1", from: "2000-01-01" };
-//     default:
-//       return { unit: "minutes", interval: "1", from: getDateDaysAgo(1) };
-//   }
-// }
-
-// /* =========================================================
-//    COMPONENT
-// ========================================================= */
-
-// export default function ShareholdingPattern({
-//   instrumentKey = DEFAULT_INSTRUMENT,
-//   isin = instrumentKey.includes("|") ? instrumentKey.split("|")[1] : "",
-//   symbol = "Reliance Industries Limited",
-//   exchange = "NSE",
-// }) {
-//   /* =====================================================
-//        MARKET STATE
-//     ===================================================== */
-//   const [snapshot, setSnapshot] = useState(null);
-//   const [marketOpen, setMarketOpen] = useState(false);
-//   const [marketLoading, setMarketLoading] = useState(true);
-//   const [marketError, setMarketError] = useState("");
-//   const [hoverData, setHoverData] = useState(null);
-
-//   /* =====================================================
-//        HISTORY & UI
-//     ===================================================== */
-//   const [chartRange, setChartRange] = useState("1D");
-//   const [historicalData, setHistoricalData] = useState([]);
-//   const [loadingHistory, setLoadingHistory] = useState(false);
-//   const [orderType, setOrderType] = useState("BUY");
-//   const [isWatchlisted, setIsWatchlisted] = useState(false);
-//   const [quantity, setQuantity] = useState("");
-//   const [priceLimit, setPriceLimit] = useState("");
-//   const [isAboutExpanded, setIsAboutExpanded] = useState(false);
-
-//   /* =====================================================
-//        FUNDAMENTALS & SHAREHOLDING
-//     ===================================================== */
-//   const [fundamentalData, setFundamentalData] = useState(null);
-//   const [shareholdingData, setShareholdingData] = useState(null);
-//   const [mutualFundData, setMutualFundData] = useState(null);
-//   const [selectedShareholdingPeriod, setSelectedShareholdingPeriod] =
-//     useState("");
-//   const [fundamentalsLoading, setFundamentalsLoading] = useState(true);
-//   const [fundamentalsError, setFundamentalsError] = useState("");
-
-//   /* =====================================================
-//        NORMALIZED MARKET VALUES
-//     ===================================================== */
-//   const ltp = numberValue(
-//     snapshot?.ltp ??
-//     snapshot?.price ??
-//     snapshot?.lastPrice ??
-//     snapshot?.close ??
-//     0,
-//   );
-//   const open = numberValue(snapshot?.open ?? snapshot?.openPrice ?? 0);
-//   const high = numberValue(snapshot?.high ?? snapshot?.dayHigh ?? 0);
-//   const low = numberValue(snapshot?.low ?? snapshot?.dayLow ?? 0);
-//   const previousClose = numberValue(
-//     snapshot?.previousClose ?? snapshot?.prevClose ?? snapshot?.close ?? 0,
-//   );
-//   const volume = numberValue(snapshot?.volume ?? snapshot?.totalVolume ?? 0);
-//   const change = numberValue(
-//     snapshot?.change ??
-//     snapshot?.netChange ??
-//     (ltp && previousClose ? ltp - previousClose : 0),
-//   );
-//   const changePercent = numberValue(
-//     snapshot?.changePercent ??
-//     snapshot?.changePercentage ??
-//     (previousClose ? (change / previousClose) * 100 : 0),
-//   );
-//   const upperCircuit = numberValue(
-//     snapshot?.upperCircuit ??
-//     snapshot?.upperLimit ??
-//     snapshot?.upperCircuitLimit ??
-//     0,
-//   );
-//   const lowerCircuit = numberValue(
-//     snapshot?.lowerCircuit ??
-//     snapshot?.lowerLimit ??
-//     snapshot?.lowerCircuitLimit ??
-//     0,
-//   );
-//   const week52Low = numberValue(
-//     snapshot?.week52Low ?? snapshot?.yearLow ?? snapshot?.fiftyTwoWeekLow ?? 0,
-//   );
-//   const week52High = numberValue(
-//     snapshot?.week52High ??
-//     snapshot?.yearHigh ??
-//     snapshot?.fiftyTwoWeekHigh ??
-//     0,
-//   );
-//   const bsePrice = numberValue(
-//     snapshot?.bsePrice ??
-//     snapshot?.bseLtp ??
-//     snapshot?.bseLastPrice ??
-//     snapshot?.bse ??
-//     0,
-//   );
-//   const positive = change >= 0;
-
-//   /* =====================================================
-//        FINANCIAL BAR CHART SCALED DATA
-//     ===================================================== */
-//   const financialBarData = useMemo(() => {
-//     const Y_AXIS_MAX = 400;
-//     return RAW_FINANCIAL_DATA.map((item) => ({
-//       ...item,
-//       revenueHeight: `${(item.revenue / Y_AXIS_MAX) * 100}%`,
-//       profitHeight: `${(item.profit / Y_AXIS_MAX) * 100}%`,
-//     }));
-//   }, []);
-
-//   const lineChartPreparedData = useMemo(() => {
-//     if (!historicalData.length) {
-//       return ltp > 0 ? [{ price: ltp, time: "Live" }] : [];
-//     }
-//     return historicalData
-//       .map((item) => {
-//         let price = 0;
-//         let timeStr = "";
-
-//         if (typeof item === "number" || typeof item === "string") {
-//           price = numberValue(item, 0);
-//         } else if (Array.isArray(item)) {
-//           // Handle OHLC candle format [timestamp, open, high, low, close]
-//           timeStr = item[0]
-//             ? new Date(item[0]).toLocaleTimeString([], {
-//               hour: "2-digit",
-//               minute: "2-digit",
-//             })
-//             : "";
-//           price = numberValue(item[4] ?? item[1], 0);
-//         } else {
-//           price = numberValue(item?.close ?? item?.ltp ?? item?.price, 0);
-//           const rawTime = item?.time ?? item?.timestamp ?? item?.date;
-//           timeStr = rawTime
-//             ? new Date(rawTime).toLocaleTimeString([], {
-//               hour: "2-digit",
-//               minute: "2-digit",
-//             })
-//             : "";
-//         }
-
-//         return { price, time: timeStr || "12:22 PM" };
-//       })
-//       .filter((d) => Number.isFinite(d.price));
-//   }, [historicalData, ltp]);
-
-//   // 3. Mouse Movement Handler for Crosshair and Tooltip
-//   const handleMouseMove = (e) => {
-//     if (!lineChartPreparedData.length) return;
-
-//     const rect = e.currentTarget.getBoundingClientRect();
-//     const mouseX = e.clientX - rect.left;
-//     const percentage = Math.max(0, Math.min(1, mouseX / rect.width));
-
-//     const index = Math.round(percentage * (lineChartPreparedData.length - 1));
-//     const point = lineChartPreparedData[index];
-
-//     if (!point) return;
-
-//     const width = 1000;
-//     const height = 300;
-//     const paddingX = 10;
-//     const paddingY = 20;
-
-//     const min = lineChartSvg.min;
-//     const max = lineChartSvg.max;
-//     const range = max - min || 1;
-
-//     const svgX =
-//       lineChartPreparedData.length === 1
-//         ? width / 2
-//         : paddingX +
-//         (index / (lineChartPreparedData.length - 1)) * (width - paddingX * 2);
-//     const svgY =
-//       height -
-//       paddingY -
-//       ((point.price - min) / range) * (height - paddingY * 2);
-
-//     setHoverData({
-//       price: point.price,
-//       time: point.time,
-//       x: svgX,
-//       y: svgY,
-//       percentX: (mouseX / rect.width) * 100,
-//     });
-//   };
-
-//   const handleMouseLeave = () => {
-//     setHoverData(null);
-//   };
-
-//   /* =====================================================
-//        WEBSOCKET CONNECTION
-//     ===================================================== */
-//   useEffect(() => {
-//     let alive = true;
-//     setMarketLoading(true);
-//     setMarketError("");
-
-//     const handleSnapshot = (data) => {
-//       if (!alive || !data) return;
-//       if (data.instrumentKey && data.instrumentKey !== instrumentKey) return;
-
-//       setSnapshot((previous) => ({ ...(previous || {}), ...data }));
-//       if (typeof data.marketOpen !== "undefined")
-//         setMarketOpen(Boolean(data.marketOpen));
-//       if (data.fundamentals) setFundamentalData(data.fundamentals);
-//       if (data.shareholding) setShareholdingData(data.shareholding);
-//       if (data.mutualFunds) setMutualFundData(data.mutualFunds);
-//       setMarketLoading(false);
-//     };
-
-//     const handleTick = (data) => {
-//       if (!alive || !data) return;
-//       if (data.instrumentKey && data.instrumentKey !== instrumentKey) return;
-
-//       setSnapshot((previous) => ({ ...(previous || {}), ...data }));
-//       setMarketOpen(
-//         typeof data.marketOpen !== "undefined"
-//           ? Boolean(data.marketOpen)
-//           : true,
-//       );
-//       setMarketLoading(false);
-//     };
-
-//     const subscribe = () => {
-//       detailStockSocket.emit(
-//         "detailStock:subscribe",
-//         { instrumentKey },
-//         (ack) => {
-//           if (!alive) return;
-//           if (!ack?.success) {
-//             setMarketError(
-//               ack?.message || "Unable to subscribe to live market data.",
-//             );
-//             setMarketLoading(false);
-//             return;
-//           }
-//           if (ack.snapshot) {
-//             setSnapshot((previous) => ({
-//               ...(previous || {}),
-//               ...ack.snapshot,
-//             }));
-//             if (typeof ack.snapshot.marketOpen !== "undefined") {
-//               setMarketOpen(Boolean(ack.snapshot.marketOpen));
-//             }
-//             setMarketLoading(false);
-//           }
-//         },
-//       );
-//     };
-
-//     detailStockSocket.on("detailStock:snapshot", handleSnapshot);
-//     detailStockSocket.on("detailStock:tick", handleTick);
-
-//     if (detailStockSocket.connected) {
-//       subscribe();
-//     } else {
-//       detailStockSocket.once("connect", subscribe);
-//     }
-
-//     return () => {
-//       alive = false;
-//       detailStockSocket.emit("detailStock:unsubscribe", { instrumentKey });
-//       detailStockSocket.off("detailStock:snapshot", handleSnapshot);
-//       detailStockSocket.off("detailStock:tick", handleTick);
-//       detailStockSocket.off("connect", subscribe);
-//     };
-//   }, [instrumentKey]);
-
-//   /* =====================================================
-//        FUNDAMENTALS FETCH
-//     ===================================================== */
-//   useEffect(() => {
-//     let alive = true;
-
-//     async function loadFundamentals() {
-//       if (!isin) {
-//         setFundamentalsLoading(false);
-//         return;
-//       }
-//       setFundamentalsLoading(true);
-//       setFundamentalsError("");
-
-//       try {
-//         const response = await fetch(
-//           `${API}/api/detail-stock/fundamentals/${encodeURIComponent(isin)}`,
-//         );
-//         const json = await response.json();
-
-//         if (!response.ok || !json?.success) {
-//           throw new Error(json?.message || "Unable to load fundamentals.");
-//         }
-//         if (!alive) return;
-
-//         setFundamentalData(json.fundamentals || null);
-//         setShareholdingData(json.shareholding || []);
-//         setMutualFundData(json.mutualFunds || []);
-
-//         const periods = (json.shareholding || [])
-//           .flatMap((item) => (item.history || []).map((h) => h.period))
-//           .filter(
-//             (value, index, array) => value && array.indexOf(value) === index,
-//           );
-
-//         setSelectedShareholdingPeriod((current) => current || periods[0] || "");
-//       } catch (error) {
-//         if (!alive) return;
-//         setFundamentalsError(error.message || "Unable to load fundamentals.");
-//         setFundamentalData(null);
-//         setShareholdingData([]);
-//         setMutualFundData([]);
-//       } finally {
-//         if (alive) setFundamentalsLoading(false);
-//       }
-//     }
-
-//     loadFundamentals();
-//     const timer = setInterval(loadFundamentals, 15 * 60 * 1000);
-//     return () => {
-//       alive = false;
-//       clearInterval(timer);
-//     };
-//   }, [isin]);
-
-//   /* =====================================================
-//        HISTORICAL PRICE DATA FETCH
-//     ===================================================== */
-//   useEffect(() => {
-//     let alive = true;
-
-//     async function loadHistory() {
-//       setLoadingHistory(true);
-//       const params = getHistoryParams(chartRange);
-//       const to = new Date().toISOString().slice(0, 10);
-
-//       try {
-//         const url = `${API}/api/detail-stock/history/${encodeURIComponent(instrumentKey)}?unit=${encodeURIComponent(params.unit)}&interval=${encodeURIComponent(params.interval)}&from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(to)}`;
-//         const response = await fetch(url);
-//         if (!response.ok)
-//           throw new Error(`History request failed: ${response.status}`);
-
-//         const json = await response.json();
-//         if (!alive) return;
-
-//         const candles = Array.isArray(json?.data)
-//           ? json.data
-//           : Array.isArray(json?.candles)
-//             ? json.candles
-//             : [];
-//         setHistoricalData(candles);
-//       } catch (error) {
-//         console.error("Failed to fetch historical data:", error);
-//         if (alive) setHistoricalData([]);
-//       } finally {
-//         if (alive) setLoadingHistory(false);
-//       }
-//     }
-
-//     loadHistory();
-//     return () => {
-//       alive = false;
-//     };
-//   }, [chartRange, instrumentKey]);
-
-//   /* =====================================================
-//        LINE CHART PREPARATION
-//     ===================================================== */
-//   const lineChartData = useMemo(() => {
-//     const values = historicalData
-//       .map((item) =>
-//         typeof item === "number" || typeof item === "string"
-//           ? numberValue(item, NaN)
-//           : numberValue(item?.close ?? item?.ltp ?? item?.price, NaN),
-//       )
-//       .filter(Number.isFinite);
-
-//     if (!values.length && ltp > 0) return [ltp];
-//     return values;
-//   }, [historicalData, ltp]);
-
-//   const lineChartSvg = useMemo(() => {
-//     const width = 1000;
-//     const height = 300;
-//     const paddingX = 10;
-//     const paddingY = 20;
-
-//     if (!lineChartData.length) return { line: "", area: "", min: 0, max: 0 };
-
-//     const min = Math.min(...lineChartData);
-//     const max = Math.max(...lineChartData);
-//     const range = max - min || 1;
-//     const points = lineChartData.map((value, index) => {
-//       const x =
-//         lineChartData.length === 1
-//           ? width / 2
-//           : paddingX +
-//           (index / (lineChartData.length - 1)) * (width - paddingX * 2);
-//       const y =
-//         height - paddingY - ((value - min) / range) * (height - paddingY * 2);
-//       return `${x},${y}`;
-//     });
-
-//     return {
-//       line: points.join(" "),
-//       area:
-//         points.length > 0
-//           ? `M ${points[0]} L ${points.join(" L ")} L ${width - paddingX},${height} L ${paddingX},${height} Z`
-//           : "",
-//       min,
-//       max,
-//     };
-//   }, [lineChartData]);
-
-//   /* =====================================================
-//        COMPUTED VALUES & ABOUT SECTION DATA
-//     ===================================================== */
-//   const calculated52WeekLow = useMemo(
-//     () =>
-//       week52Low > 0
-//         ? week52Low
-//         : lineChartData.length
-//           ? Math.min(...lineChartData)
-//           : 0,
-//     [week52Low, lineChartData],
-//   );
-//   const calculated52WeekHigh = useMemo(
-//     () =>
-//       week52High > 0
-//         ? week52High
-//         : lineChartData.length
-//           ? Math.max(...lineChartData)
-//           : 0,
-//     [week52High, lineChartData],
-//   );
-
-//   function getRangePosition(current, lowValue, highValue) {
-//     const c = numberValue(current),
-//       l = numberValue(lowValue),
-//       h = numberValue(highValue);
-//     if (!c || h <= l) return "50%";
-//     return `${Math.max(0, Math.min(100, ((c - l) / (h - l)) * 100))}%`;
-//   }
-
-//   const effectivePrice =
-//     numberValue(priceLimit) > 0 ? numberValue(priceLimit) : ltp;
-//   const approximateRequired = numberValue(quantity) * effectivePrice;
-
-//   // Company Description Details
-//   const aboutInfo = useMemo(() => {
-//     const fullDescription =
-//       fundamentalData?.about ||
-//       `${symbol} is a Fortune Global 500 company and the largest private sector company in India. The company's growth mirrors the relentless spirit of dynamism and hope that defines the nation, with its core motto being 'Growth is Life'. Its activities span hydrocarbon exploration and production, petroleum refining and marketing, petrochemicals, retail, digital services, and green energy.`;
-
-//     return {
-//       description: fullDescription,
-//       ceo: fundamentalData?.ceo || "Mukesh D. Ambani",
-//       founded: fundamentalData?.foundedIn || "1973",
-//       nseSymbol: fundamentalData?.nseSymbol || "RELIANCE",
-//     };
-//   }, [fundamentalData, symbol]);
-
-//   const fundamentals = useMemo(() => {
-//     const data = fundamentalData || snapshot?.fundamentals;
-//     return [
-//       { label: "Market Cap", value: data?.marketCap ?? "N/A" },
-//       { label: "ROE", value: data?.roe ?? "N/A" },
-//       { label: "ROA", value: data?.roa ?? "N/A" },
-//       { label: "ROCE", value: data?.roce ?? "N/A" },
-//       { label: "P/E Ratio (TTM)", value: data?.peRatio ?? "N/A" },
-//       { label: "P/B Ratio", value: data?.pbRatio ?? "N/A" },
-//       { label: "EV / EBITDA", value: data?.evEbitda ?? "N/A" },
-//       { label: "EPS (Basic)", value: data?.eps ?? "N/A" },
-//       { label: "Revenue (Cr)", value: data?.revenue ?? "N/A" },
-//       { label: "Operating Profit (Cr)", value: data?.operatingProfit ?? "N/A" },
-//       { label: "Net Profit (Cr)", value: data?.netProfit ?? "N/A" },
-//       { label: "Dividend Yield", value: data?.dividendYield ?? "N/A" },
-//       { label: "Book Value", value: data?.bookValue ?? "N/A" },
-//       { label: "Debt to Equity", value: data?.debtToEquity ?? "N/A" },
-//       { label: "Face Value", value: data?.faceValue ?? "N/A" },
-//       { label: "Sector", value: data?.sector ?? "N/A" },
-//     ];
-//   }, [fundamentalData, snapshot]);
-
-//   const shareholdingPeriods = useMemo(() => {
-//     const data = shareholdingData || snapshot?.shareholding || [];
-//     const periods = [];
-//     for (const item of Array.isArray(data) ? data : []) {
-//       for (const row of item.history || []) {
-//         if (row.period && !periods.includes(row.period))
-//           periods.push(row.period);
-//       }
-//     }
-//     return periods;
-//   }, [shareholdingData, snapshot]);
-
-//   const selectedShareholding = useMemo(() => {
-//     const data = shareholdingData || snapshot?.shareholding || [];
-//     if (!Array.isArray(data)) return [];
-//     const period = selectedShareholdingPeriod || shareholdingPeriods[0];
-//     return data.map((item) => {
-//       const selected = (item.history || []).find(
-//         (row) => row.period === period,
-//       );
-//       return {
-//         label: item.label || item.name || item.category || "Unknown",
-//         percentage: numberValue(
-//           selected?.percentage ??
-//           selected?.value ??
-//           item.percentage ??
-//           item.percent,
-//         ),
-//       };
-//     });
-//   }, [
-//     shareholdingData,
-//     snapshot,
-//     selectedShareholdingPeriod,
-//     shareholdingPeriods,
-//   ]);
-
-//   const mutualFunds = useMemo(() => {
-//     const data = mutualFundData || snapshot?.mutualFunds;
-//     if (!Array.isArray(data)) return [];
-//     return data.map((fund, index) => ({
-//       name: fund.name || fund.fundName || `Fund ${index + 1}`,
-//       percentage: fund.percentage ?? fund.percent ?? fund.value ?? "N/A",
-//       value: fund.period
-//         ? `Latest quarter: ${fund.period}`
-//         : (fund.value ?? fund.marketValue ?? "N/A"),
-//     }));
-//   }, [mutualFundData, snapshot]);
-
-//   if (marketLoading && !snapshot) {
-//     return (
-//       <div className="precision-dashboard">
-//         <main className="precision-main">
-//           <div className="precision-content">
-//             <div className="precision-left">
-//               <section className="stock-card">Loading stock details…</section>
-//             </div>
-//           </div>
-//         </main>
-//       </div>
-//     );
-//   }
-
-//   return (
-//     <div className="precision-dashboard">
-//       <main className="precision-main">
-//         <div className="precision-content">
-//           {/* LEFT COLUMN */}
-//           <div className="precision-left">
-//             {/* STOCK HEADER CARD */}
-//             <section className="stock-card">
-//               <div className="stock-header">
-//                 <div className="stock-main-info">
-//                   <div>
-//                     <div className="stock-meta">
-//                       <span>{symbol}</span>
-//                       <span className="stock-meta-dot" />
-//                       <span>{exchange}</span>
-//                     </div>
-//                     <h1>{symbol}</h1>
-//                     <div className="stock-price-row">
-//                       <span className="stock-price">{formatCurrency(ltp)}</span>
-//                       <span
-//                         className={
-//                           positive ? "stock-positive" : "stock-negative"
-//                         }
-//                       >
-//                         {change >= 0 ? "+" : ""}
-//                         {formatNumber(change)} ({formatPercent(changePercent)})
-//                         1D
-//                       </span>
-//                     </div>
-//                     {marketError && (
-//                       <div className="detail-stock-error">{marketError}</div>
-//                     )}
-//                   </div>
-//                 </div>
-
-//                 <div className="stock-actions">
-//                   <button
-//                     className={isWatchlisted ? "watchlisted" : ""}
-//                     onClick={() => setIsWatchlisted((v) => !v)}
-//                     aria-label="Watchlist"
-//                   >
-//                     {isWatchlisted ? "★" : "☆"}
-//                   </button>
-//                 </div>
-//               </div>
-
-//               {/* REALTIME LINE CHART */}
-//               {/* REALTIME LINE CHART WITH HOVER CROSSHAIR */}
-//               <div className="chart-wrapper" style={{ height: "auto" }}>
-//                 <div
-//                   className="chart-area"
-//                   onMouseMove={handleMouseMove}
-//                   onMouseLeave={handleMouseLeave}
-//                 >
-//                   {loadingHistory && (
-//                     <div className="chart-loading">Updating chart…</div>
-//                   )}
-
-//                   {/* Floating Price & Time Tooltip */}
-//                   {hoverData && (
-//                     <div
-//                       className="chart-hover-tooltip"
-//                       style={{ left: `${hoverData.percentX}%` }}
-//                     >
-//                       <span className="tooltip-price">
-//                         {formatCurrency(hoverData.price)}
-//                       </span>
-//                       <span className="tooltip-divider">|</span>
-//                       <span className="tooltip-time">{hoverData.time}</span>
-//                     </div>
-//                   )}
-
-//                   <svg
-//                     className="stock-chart"
-//                     viewBox="0 0 1000 300"
-//                     preserveAspectRatio="none"
-//                   >
-//                     <defs>
-//                       <linearGradient
-//                         id="stockGradient"
-//                         x1="0"
-//                         y1="0"
-//                         x2="0"
-//                         y2="1"
-//                       >
-//                         <stop
-//                           offset="0%"
-//                           stopColor="#00b28e"
-//                           stopOpacity="0.22"
-//                         />
-//                         <stop
-//                           offset="100%"
-//                           stopColor="#00b28e"
-//                           stopOpacity="0"
-//                         />
-//                       </linearGradient>
-//                     </defs>
-
-//                     {lineChartSvg.area && (
-//                       <path d={lineChartSvg.area} fill="url(#stockGradient)" />
-//                     )}
-
-//                     {lineChartSvg.line && (
-//                       <polyline
-//                         points={lineChartSvg.line}
-//                         fill="none"
-//                         stroke="#00b28e"
-//                         strokeWidth="4"
-//                         strokeLinecap="round"
-//                         strokeLinejoin="round"
-//                       />
-//                     )}
-
-//                     {/* Crosshair Vertical Line & Hover Dot */}
-//                     {hoverData && (
-//                       <g className="hover-crosshair">
-//                         <line
-//                           x1={hoverData.x}
-//                           y1={0}
-//                           x2={hoverData.x}
-//                           y2={300}
-//                           stroke="#e2e8f0"
-//                           strokeWidth="2"
-//                         />
-//                         <circle
-//                           cx={hoverData.x}
-//                           cy={hoverData.y}
-//                           r="6"
-//                           fill="#ffffff"
-//                           stroke="#00b28e"
-//                           strokeWidth="3"
-//                         />
-//                       </g>
-//                     )}
-//                   </svg>
-
-//                   {!hoverData && (
-//                     <div className="chart-current-price">
-//                       {formatCurrency(ltp)}
-//                     </div>
-//                   )}
-//                 </div>
-//               </div>
-
-//               {/* RANGES */}
-//               <div className="chart-footer" style={{ marginTop: "1.5rem" }}>
-//                 <div className="chart-periods">
-//                   {RANGES.map((period) => (
-//                     <button
-//                       key={period}
-//                       className={chartRange === period ? "active" : ""}
-//                       onClick={() => setChartRange(period)}
-//                       disabled={loadingHistory}
-//                     >
-//                       <p style={{ margin: "0" }}>{period}</p>
-//                     </button>
-//                   ))}
-//                 </div>
-//               </div>
-//             </section>
-
-//             {/* PERFORMANCE SECTION */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>Performance</h2>
-//               </div>
-//               <div className="performance-card">
-//                 <div className="range-block">
-//                   <div className="range-title">
-//                     <p>Today's low</p>
-//                     <p>Today's high</p>
-//                   </div>
-//                   <div className="range-values">
-//                     <p>{formatCurrency(low)}</p>
-//                     <p>{formatCurrency(high)}</p>
-//                   </div>
-//                   <div className="range-line">
-//                     <div
-//                       className="range-marker"
-//                       style={{ left: getRangePosition(ltp, low, high) }}
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="range-block">
-//                   <div className="range-title">
-//                     <p>52 week low</p>
-//                     <p>52 week high</p>
-//                   </div>
-//                   <div className="range-values">
-//                     <p>
-//                       {calculated52WeekLow
-//                         ? formatCurrency(calculated52WeekLow)
-//                         : "—"}
-//                     </p>
-//                     <p>
-//                       {calculated52WeekHigh
-//                         ? formatCurrency(calculated52WeekHigh)
-//                         : "—"}
-//                     </p>
-//                   </div>
-//                   <div className="range-line">
-//                     <div
-//                       className="range-marker"
-//                       style={{
-//                         left: getRangePosition(
-//                           ltp,
-//                           calculated52WeekLow,
-//                           calculated52WeekHigh,
-//                         ),
-//                       }}
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="performance-stats">
-//                   <div>
-//                     <span>Open price</span>
-//                     <p>{open ? formatCurrency(open) : "—"}</p>
-//                   </div>
-//                   <div>
-//                     <span>Previous close</span>
-//                     <p>{previousClose ? formatCurrency(previousClose) : "—"}</p>
-//                   </div>
-//                   <div>
-//                     <span>Live volume</span>
-//                     <p>{volume ? formatCompact(volume) : "—"}</p>
-//                   </div>
-//                   <div>
-//                     <span>Upper circuit</span>
-//                     <p>{upperCircuit ? formatCurrency(upperCircuit) : "—"}</p>
-//                   </div>
-//                   <div>
-//                     <span>Lower circuit</span>
-//                     <p>{lowerCircuit ? formatCurrency(lowerCircuit) : "—"}</p>
-//                   </div>
-//                 </div>
-//               </div>
-//             </section>
-
-//             {/* FUNDAMENTALS */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>Fundamentals</h2>
-//               </div>
-//               <div className="fundamentals-card">
-//                 {fundamentalsLoading && <div>Loading fundamentals…</div>}
-//                 {!fundamentalsLoading && fundamentalsError && (
-//                   <div>Unable to load fundamentals: {fundamentalsError}</div>
-//                 )}
-//                 {!fundamentalsLoading &&
-//                   !fundamentalsError &&
-//                   fundamentals.map((item) => (
-//                     <div className="fundamental-row" key={item.label}>
-//                       <span>{item.label}</span>
-//                       <p>{item.value}</p>
-//                     </div>
-//                   ))}
-//               </div>
-//             </section>
-
-//             {/* SHAREHOLDING PATTERN */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>Shareholding Pattern</h2>
-//               </div>
-//               <div className="shareholding-card">
-//                 <div className="shareholding-periods">
-//                   {shareholdingPeriods.map((period) => (
-//                     <button
-//                       key={period}
-//                       className={
-//                         selectedShareholdingPeriod === period ? "active" : ""
-//                       }
-//                       onClick={() => setSelectedShareholdingPeriod(period)}
-//                     >
-//                       {period}
-//                     </button>
-//                   ))}
-//                 </div>
-
-//                 <div className="shareholding-list">
-//                   {selectedShareholding.length > 0 ? (
-//                     selectedShareholding.map((item) => (
-//                       <div className="shareholding-row" key={item.label}>
-//                         <div className="shareholding-label">
-//                           <span>{item.label}</span>
-//                           <p
-//                             style={{
-//                               color: "black",
-//                               margin: 0,
-//                               fontWeight: 500,
-//                               fontSize: 15,
-//                             }}
-//                           >
-//                             {item.percentage.toFixed(2)}%
-//                           </p>
-//                         </div>
-//                         <div className="shareholding-bar">
-//                           <div
-//                             style={{
-//                               width: `${Math.min(100, Math.max(0, item.percentage))}%`,
-//                             }}
-//                           />
-//                         </div>
-//                       </div>
-//                     ))
-//                   ) : (
-//                     <div>Shareholding data unavailable</div>
-//                   )}
-//                 </div>
-//               </div>
-//             </section>
-
-//             {/* FINANCIAL PERFORMANCE BAR CHART */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>Financial performance</h2>
-//               </div>
-
-//               <main className="dashboard-main">
-//                 <div className="chart-card">
-//                   <header className="chart-header">
-//                     <div className="header-date">Jun '26</div>
-//                     <div className="legend-row">
-//                       <div className="legend-group">
-//                         <div className="legend-title">
-//                           <span className="legend-badge bg-bar-revenue"></span>
-//                           <span className="legend-label">Revenue (CR)</span>
-//                         </div>
-//                         <div className="legend-metrics">
-//                           <span className="metric-value">₹3,46,807</span>
-//                           <span className="text-accent-green">+5.18%</span>
-//                         </div>
-//                       </div>
-
-//                       <div className="legend-group">
-//                         <div className="legend-title">
-//                           <span className="legend-badge bg-bar-profit"></span>
-//                           <span className="legend-label">Profit (CR)</span>
-//                         </div>
-//                         <div className="legend-metrics">
-//                           <span className="metric-value">₹23,001</span>
-//                           <span className="text-accent-green">+11.57%</span>
-//                         </div>
-//                       </div>
-//                     </div>
-//                   </header>
-
-//                   <div className="chart-area">
-//                     <div className="y-axis">
-//                       <span>400k</span>
-//                       <span>300k</span>
-//                       <span>200k</span>
-//                       <span>100k</span>
-//                       <span>0</span>
-//                     </div>
-
-//                     <div className="grid-lines-container">
-//                       <div className="grid-line-dashed"></div>
-//                       <div className="grid-line-dashed"></div>
-//                       <div className="grid-line-dashed"></div>
-//                       <div className="grid-line-dashed"></div>
-//                       <div className="grid-line-axis"></div>
-//                     </div>
-
-//                     <div className="bars-container">
-//                       {financialBarData.map((item, index) => (
-//                         <div key={index} className="bar-group">
-//                           <div
-//                             className="bar-single bg-bar-revenue"
-//                             style={{ height: item.revenueHeight }}
-//                           />
-//                           <div
-//                             className="bar-single bg-bar-profit"
-//                             style={{ height: item.profitHeight }}
-//                           />
-//                           <span
-//                             className={`x-axis-label ${item.active ? "active" : ""}`}
-//                           >
-//                             {item.quarter}
-//                           </span>
-//                         </div>
-//                       ))}
-//                     </div>
-//                   </div>
-//                 </div>
-
-//                 {/* GROWTH METRICS */}
-//                 <div className="growth-container">
-//                   <div className="growth-flex">
-//                     <div className="growth-section growth-section-left">
-//                       <div className="growth-header">
-//                         <h3 className="growth-title">Revenue Growth</h3>
-//                         <span className="growth-title">Value</span>
-//                       </div>
-//                       <div className="growth-rows">
-//                         <div className="growth-row">
-//                           <span className="growth-label">1Y (TTM)</span>
-//                           <span className="text-accent-green">+20%</span>
-//                         </div>
-//                         <div className="growth-row">
-//                           <span className="growth-label">3Y CAGR</span>
-//                           <span className="text-accent-green">+7.0%</span>
-//                         </div>
-//                       </div>
-//                     </div>
-
-//                     <div className="divider"></div>
-
-//                     <div className="growth-section growth-section-right">
-//                       <div className="growth-header">
-//                         <h3 className="growth-title">Profit Growth</h3>
-//                         <span className="growth-title">Value</span>
-//                       </div>
-//                       <div className="growth-rows">
-//                         <div className="growth-row">
-//                           <span className="growth-label">1Y (TTM)</span>
-//                           <span className="text-accent-red">-25%</span>
-//                         </div>
-//                         <div className="growth-row">
-//                           <span className="growth-label">3Y CAGR</span>
-//                           <span className="text-accent-green">+9%</span>
-//                         </div>
-//                       </div>
-//                     </div>
-//                   </div>
-//                 </div>
-//               </main>
-//             </section>
-
-//             {/* ABOUT SECTION */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>About</h2>
-//               </div>
-
-//               <div className="about-card">
-//                 <p className="about-description">
-//                   {isAboutExpanded
-//                     ? aboutInfo.description
-//                     : `${aboutInfo.description.slice(0, 190)}...`}
-//                   <button
-//                     type="button"
-//                     className="read-more-btn"
-//                     onClick={() => setIsAboutExpanded((prev) => !prev)}
-//                   >
-//                     {isAboutExpanded ? "Read less" : "Read more"}
-//                   </button>
-//                 </p>
-
-//                 <div className="about-meta-grid">
-//                   <div className="about-meta-item">
-//                     <span className="about-meta-label">CEO/MD</span>
-//                     <p className="about-meta-value">{aboutInfo.ceo}</p>
-//                   </div>
-//                   <div className="about-meta-item">
-//                     <span className="about-meta-label">Founded in</span>
-//                     <p className="about-meta-value">{aboutInfo.founded}</p>
-//                   </div>
-//                   <div className="about-meta-item">
-//                     <span className="about-meta-label">NSE symbol</span>
-//                     <p className="about-meta-value">{aboutInfo.nseSymbol}</p>
-//                   </div>
-//                 </div>
-//               </div>
-//             </section>
-
-//             {/* MUTUAL FUNDS */}
-//             {/* MUTUAL FUNDS INVESTED */}
-//             <section className="content-section">
-//               <div className="section-heading">
-//                 <h2>Mutual Funds Invested ({mutualFunds.length || 4})</h2>
-//               </div>
-
-//               <div className="mf-table-card">
-//                 {/* Header Row */}
-//                 <div className="mf-table-header">
-//                   <span className="mf-col-name">Fund name</span>
-//                   <span className="mf-col-aum">AUM%</span>
-//                 </div>
-
-//                 {/* Table Rows */}
-//                 <div className="mf-table-body">
-//                   {(mutualFunds.length > 0
-//                     ? mutualFunds
-//                     : [
-//                       {
-//                         name: "HSBC Large and Mid Cap Fund Direct Growth",
-//                         percentage: 0.37,
-//                         logo: "https://logo.clearbit.com/hsbc.com",
-//                       },
-//                       {
-//                         name: "Mahindra Manulife Focused Fund Direct Growth",
-//                         percentage: 6.37,
-//                         logo: "https://logo.clearbit.com/mahindramanulife.com",
-//                       },
-//                       {
-//                         name: "Mahindra Manulife Flexi Cap Fund Direct Growth",
-//                         percentage: 1.91,
-//                         logo: "https://logo.clearbit.com/mahindramanulife.com",
-//                       },
-//                       {
-//                         name: "Tata Flexi Cap Fund Direct Growth",
-//                         percentage: 4.37,
-//                         logo: "https://logo.clearbit.com/tatamutualfund.com",
-//                       },
-//                     ]
-//                   ).map((fund, index) => (
-//                     <div className="mf-row" key={index}>
-//                       <div className="mf-left-group">
-//                         <div className="mf-logo-wrapper">
-//                           <img
-//                             src={fund.logo || fund.icon}
-//                             alt={fund.name}
-//                             className="mf-logo-img"
-//                             onError={(e) => {
-//                               e.target.style.display = "none";
-//                               e.target.nextSibling.style.display = "flex";
-//                             }}
-//                           />
-//                           <div
-//                             className="mf-logo-fallback"
-//                             style={{ display: "none" }}
-//                           >
-//                             {fund.name ? fund.name[0] : "M"}
-//                           </div>
-//                         </div>
-//                         <span className="mf-fund-name">{fund.name}</span>
-//                       </div>
-
-//                       <div className="mf-aum-value">
-//                         {typeof fund.percentage === "number"
-//                           ? fund.percentage.toFixed(2)
-//                           : fund.percentage}
-//                       </div>
-//                     </div>
-//                   ))}
-//                 </div>
-//               </div>
-//             </section>
-//           </div>
-
-//           {/* RIGHT COLUMN TRADING PANEL */}
-//           <div
-//             style={{
-//               height: "fit-content",
-//               width: "25rem",
-//               minWidth: "20rem",
-//               position: "sticky",
-//               top: "140px",
-//             }}
-//           >
-//             <div className="trading-panel">
-//               <div className="trading-header">
-//                 <p
-//                   style={{
-//                     margin: "0",
-//                     fontSize: "1rem",
-//                     fontWeight: "500",
-//                     lineHeight: "1.357rem",
-//                   }}
-//                 >
-//                   {symbol}
-//                 </p>
-//                 <div className="trading-market-info">
-//                   <span>NSE</span>
-//                   <span>{formatCurrency(ltp)}</span>
-//                   <span>BSE</span>
-//                   <span>{bsePrice ? formatCurrency(bsePrice) : "—"}</span>
-//                   <span className={positive ? "positive" : "negative"}>
-//                     {formatPercent(changePercent)}
-//                   </span>
-//                 </div>
-//               </div>
-
-//               <div className="order-tabs">
-//                 <button
-//                   className={orderType === "BUY" ? "active buy" : ""}
-//                   onClick={() => setOrderType("BUY")}
-//                 >
-//                   BUY
-//                 </button>
-//                 <button
-//                   className={orderType === "SELL" ? "active sell" : ""}
-//                   onClick={() => setOrderType("SELL")}
-//                 >
-//                   SELL
-//                 </button>
-//               </div>
-
-//               <div className="trading-body">
-//                 <div
-//                   style={{
-//                     borderBottom: "1px solid #e2e6ea",
-//                     paddingBottom: ".5rem",
-//                   }}
-//                 >
-//                   <div className="order-field">
-//                     <div className="order-label">
-//                       <span>Qty</span>
-//                     </div>
-//                     <input
-//                       type="number"
-//                       min="0"
-//                       value={quantity}
-//                       onChange={(e) => setQuantity(e.target.value)}
-//                       placeholder="0"
-//                     />
-//                   </div>
-//                   <div className="order-field">
-//                     <div className="order-label">
-//                       <span>Price Limit</span>
-//                     </div>
-//                     <input
-//                       type="number"
-//                       min="0"
-//                       value={priceLimit}
-//                       placeholder={ltp ? String(ltp) : ""}
-//                       onChange={(e) => setPriceLimit(e.target.value)}
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="order-summary">
-//                   <span>Balance : ₹0</span>
-//                   <div style={{ display: "flex", flexDirection: "column" }}>
-//                     <p
-//                       style={{
-//                         margin: "0",
-//                         paddingBottom: ".25rem",
-//                         maxWidth: "5rem",
-//                         textAlign: "end",
-//                       }}
-//                     >
-//                       Approx
-//                     </p>
-//                     <p style={{ margin: "0" }}>
-//                       {formatCurrency(approximateRequired)}
-//                     </p>
-//                   </div>
-//                 </div>
-
-//                 <button
-//                   className={`place-order ${orderType === "BUY" ? "buy-button" : "sell-button"}`}
-//                   disabled={
-//                     !marketOpen || !quantity || numberValue(quantity) <= 0
-//                   }
-//                 >
-//                   {orderType}
-//                 </button>
-//               </div>
-//             </div>
-//           </div>
-//         </div>
-//       </main>
-//     </div>
-//   );
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useParams } from "react-router-dom";
+import axios from "axios";
 import detailStockSocket from "./detailStockWebSocketConnection";
-// import "./FinancialDashboard.css";
 
-const API = process.env.REACT_APP_DETAIL_STOCK_API || "http://localhost:3011";
-const DEFAULT_INSTRUMENT = "NSE_EQ|INE020B01018";
+
+/* API CONFIG */
+const DETAIL_API = process.env.REACT_APP_DETAIL_STOCK_API || "http://localhost:3011";
+const STOCK_API = process.env.REACT_APP_STOCK_API || "http://localhost:3001";
+
+
+const ENDPOINTS = {
+  stock: (symbol) => `${STOCK_API}/stock/${encodeURIComponent(symbol)}`,
+
+  marketStatus: () => `${DETAIL_API}/api/detail-stock/market-status`,
+
+  snapshot: (instrumentKey) =>
+    `${DETAIL_API}/api/detail-stock/snapshot/${encodeURIComponent(
+      instrumentKey,
+    )}`,
+
+  history: (instrumentKey, params) =>
+    `${DETAIL_API}/api/detail-stock/history/${encodeURIComponent(
+      instrumentKey,
+    )}?unit=${encodeURIComponent(params.unit)}&interval=${encodeURIComponent(
+      params.interval,
+    )}&from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(
+      params.to,
+    )}`,
+
+  fundamentals: (isin) =>
+    `${DETAIL_API}/api/detail-stock/fundamentals/${encodeURIComponent(isin)}`,
+
+  shareholding: (isin) =>
+    `${DETAIL_API}/api/detail-stock/shareholding/${encodeURIComponent(isin)}`,
+
+  financials: (isin) =>
+    `${DETAIL_API}/api/detail-stock/financials/${encodeURIComponent(isin)}`,
+
+  mutualFunds: (isin) =>
+    `${DETAIL_API}/api/detail-stock/mutual-funds/${encodeURIComponent(isin)}`,
+
+  profile: (isin) =>
+    `${DETAIL_API}/api/detail-stock/profile/${encodeURIComponent(isin)}`,
+};
+
 const RANGES = ["1D", "1W", "1M", "3M", "6M", "1Y", "3Y", "5Y", "All"];
 
 
-/* =========================================================
-   HELPERS
-========================================================= */
-
+/* GENERIC HELPERS */
 function numberValue(value, fallback = 0) {
+  if (value === null || value === undefined || value === "") return fallback
+
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
 
+function nullableNumber(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+    console.log("FULL SNAPSHOT:", JSON.stringify(value));
+  }
+
+  return null;
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function formatNumber(value, digits = 2) {
-  const n = numberValue(value);
+  if (value === null || value === undefined || value === "") return "—";
+
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return String(value);
+
   return n.toLocaleString("en-IN", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
@@ -1360,7 +90,12 @@ function formatNumber(value, digits = 2) {
 }
 
 function formatCurrency(value) {
-  const n = numberValue(value);
+  if (value === null || value === undefined || value === "") return "—";
+
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return "—";
+
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -1370,49 +105,31 @@ function formatCurrency(value) {
 }
 
 function formatCompact(value) {
-  const n = numberValue(value);
+  if (value === null || value === undefined || value === "") return "—";
+
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) {
+    return String(value);
+  }
+
   return n.toLocaleString("en-IN");
 }
 
 function formatPercent(value) {
-  const n = numberValue(value);
+  if (value === null || value === undefined || value === "") return "—";
+
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) {
+    return String(value);
+  }
+
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
-function getDateDaysAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
-}
-
-function getHistoryParams(range) {
-  switch (range) {
-    case "1D":
-      return { unit: "minutes", interval: "1", from: getDateDaysAgo(1) };
-    case "1W":
-      return { unit: "minutes", interval: "5", from: getDateDaysAgo(7) };
-    case "1M":
-      return { unit: "days", interval: "1", from: getDateDaysAgo(31) };
-    case "3M":
-      return { unit: "days", interval: "1", from: getDateDaysAgo(92) };
-    case "6M":
-      return { unit: "days", interval: "1", from: getDateDaysAgo(183) };
-    case "1Y":
-      return { unit: "days", interval: "1", from: getDateDaysAgo(365) };
-    case "3Y":
-      return { unit: "weeks", interval: "1", from: getDateDaysAgo(1095) };
-    case "5Y":
-      return { unit: "weeks", interval: "1", from: getDateDaysAgo(1825) };
-    case "All":
-      return { unit: "months", interval: "1", from: "2000-01-01" };
-    default:
-      return { unit: "minutes", interval: "1", from: getDateDaysAgo(1) };
-  }
-}
-
-/* =========================================================
-   BACKEND DATA NORMALIZATION
-========================================================= */
+/* 
+   DATE HELPER*/
 
 function getIndiaDate() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -1423,35 +140,195 @@ function getIndiaDate() {
   }).format(new Date());
 }
 
-function firstNumber(...values) {
+
+function getDateDaysAgo(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+
+function getHistoryParams(range) {
+  switch (range) {
+    case "1D": return { unit: "minutes", interval: "1", from: getDateDaysAgo(1), };
+    case "1W": return { unit: "minutes", interval: "5", from: getDateDaysAgo(7), };
+    case "1M": return { unit: "days", interval: "1", from: getDateDaysAgo(31), };
+    case "3M": return { unit: "days", interval: "1", from: getDateDaysAgo(92), };
+    case "6M": return { unit: "days", interval: "1", from: getDateDaysAgo(183), };
+    case "1Y": return { unit: "days", interval: "1", from: getDateDaysAgo(365), };
+    case "3Y": return { unit: "weeks", interval: "1", from: getDateDaysAgo(1095), };
+    case "5Y": return { unit: "weeks", interval: "1", from: getDateDaysAgo(1825), };
+    case "All": return { unit: "months", interval: "1", from: "2000-01-01", };
+
+
+    default: return { unit: "minutes", interval: "1", from: getDateDaysAgo(1), };
+  }
+}
+
+
+
+/* RESPONSE NORMALIZATION */
+function unwrapResponse(json) {
+  if (!json) return null;
+  if (json.data !== undefined) return json.data;
+
+  return json;
+}
+
+function getArray(...values) {
   for (const value of values) {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
+    if (Array.isArray(value)) return value;
   }
-  return null;
-}
 
-function formatMaybe(value, suffix = "") {
-  if (value === null || value === undefined || value === "") return "N/A";
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return `${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${suffix}`;
-  }
-  return String(value);
-}
-
-function extractHistoryRows(source) {
-  if (!source) return [];
-  if (Array.isArray(source)) return source;
-  if (Array.isArray(source?.income_statement)) return source.income_statement;
-  if (Array.isArray(source?.full_statement)) return source.full_statement;
   return [];
 }
 
+function normalizeStock(json, fallbackSymbol) {
+  const data = unwrapResponse(json) || {};
+
+  return {
+    ...data,
+
+    symbol: data.symbol || data.tradingSymbol || data.trading_symbol || fallbackSymbol,
+
+    companyName: data.companyName || data.company_name || data.name || fallbackSymbol,
+
+    name: data.name || data.companyName || data.company_name || fallbackSymbol,
+
+    exchange: data.exchange || data.exchangeName || data.exchange_name || "NSE",
+
+    instrumentKey: data.instrumentKey || data.instrument_key || data.instrumentkey || data.instrument,
+
+    isin: data.isin || data.ISIN || data.isin_code || data.isinCode,
+  };
+}
+
+
+
+/* FUNDAMENTALS */
+function normalizeFundamentals(json) {
+  const data = unwrapResponse(json) || {};
+  return data.fundamentals || data.fundamental || data.metrics || data;
+}
+
+
+/* SHAREHOLDING */
+function normalizeShareholding(json) {
+  const data = unwrapResponse(json) || {};
+
+  return getArray(
+    data.shareholding,
+    data.shareholdingPattern,
+    data.shareholding_pattern,
+    data.holdings,
+    data.data,
+    Array.isArray(data) ? data : null,
+  );
+}
+
+
+/* MUTUAL FUNDS */
+function normalizeMutualFunds(json) {
+  const data = unwrapResponse(json) || {};
+
+  return getArray(
+    data.mutualFunds,
+    data.mutual_funds,
+    data.mutualFundHoldings,
+    data.mfHoldings,
+    data.data,
+    Array.isArray(data) ? data : null,
+  );
+}
+
+
+/* FINANCIALS */
+function normalizeFinancials(json) {
+  const data = unwrapResponse(json) || {};
+
+  return (
+    data.financials ||
+    data.financialPerformance ||
+    data.financial_performance ||
+    data.incomeStatement ||
+    data.income_statement ||
+    data
+  );
+}
+
+
+/* HISTORY */
+function normalizeHistory(json) {
+  const data = unwrapResponse(json);
+
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.candles)) return data.candles;
+  if (Array.isArray(data?.history)) return data.history;
+  if (Array.isArray(data?.prices)) return data.prices;
+
+  return [];
+}
+
+
+/* MARKET STATUS */
+function normalizeMarketStatus(json) {
+  const data = unwrapResponse(json) || {};
+
+  if (typeof data === "boolean") return data;
+  if (typeof data.marketOpen === "boolean") return data.marketOpen;
+  if (typeof data.isOpen === "boolean") return data.isOpen;
+  if (typeof data.open === "boolean") return data.open;
+
+  const status = String(data.marketStatus || data.status || data.market_status || "",).toLowerCase();
+
+  if (status === "open" || status === "market_open" || status === "live") return true;
+  if (status === "closed" || status === "market_closed") return false;
+
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+    .format(new Date())
+    .split(":");
+
+
+  const hour = Number(parts[0]);
+  const minute = Number(parts[1]);
+  const totalMinutes = hour * 60 + minute;
+
+  return totalMinutes >= 9 * 60 + 15 && totalMinutes <= 15 * 60 + 30;
+}
+
+
+
+/* FINANCIAL HISTORY */
+function extractHistoryRows(source) {
+  if (!source) return [];
+  if (Array.isArray(source)) return source;
+  if (Array.isArray(source.income_statement)) return source.income_statement;
+  if (Array.isArray(source.incomeStatement)) return source.incomeStatement;
+  if (Array.isArray(source.full_statement)) return source.full_statement;
+  if (Array.isArray(source.financials)) return source.financials;
+
+  return [];
+}
+
+
 function extractCategoryHistory(source, category) {
   const rows = extractHistoryRows(source);
-  const row = rows.find((item) => String(item?.category || "").toLowerCase() === category);
+
+  const row = rows.find(
+    (item) =>
+      String(item?.category || item?.name || item?.type || "").toLowerCase() ===
+      category.toLowerCase(),
+  );
+
   return Array.isArray(row?.history) ? row.history : [];
 }
+
 
 function normalizeFinancialRows(source) {
   const revenue = extractCategoryHistory(source, "revenue");
@@ -1459,307 +336,515 @@ function normalizeFinancialRows(source) {
   const byPeriod = new Map();
 
   for (const row of revenue) {
-    const period = row?.period || row?.date || row?.year || "";
+    const period = row?.period || row?.date || row?.year || row?.quarter || "";
+
     if (!period) continue;
+
     byPeriod.set(period, {
       quarter: period,
-      revenue: firstNumber(row?.value, row?.company_value, row?.amount, row?.revenue) || 0,
+
+      revenue:
+        nullableNumber(
+          row?.value,
+          row?.company_value,
+          row?.amount,
+          row?.revenue,
+        ) || 0,
+
       profit: 0,
     });
   }
 
+
   for (const row of profit) {
-    const period = row?.period || row?.date || row?.year || "";
+    const period = row?.period || row?.date || row?.year || row?.quarter || "";
+
     if (!period) continue;
-    const existing = byPeriod.get(period) || { quarter: period, revenue: 0, profit: 0 };
-    existing.profit = firstNumber(row?.value, row?.company_value, row?.amount, row?.netProfit) || 0;
+
+    const existing = byPeriod.get(period) || {
+      quarter: period,
+      revenue: 0,
+      profit: 0,
+    };
+
+    existing.profit =
+      nullableNumber(
+        row?.value,
+        row?.company_value,
+        row?.amount,
+        row?.netProfit,
+        row?.net_profit,
+      ) || 0;
+
     byPeriod.set(period, existing);
   }
 
-  return [...byPeriod.values()].sort((a, b) => String(a.quarter).localeCompare(String(b.quarter)));
+  return [...byPeriod.values()].sort((a, b) =>
+    String(a.quarter).localeCompare(String(b.quarter)),
+  );
 }
 
-function normalizeFundamentalsResponse(json) {
-  if (!json) return null;
-  if (json.fundamentals || json.profile || json.shareholding || json.incomeStatement) return json;
-  return json.data || json;
-}
 
+/* ABOUT / COMPANY PROFILE */
 function normalizeAbout(profile, fundamentals, fallbackSymbol) {
   const p = profile || {};
   const f = fundamentals || {};
+
   return {
-    description: p.description || p.about || p.business_description || f.about || "Company profile information is not available from the backend.",
-    ceo: p.ceo || p.ceo_name || p.management?.ceo || "N/A",
-    founded: p.foundedIn || p.founded_in || p.incorporation_date || "N/A",
+    description: p.company_profile || p.description || p.about || p.business_description || p.businessDescription || f.about || f.description || "Company profile information is not available from the backend.",
+
+    sector: p.sector || f.sector || "N/A",
+    sectorMarketCapInr: p.sector_market_cap_inr || null,
+    sectorMarketCapUsd: p.sector_market_cap_usd || null,
+    ceo: p.ceo || p.ceo_name || p.ceoName || p.management?.ceo || "N/A",
+    founded: p.foundedIn || p.founded_in || p.founded || p.incorporation_date || "N/A",
     nseSymbol: p.nseSymbol || p.nse_symbol || p.symbol || fallbackSymbol || "N/A",
   };
 }
 
-/* =========================================================
-   COMPONENT
-========================================================= */
 
-export default function ShareholdingPattern({
-  instrumentKey = DEFAULT_INSTRUMENT,
-  isin = instrumentKey.includes("|") ? instrumentKey.split("|")[1] : "",
-  symbol = "Reliance Industries Limited",
-  exchange = "NSE",
-}) {
-  /* =====================================================
-       MARKET STATE
-    ===================================================== */
+/* COMPONENT */
+export default function ShareholdingPattern() {
+  const { symbol: routeSymbol } = useParams();
+  const location = useLocation();
+  const initialStock = location.state || null;
+  const symbol = routeSymbol || initialStock?.symbol || initialStock?.tradingSymbol || "";
+
+  /* STATE */
+  const [stockInfo, setStockInfo] = useState(initialStock);
   const [snapshot, setSnapshot] = useState(null);
   const [marketOpen, setMarketOpen] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState("");
-  const [hoverData, setHoverData] = useState(null);
-
-  /* =====================================================
-       HISTORY & UI
-    ===================================================== */
+  const [stockLoading, setStockLoading] = useState(true);
+  const [stockError, setStockError] = useState("");
+  const [history, setHistory] = useState([]);
   const [chartRange, setChartRange] = useState("1D");
-  const [historicalData, setHistoricalData] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [orderType, setOrderType] = useState("BUY");
-  const [isWatchlisted, setIsWatchlisted] = useState(false);
-  const [quantity, setQuantity] = useState("");
-  const [priceLimit, setPriceLimit] = useState("");
-  const [isAboutExpanded, setIsAboutExpanded] = useState(false);
-
-  /* =====================================================
-       FUNDAMENTALS & SHAREHOLDING
-    ===================================================== */
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [fundamentalData, setFundamentalData] = useState(null);
-  const [shareholdingData, setShareholdingData] = useState(null);
-  const [mutualFundData, setMutualFundData] = useState(null);
-  const [selectedShareholdingPeriod, setSelectedShareholdingPeriod] =
-    useState("");
+  const [shareholdingData, setShareholdingData] = useState([]);
+  const [mutualFundData, setMutualFundData] = useState([]);
+  const [financialData, setFinancialData] = useState(null);
+  const [profileData, setProfileData] = useState(null);
   const [fundamentalsLoading, setFundamentalsLoading] = useState(true);
   const [fundamentalsError, setFundamentalsError] = useState("");
+  const [selectedShareholdingPeriod, setSelectedShareholdingPeriod] = useState("");
+  const [hoverData, setHoverData] = useState(null);
+  const [isAboutExpanded, setIsAboutExpanded] = useState(false);
+  const [orderType, setOrderType] = useState("BUY");
+  const [quantity, setQuantity] = useState("");
+  const [priceLimit, setPriceLimit] = useState("");
+  const [isWatchlisted, setIsWatchlisted] = useState(false);
 
-  /* =====================================================
-       NORMALIZED MARKET VALUES
-    ===================================================== */
-  const ltp = numberValue(
-    snapshot?.ltp ??
-    snapshot?.price ??
-    snapshot?.lastPrice ??
-    snapshot?.close ??
-    0,
-  );
-  const open = numberValue(snapshot?.open ?? snapshot?.openPrice ?? 0);
-  const high = numberValue(snapshot?.high ?? snapshot?.dayHigh ?? 0);
-  const low = numberValue(snapshot?.low ?? snapshot?.dayLow ?? 0);
-  const previousClose = numberValue(
-    snapshot?.previousClose ?? snapshot?.prevClose ?? snapshot?.close ?? 0,
-  );
-  const volume = numberValue(snapshot?.volume ?? snapshot?.totalVolume ?? 0);
-  const change = numberValue(
-    snapshot?.change ??
-    snapshot?.netChange ??
-    (ltp && previousClose ? ltp - previousClose : 0),
-  );
-  const changePercent = numberValue(
-    snapshot?.changePercent ??
-    snapshot?.changePercentage ??
-    (previousClose ? (change / previousClose) * 100 : 0),
-  );
-  const upperCircuit = numberValue(
-    snapshot?.upperCircuit ??
-    snapshot?.upperLimit ??
-    snapshot?.upperCircuitLimit ??
-    0,
-  );
-  const lowerCircuit = numberValue(
-    snapshot?.lowerCircuit ??
-    snapshot?.lowerLimit ??
-    snapshot?.lowerCircuitLimit ??
-    0,
-  );
-  const week52Low = numberValue(
-    snapshot?.week52Low ?? snapshot?.yearLow ?? snapshot?.fiftyTwoWeekLow ?? 0,
-  );
-  const week52High = numberValue(
-    snapshot?.week52High ??
-    snapshot?.yearHigh ??
-    snapshot?.fiftyTwoWeekHigh ??
-    0,
-  );
-  const bsePrice = numberValue(
-    snapshot?.bsePrice ??
-    snapshot?.bseLtp ??
-    snapshot?.bseLastPrice ??
-    snapshot?.bse ??
-    0,
-  );
-  const positive = change >= 0;
 
-  /* =====================================================
-       FINANCIAL BAR CHART SCALED DATA
-    ===================================================== */
-  const financialRows = useMemo(() => {
-    return normalizeFinancialRows(
-      fundamentalData?.incomeStatement ||
-      fundamentalData?.income_statement ||
-      fundamentalData?.financialPerformance ||
-      snapshot?.incomeStatement,
-    );
-  }, [fundamentalData, snapshot]);
-
-  const financialBarData = useMemo(() => {
-    if (!financialRows.length) return [];
-    const maxValue = Math.max(1, ...financialRows.flatMap((x) => [x.revenue, x.profit]));
-    return financialRows.slice(-5).map((item, index, rows) => ({
-      ...item,
-      revenueHeight: `${(item.revenue / maxValue) * 100}%`,
-      profitHeight: `${(item.profit / maxValue) * 100}%`,
-      active: index === rows.length - 1,
-    }));
-  }, [financialRows]);
-
-  const lineChartPreparedData = useMemo(() => {
-    if (!historicalData.length) {
-      return ltp > 0 ? [{ price: ltp, time: "Live" }] : [];
-    }
-    return historicalData
-      .map((item) => {
-        let price = 0;
-        let timeStr = "";
-
-        if (typeof item === "number" || typeof item === "string") {
-          price = numberValue(item, 0);
-        } else if (Array.isArray(item)) {
-          // Handle OHLC candle format [timestamp, open, high, low, close]
-          timeStr = item[0]
-            ? new Date(item[0]).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-            : "";
-          price = numberValue(item[4] ?? item[1], 0);
-        } else {
-          price = numberValue(item?.close ?? item?.ltp ?? item?.price, 0);
-          const rawTime = item?.time ?? item?.timestamp ?? item?.date;
-          timeStr = rawTime
-            ? new Date(rawTime).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-            : "";
-        }
-
-        return { price, time: timeStr || "12:22 PM" };
-      })
-      .filter((d) => Number.isFinite(d.price));
-  }, [historicalData, ltp]);
-
-  // 3. Mouse Movement Handler for Crosshair and Tooltip
-  const handleMouseMove = (e) => {
-    if (!lineChartPreparedData.length) return;
-
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const percentage = Math.max(0, Math.min(1, mouseX / rect.width));
-
-    const index = Math.round(percentage * (lineChartPreparedData.length - 1));
-    const point = lineChartPreparedData[index];
-
-    if (!point) return;
-
-    const width = 1000;
-    const height = 300;
-    const paddingX = 10;
-    const paddingY = 20;
-
-    const min = lineChartSvg.min;
-    const max = lineChartSvg.max;
-    const range = max - min || 1;
-
-    const svgX =
-      lineChartPreparedData.length === 1
-        ? width / 2
-        : paddingX +
-        (index / (lineChartPreparedData.length - 1)) * (width - paddingX * 2);
-    const svgY =
-      height -
-      paddingY -
-      ((point.price - min) / range) * (height - paddingY * 2);
-
-    setHoverData({
-      price: point.price,
-      time: point.time,
-      x: svgX,
-      y: svgY,
-      percentX: (mouseX / rect.width) * 100,
-    });
-  };
-
-  const handleMouseLeave = () => {
-    setHoverData(null);
-  };
-
-  /* =====================================================
-       WEBSOCKET CONNECTION
-     ===================================================== */
+  /* STEP 1 LOAD STOCK IDENTIFIER */
   useEffect(() => {
     let alive = true;
-    let subscribed = false;
+
+    async function loadStock() {
+      if (!symbol) {
+        setStockLoading(false);
+        setStockError("Stock symbol is missing from the URL.");
+        return;
+      }
+
+      setStockLoading(true);
+      setStockError("");
+
+      try {
+        const response = await axios.get(ENDPOINTS.stock(symbol), {
+          timeout: 15000,
+        });
+
+        if (!alive) return;
+
+        const stock = normalizeStock(response.data, symbol);
+
+        setStockInfo((previous) => ({
+          ...(previous || {}),
+          ...stock,
+        }));
+      } catch (error) {
+        console.error("Stock details failed:", error);
+
+        if (!alive) return;
+
+        setStockError(
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to load stock details.",
+        );
+      } finally {
+        if (alive) {
+          setStockLoading(false);
+        }
+      }
+    }
+
+    loadStock();
+
+    return () => {
+      alive = false;
+    };
+  }, [symbol]);
+
+
+  /* IDENTIFIERS */
+  const instrumentKey = stockInfo?.instrumentKey || stockInfo?.instrument_key || initialStock?.instrumentKey || initialStock?.instrument_key || "";
+  const isin = stockInfo?.isin || stockInfo?.ISIN || initialStock?.isin || initialStock?.ISIN || "";
+
+
+  /* STEP 2 LOAD MARKET STATUS + INITIAL SNAPSHOT*/
+  const loadMarketData = useCallback(async (key) => {
+    if (!key) return;
+
     setMarketLoading(true);
     setMarketError("");
 
-    const belongsToStock = (data) =>
-      data && (!data.instrumentKey || data.instrumentKey === instrumentKey);
+    try {
+      const [statusResult, snapshotResult] = await Promise.allSettled([
+        axios.get(ENDPOINTS.marketStatus(), {
+          timeout: 8000,
+        }),
 
-    const applySnapshot = (data) => {
+        axios.get(ENDPOINTS.snapshot(key), {
+          timeout: 10000,
+        }),
+      ]);
+
+      let isOpen = null;
+      let initialSnapshot = null;
+
+      if (statusResult.status === "fulfilled") {
+        isOpen = normalizeMarketStatus(statusResult.value.data);
+      }
+
+      if (snapshotResult.status === "fulfilled") {
+        initialSnapshot = unwrapResponse(snapshotResult.value.data);
+
+        if (typeof initialSnapshot?.marketOpen === "boolean") {
+          isOpen = initialSnapshot.marketOpen;
+        }
+      }
+
+      if (isOpen === null) {
+        isOpen = normalizeMarketStatus({});
+      }
+
+      setMarketOpen(Boolean(isOpen));
+
+      if (initialSnapshot) {
+        setSnapshot(initialSnapshot);
+      }
+
+      if (statusResult.status === "rejected" && snapshotResult.status === "rejected") {
+        throw new Error("Market data endpoints are unavailable.");
+      }
+    } catch (error) {
+      console.error("Market data failed:", error);
+
+      setMarketError(error?.response?.data?.message || error?.message || "Unable to load market data.",);
+
+      setMarketOpen(false);
+    } finally {
+      setMarketLoading(false);
+    }
+  }, []);
+
+
+  useEffect(() => {
+    if (!instrumentKey) return;
+
+    loadMarketData(instrumentKey);
+  }, [instrumentKey, loadMarketData]);
+
+
+  /* STEP 3 LOAD ALL STATIC DATA AFTER ISIN IS KNOWN*/
+  useEffect(() => {
+    if (!isin) {
+      setFundamentalsLoading(false);
+      return;
+    }
+
+    let alive = true;
+
+    async function requestJson(url) {
+      const response = await axios.get(url, {
+        timeout: 15000,
+      });
+
+      return response.data;
+    }
+
+    async function loadAllStaticData() {
+      setFundamentalsLoading(true);
+      setFundamentalsError("");
+
+      const results = await Promise.allSettled([
+        requestJson(ENDPOINTS.fundamentals(isin)),
+        requestJson(ENDPOINTS.shareholding(isin)),
+        requestJson(ENDPOINTS.financials(isin)),
+        requestJson(ENDPOINTS.mutualFunds(isin)),
+        requestJson(ENDPOINTS.profile(isin)),
+      ]);
+
+      if (!alive) return;
+
+
+      /* FUNDAMENTALS */
+      if (results[0].status === "fulfilled") {
+        const data = normalizeFundamentals(results[0].value);
+
+        setFundamentalData(data);
+
+        const combinedShareholding = normalizeShareholding(results[0].value);
+        const combinedMF = normalizeMutualFunds(results[0].value);
+
+        if (combinedShareholding.length) {
+          setShareholdingData(combinedShareholding);
+        }
+
+        if (combinedMF.length) setMutualFundData(combinedMF);
+      }
+
+
+      /* SHAREHOLDING */
+      if (results[1].status === "fulfilled") {
+        const data = normalizeShareholding(results[1].value);
+
+        if (data.length) setShareholdingData(data);
+      }
+
+
+      /* FINANCIALS */
+      if (results[2].status === "fulfilled") {
+        setFinancialData(normalizeFinancials(results[2].value));
+      }
+
+
+      /* MUTUAL FUNDS */
+      if (results[3].status === "fulfilled") {
+        const data = normalizeMutualFunds(results[3].value);
+
+        if (data.length) setMutualFundData(data);
+      }
+
+      /* PROFILE */
+      if (results[4].status === "fulfilled") {
+        const data = unwrapResponse(results[4].value);
+
+        setProfileData(data?.profile || data);
+      }
+
+
+      if (results[0].status === "rejected") {
+        setFundamentalsError(
+          results[0].reason?.response?.data?.message ||
+          results[0].reason?.message ||
+          "Unable to load fundamentals.",
+        );
+      }
+
+      setFundamentalsLoading(false);
+    }
+
+    loadAllStaticData();
+
+    const timer = setInterval(loadAllStaticData, 15 * 60 * 1000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [isin]);
+
+
+  /* STEP 4 HISTORY*/
+  useEffect(() => {
+    if (!instrumentKey) return;
+
+    let alive = true;
+
+    async function loadHistory() {
+      setHistoryLoading(true);
+      const params = getHistoryParams(chartRange);
+      params.to = getIndiaDate();
+
+      try {
+        const response = await axios.get(ENDPOINTS.history(instrumentKey, params), { timeout: 20000, });
+
+        if (!alive) return;
+
+        setHistory(normalizeHistory(response.data));
+      } catch (error) {
+        console.error("History failed:", error);
+
+        if (alive) setHistory([]);
+      } finally {
+        if (alive) setHistoryLoading(false);
+      }
+    }
+
+    loadHistory();
+
+    return () => {
+      alive = false;
+    };
+  }, [instrumentKey, chartRange]);
+
+
+  /* LOAD COMPANY PROFIL*/
+  useEffect(() => {
+    let alive = true;
+
+    async function loadCompanyProfile() {
+      if (!isin) return;
+
+      try {
+        const response = await axios.get(`/api/detail-stock/about/${encodeURIComponent(isin)}`, {timeout: 15000});
+
+        if (!alive) return;
+        const result = response?.data;
+
+        if (!result?.success) {
+          throw new Error(result?.message || "Failed to load company profile");
+        }
+
+        setProfileData(result?.profile || null);
+      } catch (error) {
+        console.error("Company profile failed:", error);
+
+        if (!alive) return;
+        setProfileData(null);
+      }
+    }
+
+    loadCompanyProfile();
+
+    return () => {
+      alive = false;
+    };
+  }, [isin]);
+
+
+  /* STEP 5 WEBSOCKET
+     SOCKET IS ONLY FOR LIVE MARKET UPDATES.
+     STATIC DATA DOES NOT DEPEND ON SOCKET.*/
+
+  useEffect(() => {
+    if (!instrumentKey) return undefined;
+
+    let alive = true;
+    let subscribed = false;
+
+    const belongsToStock = (data) => {
+      if (!data) return false;
+      const key = data.instrumentKey || data.instrument_key || data.instrument;
+
+      if (!key) return true;
+      return key === instrumentKey;
+    };
+
+    const applyLiveData = (data) => {
       if (!alive || !belongsToStock(data)) return;
-      setSnapshot((previous) => ({ ...(previous || {}), ...data }));
-      if (typeof data.marketOpen !== "undefined") setMarketOpen(Boolean(data.marketOpen));
-      if (data.fundamentals) setFundamentalData((previous) => ({ ...(previous || {}), ...data.fundamentals }));
-      if (Array.isArray(data.shareholding)) setShareholdingData(data.shareholding);
-      if (Array.isArray(data.mutualFunds)) setMutualFundData(data.mutualFunds);
+
+      setSnapshot((previous) => ({
+        ...(previous || {}),
+        ...data,
+      }));
+
+      if (typeof data.marketOpen === "boolean") {
+        setMarketOpen(data.marketOpen);
+      }
+
+      /*
+       * If backend sends static data together
+       * with snapshot, use it.
+       */
+
+      if (data.fundamentals) {
+        setFundamentalData((previous) => ({
+          ...(previous || {}),
+          ...data.fundamentals,
+        }));
+      }
+
+      if (Array.isArray(data.shareholding)) {
+        setShareholdingData(data.shareholding);
+      }
+
+      if (Array.isArray(data.mutualFunds)) {
+        setMutualFundData(data.mutualFunds);
+      }
+
       setMarketLoading(false);
     };
 
-    const handleSnapshot = applySnapshot;
-    const handleTick = applySnapshot;
+
+    const handleSnapshot = applyLiveData;
+    const handleTick = applyLiveData;
 
     const handleMarketStatus = (data) => {
       if (!alive || !belongsToStock(data)) return;
-      setMarketOpen(Boolean(data.marketOpen));
+
+      if (typeof data.marketOpen === "boolean") {
+        setMarketOpen(data.marketOpen);
+      }
+
       setSnapshot((previous) => ({
         ...(previous || {}),
-        marketOpen: Boolean(data.marketOpen),
-        marketStatus: data.marketStatus || (data.marketOpen ? "OPEN" : "CLOSED"),
+        marketOpen: data.marketOpen,
+        marketStatus:
+          data.marketStatus ||
+          data.status ||
+          (data.marketOpen ? "OPEN" : "CLOSED"),
       }));
     };
 
+
     const subscribe = () => {
       if (!alive || subscribed || !detailStockSocket.connected) return;
-      detailStockSocket.emit("detailStock:subscribe", { instrumentKey }, (ack) => {
-        if (!alive) return;
-        if (!ack?.success) {
-          subscribed = false;
-          setMarketError(ack?.message || "Unable to subscribe to market data.");
-          setMarketLoading(false);
-          return;
-        }
-        subscribed = true;
-        setMarketError("");
-        if (ack.snapshot) applySnapshot(ack.snapshot);
-        if (typeof ack.marketOpen !== "undefined") setMarketOpen(Boolean(ack.marketOpen));
-      });
+
+      detailStockSocket.emit("detailStock:subscribe", { instrumentKey, symbol, },
+        (ack) => {
+          if (!alive) return;
+
+          if (!ack?.success) {
+            subscribed = false;
+
+            setMarketError(
+              ack?.message || "Unable to subscribe to live market data.",
+            );
+
+            return;
+          }
+
+          subscribed = true;
+
+          if (ack.snapshot) {
+            applyLiveData(ack.snapshot);
+          }
+
+          if (typeof ack.marketOpen === "boolean") {
+            setMarketOpen(ack.marketOpen);
+          }
+        },
+      );
     };
 
     const handleConnect = () => {
       subscribed = false;
-      setMarketLoading(true);
       subscribe();
     };
 
+
     const handleDisconnect = () => {
       subscribed = false;
-      if (alive) setMarketOpen(false);
+
+      /*
+       * Don't erase existing market
+       * snapshot when socket disconnects.
+       */
     };
 
     detailStockSocket.on("detailStock:snapshot", handleSnapshot);
@@ -1772,141 +857,163 @@ export default function ShareholdingPattern({
 
     return () => {
       alive = false;
+
       if (detailStockSocket.connected && subscribed) {
-        detailStockSocket.emit("detailStock:unsubscribe", { instrumentKey });
+        detailStockSocket.emit("detailStock:unsubscribe", {
+          instrumentKey,
+        });
       }
+
       detailStockSocket.off("detailStock:snapshot", handleSnapshot);
       detailStockSocket.off("detailStock:tick", handleTick);
       detailStockSocket.off("detailStock:market-status", handleMarketStatus);
       detailStockSocket.off("connect", handleConnect);
       detailStockSocket.off("disconnect", handleDisconnect);
     };
-  }, [instrumentKey]);
+  }, [instrumentKey, symbol]);
 
-  /* =====================================================
-       FUNDAMENTALS FETCH
-    ===================================================== */
-  useEffect(() => {
-    let alive = true;
 
-    async function loadFundamentals() {
-      if (!isin) {
-        setFundamentalsLoading(false);
-        return;
-      }
-      setFundamentalsLoading(true);
-      setFundamentalsError("");
+  /* MARKET VALUES */
+  const ltp = nullableNumber(
+    snapshot?.ltp,
+    snapshot?.price,
+    snapshot?.lastPrice,
+    snapshot?.close,
+    stockInfo?.price,
+    initialStock?.price,
+  );
 
-      try {
-        const response = await fetch(
-          `${API}/api/detail-stock/fundamentals/${encodeURIComponent(isin)}`,
-        );
-        const json = await response.json();
+  const open = nullableNumber(
+    snapshot?.open,
+    snapshot?.openPrice,
+    stockInfo?.open,
+  );
 
-        if (!response.ok || !json?.success) {
-          throw new Error(json?.message || "Unable to load fundamentals.");
-        }
-        if (!alive) return;
+  const high = nullableNumber(
+    snapshot?.high,
+    snapshot?.dayHigh,
+    stockInfo?.high,
+  );
 
-        const data = normalizeFundamentalsResponse(json) || {};
-        setFundamentalData(data.fundamentals || data);
-        setShareholdingData(Array.isArray(data.shareholding) ? data.shareholding : []);
-        setMutualFundData(Array.isArray(data.mutualFunds) ? data.mutualFunds : []);
+  const low = nullableNumber(snapshot?.low, snapshot?.dayLow, stockInfo?.low);
 
-        if (!Array.isArray(data.shareholding) || !Array.isArray(data.mutualFunds)) {
-          try {
-            const holdingResponse = await fetch(
-              `${API}/api/detail-stock/shareholding/${encodeURIComponent(isin)}`,
-            );
-            const holdingJson = await holdingResponse.json();
-            if (holdingResponse.ok && holdingJson?.success) {
-              setShareholdingData(holdingJson.shareholding || []);
-              setMutualFundData(holdingJson.mutualFunds || []);
-            }
-          } catch {}
-        }
+  const previousClose = nullableNumber(
+    snapshot?.previousClose,
+    snapshot?.prevClose,
+    stockInfo?.previousClose,
+  );
 
-        const periods = (data.shareholding || [])
-          .flatMap((item) => (item.history || []).map((h) => h.period))
-          .filter(
-            (value, index, array) => value && array.indexOf(value) === index,
-          );
+  const volume = nullableNumber(
+    snapshot?.volume,
+    snapshot?.totalVolume,
+    stockInfo?.volume,
+  );
 
-        setSelectedShareholdingPeriod((current) => current || periods[0] || "");
-      } catch (error) {
-        if (!alive) return;
-        setFundamentalsError(error.message || "Unable to load fundamentals.");
-        setFundamentalData(null);
-        setShareholdingData([]);
-        setMutualFundData([]);
-      } finally {
-        if (alive) setFundamentalsLoading(false);
-      }
+  const change = nullableNumber(
+    snapshot?.change,
+    snapshot?.netChange,
+    stockInfo?.change_points,
+  ) ?? (ltp !== null && previousClose !== null ? ltp - previousClose : null);
+
+  const changePercent = nullableNumber(
+    snapshot?.changePercent,
+    snapshot?.changePercentage,
+    stockInfo?.change_percent,
+  ) ??
+    (change !== null && previousClose ? (change / previousClose) * 100 : null);
+
+  const upperCircuit = nullableNumber(
+    snapshot?.upperCircuit,
+    snapshot?.upperLimit,
+    snapshot?.upperCircuitLimit,
+  );
+
+  const lowerCircuit = nullableNumber(
+    snapshot?.lowerCircuit,
+    snapshot?.lowerLimit,
+    snapshot?.lowerCircuitLimit,
+  );
+
+  const week52Low = nullableNumber(
+    snapshot?.week52Low,
+    snapshot?.yearLow,
+    snapshot?.fiftyTwoWeekLow,
+  );
+
+  const week52High = nullableNumber(
+    snapshot?.week52High,
+    snapshot?.yearHigh,
+    snapshot?.fiftyTwoWeekHigh,
+  );
+
+  const bsePrice = nullableNumber(
+    snapshot?.bsePrice,
+    snapshot?.bseLtp,
+    snapshot?.bseLastPrice,
+    snapshot?.bse,
+  );
+
+  const positive = (change ?? 0) >= 0;
+  const companyName = snapshot?.name || stockInfo?.companyName || stockInfo?.name || symbol || "Stock";
+  const exchange = snapshot?.exchange || stockInfo?.exchange || "NSE";
+
+  /* CHART */
+  const lineChartPreparedData = useMemo(() => {
+    if (!history.length) {
+      return ltp !== null
+        ? [
+          {
+            price: ltp,
+            time: "Live",
+          },
+        ]
+        : [];
     }
 
-    loadFundamentals();
-    const timer = setInterval(loadFundamentals, 15 * 60 * 1000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [isin]);
+    return history
+      .map((item) => {
+        let price = null;
+        let time = "";
 
-  /* =====================================================
-       HISTORICAL PRICE DATA FETCH
-    ===================================================== */
-  useEffect(() => {
-    let alive = true;
+        if (typeof item === "number" || typeof item === "string") {
+          price = Number(item);
+        } else if (Array.isArray(item)) {
+          price = nullableNumber(item[4], item[1]);
 
-    async function loadHistory() {
-      setLoadingHistory(true);
-      const params = getHistoryParams(chartRange);
-      const to = getIndiaDate();
+          time = item[0]
+            ? new Date(item[0]).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+            : "";
+        } else {
+          price = nullableNumber(item?.close, item?.ltp, item?.price);
 
-      try {
-        const url = `${API}/api/detail-stock/history/${encodeURIComponent(instrumentKey)}?unit=${encodeURIComponent(params.unit)}&interval=${encodeURIComponent(params.interval)}&from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(to)}`;
-        const response = await fetch(url);
-        if (!response.ok)
-          throw new Error(`History request failed: ${response.status}`);
+          const rawTime = item?.time || item?.timestamp || item?.date;
 
-        const json = await response.json();
-        if (!alive) return;
+          if (rawTime) {
+            time = new Date(rawTime).toLocaleString([], {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+          }
+        }
 
-        const candles = Array.isArray(json?.data)
-          ? json.data
-          : Array.isArray(json?.candles)
-            ? json.candles
-            : [];
-        setHistoricalData(candles);
-      } catch (error) {
-        console.error("Failed to fetch historical data:", error);
-        if (alive) setHistoricalData([]);
-      } finally {
-        if (alive) setLoadingHistory(false);
-      }
-    }
+        return {
+          price,
+          time: time || "—",
+        };
+      })
+      .filter((item) => item.price !== null && Number.isFinite(item.price));
+  }, [history, ltp]);
 
-    loadHistory();
-    return () => {
-      alive = false;
-    };
-  }, [chartRange, instrumentKey]);
 
-  /* =====================================================
-       LINE CHART PREPARATION
-    ===================================================== */
-  const lineChartData = useMemo(() => {
-    const values = historicalData
-      .map((item) =>
-        typeof item === "number" || typeof item === "string"
-          ? numberValue(item, NaN)
-          : numberValue(item?.close ?? item?.ltp ?? item?.price, NaN),
-      )
-      .filter(Number.isFinite);
-
-    if (!values.length && ltp > 0) return [ltp];
-    return values;
-  }, [historicalData, ltp]);
+  const chartValues = useMemo(
+    () => lineChartPreparedData.map((item) => item.price),
+    [lineChartPreparedData],
+  );
 
   const lineChartSvg = useMemo(() => {
     const width = 1000;
@@ -1914,148 +1021,258 @@ export default function ShareholdingPattern({
     const paddingX = 10;
     const paddingY = 20;
 
-    if (!lineChartData.length) return { line: "", area: "", min: 0, max: 0 };
+    if (!chartValues.length) return { line: "", area: "", min: 0, max: 0, baselineY: null };
 
-    const min = Math.min(...lineChartData);
-    const max = Math.max(...lineChartData);
+    const baseline = previousClose ?? chartValues[0] ?? null;
+    const allValues = baseline !== null ? [...chartValues, baseline] : chartValues;
+    const min = Math.min(...allValues);
+    const max = Math.max(...allValues);
     const range = max - min || 1;
-    const points = lineChartData.map((value, index) => {
-      const x =
-        lineChartData.length === 1
-          ? width / 2
-          : paddingX +
-          (index / (lineChartData.length - 1)) * (width - paddingX * 2);
-      const y =
-        height - paddingY - ((value - min) / range) * (height - paddingY * 2);
-      return `${x},${y}`;
+
+    const toY = (value) => height - paddingY - ((value - min) / range) * (height - paddingY * 2);
+
+    const points = chartValues.map((value, index) => {
+      const x = chartValues.length === 1 ? width / 2 : paddingX + (index / (chartValues.length - 1)) * (width - paddingX * 2);
+      return `${x},${toY(value)}`;
     });
 
     return {
       line: points.join(" "),
-      area:
-        points.length > 0
-          ? `M ${points[0]} L ${points.join(" L ")} L ${width - paddingX},${height} L ${paddingX},${height} Z`
-          : "",
+      area: points.length
+        ? `M ${points[0]} L ${points.join(" L ")} L ${width - paddingX},${height} L ${paddingX},${height} Z`
+        : "",
       min,
       max,
+      baselineY: baseline !== null ? toY(baseline) : null,
     };
-  }, [lineChartData]);
+  }, [chartValues, previousClose]);
 
-  /* =====================================================
-       COMPUTED VALUES & ABOUT SECTION DATA
-    ===================================================== */
-  const calculated52WeekLow = useMemo(
-    () =>
-      week52Low > 0
-        ? week52Low
-        : lineChartData.length
-          ? Math.min(...lineChartData)
-          : 0,
-    [week52Low, lineChartData],
-  );
-  const calculated52WeekHigh = useMemo(
-    () =>
-      week52High > 0
-        ? week52High
-        : lineChartData.length
-          ? Math.max(...lineChartData)
-          : 0,
-    [week52High, lineChartData],
-  );
+
+  const lastChartValue = chartValues.length > 0 ? chartValues[chartValues.length - 1] : ltp;
+
+  // Groww colors it based on previous close, not just the header change.
+  const chartPositive = previousClose !== null && lastChartValue !== null ? lastChartValue >= previousClose : positive;
+  const chartColor = chartPositive ? "#00b28e" : "#e5484d";
+  const chartColorSoft = chartPositive ? "rgba(0, 178, 142, 0.22)" : "rgba(229, 72, 77, 0.20)";
+
+  const handleMouseMove = (event) => {
+    if (!lineChartPreparedData.length) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, mouseX / rect.width));
+    const index = Math.round(percentage * (lineChartPreparedData.length - 1));
+    const point = lineChartPreparedData[index];
+
+    if (!point) return;
+
+    const width = 1000;
+    const height = 300;
+    const paddingX = 10;
+    const paddingY = 20;
+    const min = lineChartSvg.min;
+    const max = lineChartSvg.max;
+    const range = max - min || 1;
+
+    const x = lineChartPreparedData.length === 1 ? width / 2 : paddingX + (index / (lineChartPreparedData.length - 1)) * (width - paddingX * 2);
+    const y = height - paddingY - ((point.price - min) / range) * (height - paddingY * 2);
+
+    setHoverData({
+      price: point.price,
+      time: point.time,
+      x,
+      y,
+      percentX: percentage * 100,
+    });
+  };
+
+
+  /* 52 WEEK*/
+  const calculated52WeekLow = week52Low ?? (chartValues.length ? Math.min(...chartValues) : null);
+  const calculated52WeekHigh = week52High ?? (chartValues.length ? Math.max(...chartValues) : null);
 
   function getRangePosition(current, lowValue, highValue) {
-    const c = numberValue(current),
-      l = numberValue(lowValue),
-      h = numberValue(highValue);
-    if (!c || h <= l) return "50%";
-    return `${Math.max(0, Math.min(100, ((c - l) / (h - l)) * 100))}%`;
+    if (
+      current === null ||
+      lowValue === null ||
+      highValue === null ||
+      highValue <= lowValue
+    ) {
+      return "50%";
+    }
+
+    return `${Math.max(
+      0,
+      Math.min(100, ((current - lowValue) / (highValue - lowValue)) * 100),
+    )}%`;
   }
 
-  const effectivePrice =
-    numberValue(priceLimit) > 0 ? numberValue(priceLimit) : ltp;
-  const approximateRequired = numberValue(quantity) * effectivePrice;
+  /* 
+     FUNDAMENTALS UI DATA*/
 
-  // Company Description Details
-  const aboutInfo = useMemo(() => {
-    return normalizeAbout(
-      fundamentalData?.profile || snapshot?.profile,
-      fundamentalData,
-      snapshot?.symbol || symbol,
-    );
-  }, [fundamentalData, snapshot, symbol]);
+  // const fundamentals = useMemo(() => {
+  //   const data = fundamentalData || snapshot?.fundamentals || {};
 
+  //   return [
+  //     ["Market Cap", firstDefined(data.marketCap, data.market_cap)],
+  //     ["ROE", firstDefined(data.roe)],
+  //     ["ROA", firstDefined(data.roa)],
+  //     ["ROCE", firstDefined(data.roce)],
+  //     ["P/E Ratio (TTM)", firstDefined(data.peRatio, data.pe_ratio, data.pe)],
+  //     ["P/B Ratio", firstDefined(data.pbRatio, data.pb_ratio, data.pb)],
+  //     ["EV / EBITDA", firstDefined(data.evEbitda, data.ev_ebitda)],
+  //     ["EPS (Basic)", firstDefined(data.eps, data.epsBasic)],
+  //     ["Revenue (Cr)", firstDefined(data.revenue)],
+  //     [
+  //       "Operating Profit (Cr)",
+  //       firstDefined(data.operatingProfit, data.operating_profit),
+  //     ],
+  //     ["Net Profit (Cr)", firstDefined(data.netProfit, data.net_profit)],
+  //     ["Dividend Yield", firstDefined(data.dividendYield, data.dividend_yield)],
+  //     ["Book Value", firstDefined(data.bookValue, data.book_value)],
+  //     ["Debt to Equity", firstDefined(data.debtToEquity, data.debt_to_equity)],
+  //     ["Face Value", firstDefined(data.faceValue, data.face_value)],
+  //     ["Sector", firstDefined(data.sector)],
+  //   ];
+  // }, [fundamentalData, snapshot]);
+
+
+  /* FUNDAMENTALS UI DAT*/
   const fundamentals = useMemo(() => {
-    const data = fundamentalData || snapshot?.fundamentals;
+    const data = fundamentalData || snapshot?.fundamentals || {};
+
     return [
-      { label: "Market Cap", value: data?.marketCap ?? data?.market_cap ?? "N/A" },
-      { label: "ROE", value: data?.roe ?? "N/A" },
-      { label: "ROA", value: data?.roa ?? "N/A" },
-      { label: "ROCE", value: data?.roce ?? "N/A" },
-      { label: "P/E Ratio (TTM)", value: data?.peRatio ?? "N/A" },
-      { label: "P/B Ratio", value: data?.pbRatio ?? "N/A" },
-      { label: "EV / EBITDA", value: data?.evEbitda ?? "N/A" },
-      { label: "EPS (Basic)", value: data?.eps ?? "N/A" },
-      { label: "Revenue (Cr)", value: data?.revenue ?? "N/A" },
-      { label: "Operating Profit (Cr)", value: data?.operatingProfit ?? "N/A" },
-      { label: "Net Profit (Cr)", value: data?.netProfit ?? "N/A" },
-      { label: "Dividend Yield", value: data?.dividendYield ?? "N/A" },
-      { label: "Book Value", value: data?.bookValue ?? "N/A" },
-      { label: "Debt to Equity", value: data?.debtToEquity ?? "N/A" },
-      { label: "Face Value", value: data?.faceValue ?? "N/A" },
-      { label: "Sector", value: data?.sector ?? "N/A" },
+      ["Return on Equity", firstDefined(data.roe)],
+      ["Return on Assets", firstDefined(data.roa)],
+      ["Return on Capital Employed", firstDefined(data.roce)],
+      ["P/E Ratio (TTM)", firstDefined(data.peRatio, data.pe_ratio, data.pe)],
+      ["P/B Ratio", firstDefined(data.pbRatio, data.pb_ratio, data.pb)],
+      ["EBITDA", firstDefined(data.evEbitda, data.ev_ebitda)],
+      ["Earnings Per Share", firstDefined(data.eps, data.epsBasic)],
+      ["Revenue (Cr)", firstDefined(data.revenue)],
+      ["Profit (Cr)", firstDefined(data.operatingProfit, data.operating_profit),],
+      ["Net Profit (Cr)", firstDefined(data.netProfit, data.net_profit)],
+      ["Market Cap", firstDefined(data.marketCap, data.market_cap)],
     ];
   }, [fundamentalData, snapshot]);
 
+
+  /* COMPANY PROFILE UI DATA*/
+  const aboutData = useMemo(() => {
+    return normalizeAbout(
+      profileData,
+      fundamentalData || snapshot?.fundamentals || {},
+      symbol,
+    );
+  }, [profileData, fundamentalData, snapshot, symbol]);
+
+
+  /* SHAREHOLDING*/
   const shareholdingPeriods = useMemo(() => {
-    const data = shareholdingData || snapshot?.shareholding || [];
     const periods = [];
-    for (const item of Array.isArray(data) ? data : []) {
-      for (const row of item.history || []) {
-        if (row.period && !periods.includes(row.period))
-          periods.push(row.period);
+
+    for (const item of Array.isArray(shareholdingData) ? shareholdingData : []) {
+      for (const row of Array.isArray(item.history) ? item.history : []) {
+        const period = row?.period || row?.date || row?.quarter;
+
+        if (period && !periods.includes(period)) {
+          periods.push(period);
+        }
       }
     }
+
     return periods;
-  }, [shareholdingData, snapshot]);
+  }, [shareholdingData]);
+
+  useEffect(() => {
+    if (!selectedShareholdingPeriod && shareholdingPeriods.length) {
+      setSelectedShareholdingPeriod(shareholdingPeriods[0]);
+    }
+  }, [selectedShareholdingPeriod, shareholdingPeriods]);
+
 
   const selectedShareholding = useMemo(() => {
-    const data = shareholdingData || snapshot?.shareholding || [];
-    if (!Array.isArray(data)) return [];
-    const period = selectedShareholdingPeriod || shareholdingPeriods[0];
-    return data.map((item) => {
-      const selected = (item.history || []).find(
-        (row) => row.period === period,
+    return shareholdingData.map((item) => {
+      const historyRows = Array.isArray(item.history) ? item.history : [];
+
+      const selected = historyRows.find(
+        (row) =>
+          row.period === selectedShareholdingPeriod ||
+          row.date === selectedShareholdingPeriod ||
+          row.quarter === selectedShareholdingPeriod,
       );
+
       return {
         label: item.label || item.name || item.category || "Unknown",
+
         percentage: numberValue(
           selected?.percentage ??
+          selected?.percent ??
           selected?.value ??
           item.percentage ??
           item.percent,
+          0,
         ),
       };
     });
-  }, [
-    shareholdingData,
-    snapshot,
-    selectedShareholdingPeriod,
-    shareholdingPeriods,
-  ]);
+  }, [shareholdingData, selectedShareholdingPeriod]);
 
+
+  /* MUTUAL FUNDS */
   const mutualFunds = useMemo(() => {
-    const data = mutualFundData || snapshot?.mutualFunds;
-    if (!Array.isArray(data)) return [];
-    return data.map((fund, index) => ({
-      name: fund.name || fund.fundName || `Fund ${index + 1}`,
-      percentage: fund.percentage ?? fund.percent ?? fund.value ?? "N/A",
-      value: fund.period
-        ? `Latest quarter: ${fund.period}`
-        : (fund.value ?? fund.marketValue ?? "N/A"),
-    }));
-  }, [mutualFundData, snapshot]);
+    return mutualFundData.map((fund, index) => ({
+      name: fund.name || fund.fundName || fund.fund_name || `Fund ${index + 1}`,
 
-  if (marketLoading && !snapshot) {
+      percentage: nullableNumber(
+        fund.percentage,
+        fund.percent,
+        fund.aumPercentage,
+        fund.aum_percent,
+        fund.value,
+      ),
+
+      value: fund.marketValue || fund.market_value || fund.value || null,
+      logo: fund.logo || fund.icon || "",
+    }));
+  }, [mutualFundData]);
+
+
+  /* FINANCIAL DATA */
+  const financialRows = useMemo(() => {
+    return normalizeFinancialRows(
+      financialData ||
+      fundamentalData?.incomeStatement ||
+      fundamentalData?.income_statement ||
+      fundamentalData,
+    );
+  }, [financialData, fundamentalData]);
+
+  const financialBarData = useMemo(() => {
+    return financialRows.slice(-5).map((item, index, rows) => ({
+      ...item,
+      revenueHeight: `${Math.max(0, item.revenue)}%`,
+      profitHeight: `${Math.max(0, item.profit)}%`,
+      active: index === rows.length - 1,
+    }));
+  }, [financialRows]);
+
+
+  /* ABOUT */
+  const aboutInfo = useMemo(() => {
+    return normalizeAbout(
+      profileData || fundamentalData?.profile || snapshot?.profile,
+      fundamentalData,
+      snapshot?.symbol || symbol,
+    );
+  }, [profileData, fundamentalData, snapshot, symbol]);
+
+
+  /* ORDER */
+  const effectivePrice = numberValue(priceLimit, 0) > 0 ? numberValue(priceLimit) : ltp || 0;
+  const approximateRequired = numberValue(quantity) * effectivePrice;
+
+  /* LOADING */
+  if (stockLoading && !stockInfo) {
     return (
       <div className="precision-dashboard">
         <main className="precision-main">
@@ -2065,645 +1282,648 @@ export default function ShareholdingPattern({
             </div>
           </div>
         </main>
-      </div>
+      </div>  
     );
   }
 
+  /* RENDER*/
   return (
-    <div className="precision-dashboard">
-      <main className="precision-main">
-        <div className="precision-content">
-          {/* LEFT COLUMN */}
-          <div className="precision-left">
-            {/* STOCK HEADER CARD */}
-            <section className="stock-card">
-              <div className="stock-header">
-                <div className="stock-main-info">
-                  <div>
-                    <div className="stock-meta">
-                      <span>{snapshot?.symbol || snapshot?.tradingSymbol || symbol}</span>
-                      <span className="stock-meta-dot" />
-                      <span>{snapshot?.exchange || exchange}</span>
-                    </div>
-                    <h1>{snapshot?.name || snapshot?.symbol || symbol}</h1>
-                    <div className="stock-price-row">
-                      <span className="stock-price">{formatCurrency(ltp)}</span>
-                      <span
-                        className={
-                          positive ? "stock-positive" : "stock-negative"
-                        }
-                      >
-                        {change >= 0 ? "+" : ""}
-                        {formatNumber(change)} ({formatPercent(changePercent)})
-                        1D
-                      </span>
-                    </div>
-                    {marketError && (
-                      <div className="detail-stock-error">{marketError}</div>
-                    )}
-                  </div>
-                </div>
+    <div className="home" style={{ paddingTop: "1.5rem" }}>
+      <div className="precision-dashboard">
+        <main className="precision-main">
+          <div className="precision-content">
 
-                <div className="stock-actions">
-                  <button
-                    className={isWatchlisted ? "watchlisted" : ""}
-                    onClick={() => setIsWatchlisted((v) => !v)}
-                    aria-label="Watchlist"
-                  >
-                    {isWatchlisted ? "★" : "☆"}
-                  </button>
-                </div>
-              </div>
+            {/* LEFT */}
+            <div className="precision-left">
+              {/* STOCK HEADER */}
+              <section className="stock-card">
+                <div className="stock-header">
+                  <div className="stock-main-info">
+                    <div>
+                      <div className="stock-meta">
+                        <span>
+                          {snapshot?.symbol || stockInfo?.symbol || symbol}
+                        </span>
 
-              {/* REALTIME LINE CHART */}
-              {/* REALTIME LINE CHART WITH HOVER CROSSHAIR */}
-              <div className="chart-wrapper" style={{ height: "auto" }}>
-                <div
-                  className="chart-area"
-                  onMouseMove={handleMouseMove}
-                  onMouseLeave={handleMouseLeave}
-                >
-                  {loadingHistory && (
-                    <div className="chart-loading">Updating chart…</div>
-                  )}
+                        <span className="stock-meta-dot" />
 
-                  {/* Floating Price & Time Tooltip */}
-                  {hoverData && (
-                    <div
-                      className="chart-hover-tooltip"
-                      style={{ left: `${hoverData.percentX}%` }}
-                    >
-                      <span className="tooltip-price">
-                        {formatCurrency(hoverData.price)}
-                      </span>
-                      <span className="tooltip-divider">|</span>
-                      <span className="tooltip-time">{hoverData.time}</span>
-                    </div>
-                  )}
-
-                  <svg
-                    className="stock-chart"
-                    viewBox="0 0 1000 300"
-                    preserveAspectRatio="none"
-                  >
-                    <defs>
-                      <linearGradient
-                        id="stockGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor="#00b28e"
-                          stopOpacity="0.22"
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor="#00b28e"
-                          stopOpacity="0"
-                        />
-                      </linearGradient>
-                    </defs>
-
-                    {lineChartSvg.area && (
-                      <path d={lineChartSvg.area} fill="url(#stockGradient)" />
-                    )}
-
-                    {lineChartSvg.line && (
-                      <polyline
-                        points={lineChartSvg.line}
-                        fill="none"
-                        stroke="#00b28e"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    )}
-
-                    {/* Crosshair Vertical Line & Hover Dot */}
-                    {hoverData && (
-                      <g className="hover-crosshair">
-                        <line
-                          x1={hoverData.x}
-                          y1={0}
-                          x2={hoverData.x}
-                          y2={300}
-                          stroke="#e2e8f0"
-                          strokeWidth="2"
-                        />
-                        <circle
-                          cx={hoverData.x}
-                          cy={hoverData.y}
-                          r="6"
-                          fill="#ffffff"
-                          stroke="#00b28e"
-                          strokeWidth="3"
-                        />
-                      </g>
-                    )}
-                  </svg>
-
-                  {!hoverData && (
-                    <div className="chart-current-price">
-                      {formatCurrency(ltp)}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* RANGES */}
-              <div className="chart-footer" style={{ marginTop: "1.5rem" }}>
-                <div className="chart-periods">
-                  {RANGES.map((period) => (
-                    <button
-                      key={period}
-                      className={chartRange === period ? "active" : ""}
-                      onClick={() => setChartRange(period)}
-                      disabled={loadingHistory}
-                    >
-                      <p style={{ margin: "0" }}>{period}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            {/* PERFORMANCE SECTION */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>Performance</h2>
-              </div>
-              <div className="performance-card">
-                <div className="range-block">
-                  <div className="range-title">
-                    <p>Today's low</p>
-                    <p>Today's high</p>
-                  </div>
-                  <div className="range-values">
-                    <p>{formatCurrency(low)}</p>
-                    <p>{formatCurrency(high)}</p>
-                  </div>
-                  <div className="range-line">
-                    <div
-                      className="range-marker"
-                      style={{ left: getRangePosition(ltp, low, high) }}
-                    />
-                  </div>
-                </div>
-
-                <div className="range-block">
-                  <div className="range-title">
-                    <p>52 week low</p>
-                    <p>52 week high</p>
-                  </div>
-                  <div className="range-values">
-                    <p>
-                      {calculated52WeekLow
-                        ? formatCurrency(calculated52WeekLow)
-                        : "—"}
-                    </p>
-                    <p>
-                      {calculated52WeekHigh
-                        ? formatCurrency(calculated52WeekHigh)
-                        : "—"}
-                    </p>
-                  </div>
-                  <div className="range-line">
-                    <div
-                      className="range-marker"
-                      style={{
-                        left: getRangePosition(
-                          ltp,
-                          calculated52WeekLow,
-                          calculated52WeekHigh,
-                        ),
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="performance-stats">
-                  <div>
-                    <span>Open price</span>
-                    <p>{open ? formatCurrency(open) : "—"}</p>
-                  </div>
-                  <div>
-                    <span>Previous close</span>
-                    <p>{previousClose ? formatCurrency(previousClose) : "—"}</p>
-                  </div>
-                  <div>
-                    <span>Live volume</span>
-                    <p>{volume ? formatCompact(volume) : "—"}</p>
-                  </div>
-                  <div>
-                    <span>Upper circuit</span>
-                    <p>{upperCircuit ? formatCurrency(upperCircuit) : "—"}</p>
-                  </div>
-                  <div>
-                    <span>Lower circuit</span>
-                    <p>{lowerCircuit ? formatCurrency(lowerCircuit) : "—"}</p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* FUNDAMENTALS */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>Fundamentals</h2>
-              </div>
-              <div className="fundamentals-card">
-                {fundamentalsLoading && <div>Loading fundamentals…</div>}
-                {!fundamentalsLoading && fundamentalsError && (
-                  <div>Unable to load fundamentals: {fundamentalsError}</div>
-                )}
-                {!fundamentalsLoading &&
-                  !fundamentalsError &&
-                  fundamentals.map((item) => (
-                    <div className="fundamental-row" key={item.label}>
-                      <span>{item.label}</span>
-                      <p>{item.value}</p>
-                    </div>
-                  ))}
-              </div>
-            </section>
-
-            {/* SHAREHOLDING PATTERN */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>Shareholding Pattern</h2>
-              </div>
-              <div className="shareholding-card">
-                <div className="shareholding-periods">
-                  {shareholdingPeriods.map((period) => (
-                    <button
-                      key={period}
-                      className={
-                        selectedShareholdingPeriod === period ? "active" : ""
-                      }
-                      onClick={() => setSelectedShareholdingPeriod(period)}
-                    >
-                      {period}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="shareholding-list">
-                  {selectedShareholding.length > 0 ? (
-                    selectedShareholding.map((item) => (
-                      <div className="shareholding-row" key={item.label}>
-                        <div className="shareholding-label">
-                          <span>{item.label}</span>
-                          <p
-                            style={{
-                              color: "black",
-                              margin: 0,
-                              fontWeight: 500,
-                              fontSize: 15,
-                            }}
-                          >
-                            {item.percentage.toFixed(2)}%
-                          </p>
-                        </div>
-                        <div className="shareholding-bar">
-                          <div
-                            style={{
-                              width: `${Math.min(100, Math.max(0, item.percentage))}%`,
-                            }}
-                          />
-                        </div>
+                        <span>{exchange}</span>
                       </div>
-                    ))
-                  ) : (
-                    <div>Shareholding data unavailable</div>
-                  )}
+
+                      <h1>{companyName}</h1>
+
+                      <div className="stock-price-row">
+                        <span className="stock-price">
+                          {ltp !== null ? formatCurrency(ltp) : "—"}
+                        </span>
+
+                        <span className={positive ? "stock-positive" : "stock-negative"}>
+                          {change !== null
+                            ? `${change >= 0 ? "+" : ""}${formatNumber(
+                              change,
+                            )} (${formatPercent(changePercent)}) 1D`
+                            : "—"}
+                        </span>
+                      </div>
+
+                      <div style={{ marginTop: "0.4rem", fontSize: "0.85rem", }}>
+                        {marketLoading ? "Checking market…" : marketOpen ? "Market open · Live" : "Market closed · Latest available data"}
+                      </div>
+
+                      {marketError && (
+                        <div className="detail-stock-error">{marketError}</div>
+                      )}
+
+                      {stockError && (
+                        <div className="detail-stock-error">{stockError}</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="stock-actions">
+                    <button className={isWatchlisted ? "watchlisted" : ""} onClick={() => setIsWatchlisted((value) => !value)}>
+                      {isWatchlisted ? "★" : "☆"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </section>
 
-            {/* FINANCIAL PERFORMANCE BAR CHART */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>Financial performance</h2>
-              </div>
+                {/* CHART */}
 
-              <main className="dashboard-main">
+                <div className="chart-wrapper">
+                  <div className="chart-area" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverData(null)}>
+                    {historyLoading && (
+                      <div className="chart-loading">Updating chart…</div>
+                    )}
+
+                    {hoverData && (
+                      <div className="chart-hover-tooltip" style={{ left: `${hoverData.percentX}%`, }}>
+                        <span className="tooltip-price">
+                          {formatCurrency(hoverData.price)}
+                        </span>
+
+                        <span className="tooltip-divider">|</span>
+                        <span className="tooltip-time">{hoverData.time}</span>
+                      </div>
+                    )}
+
+                    <svg className="stock-chart" viewBox="0 0 1000 300" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="stockGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={chartColor} stopOpacity="0.22" />
+                          <stop offset="100%" stopColor={chartColor} stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+
+                      {lineChartSvg.baselineY !== null && (
+                        <line x1="0" y1={lineChartSvg.baselineY} x2="1000" y2={lineChartSvg.baselineY} stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+                      )}
+
+                      {lineChartSvg.area && (
+                        <path d={lineChartSvg.area} fill="url(#stockGradient)" />
+                      )}
+
+                      {lineChartSvg.line && (
+                        <polyline points={lineChartSvg.line} fill="none" stroke={chartColor} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+                      )}
+
+                      {hoverData && (
+                        <g>
+                          <line x1={hoverData.x} y1="0" x2={hoverData.x} y2="300" stroke="#e2e8f0" strokeWidth="2" />
+                          <circle cx={hoverData.x} cy={hoverData.y} r="6" fill="#ffffff" stroke={chartColor} strokeWidth="3" />
+                        </g>
+                      )}
+                    </svg>
+
+                    {!hoverData && ltp !== null && (
+                      <div className="chart-current-price">
+                        {formatCurrency(ltp)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="chart-footer" style={{ marginTop: "1.5rem", }}>
+                  <div className="chart-periods">
+                    {RANGES.map((range) => (
+                      <button key={range} className={chartRange === range ? "active" : ""} onClick={() => setChartRange(range)} disabled={historyLoading}>
+                        {range}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+
+              {/* PERFORMANCE */}
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>Performance</h2>
+                </div>
+
+                <div className="performance-card">
+                  <div className="range-block">
+                    <div className="range-title">
+                      <p>Today's low</p>
+                      <p>Today's high</p>
+                    </div>
+
+                    <div className="range-values">
+                      <p>{low !== null ? formatCurrency(low) : "—"}</p>
+                      <p>{high !== null ? formatCurrency(high) : "—"}</p>
+                    </div>
+
+                    <div className="range-line">
+                      <div className="range-marker" style={{ left: getRangePosition(ltp, low, high), }} />
+                    </div>
+                  </div>
+
+                  <div className="range-block">
+                    <div className="range-title">
+                      <p>52 week low</p>
+                      <p>52 week high</p>
+                    </div>
+
+                    <div className="range-values">
+                      <p>
+                        {calculated52WeekLow !== null
+                          ? formatCurrency(calculated52WeekLow)
+                          : "—"}
+                      </p>
+
+                      <p>
+                        {calculated52WeekHigh !== null
+                          ? formatCurrency(calculated52WeekHigh)
+                          : "—"}
+                      </p>
+                    </div>
+
+                    <div className="range-line">
+                      <div className="range-marker" style={{ left: getRangePosition(ltp, calculated52WeekLow, calculated52WeekHigh,), }} />
+                    </div>
+                  </div>
+
+                  <div className="performance-stats">
+                    <div>
+                      <span>Open price</span>
+                      <p>{open !== null ? formatCurrency(open) : "—"}</p>
+                    </div>
+
+                    <div>
+                      <span>Previous close</span>
+
+                      <p>
+                        {previousClose !== null
+                          ? formatCurrency(previousClose)
+                          : "—"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <span>Live volume</span>
+                      <p>{volume !== null ? formatCompact(volume) : "—"}</p>
+                    </div>
+
+                    <div>
+                      <span>Upper circuit</span>
+
+                      <p>
+                        {upperCircuit !== null
+                          ? formatCurrency(upperCircuit)
+                          : "—"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <span>Lower circuit</span>
+
+                      <p>
+                        {lowerCircuit !== null
+                          ? formatCurrency(lowerCircuit)
+                          : "—"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+
+              {/* FUNDAMENTALS */}
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>Fundamentals</h2>
+                </div>
+
+                <div className="fundamentals-card">
+                  {fundamentalsLoading && <div>Loading fundamentals…</div>}
+
+                  {!fundamentalsLoading && fundamentalsError && (
+                    <div>Unable to load fundamentals: {fundamentalsError}</div>
+                  )}
+
+                  {!fundamentalsLoading &&
+                    !fundamentalsError &&
+                    fundamentals.map(([label, value]) => (
+                      <div className="fundamental-row" key={label}>
+                        <span>{label}</span>
+
+                        <p>
+                          {value !== null && value !== undefined && value !== ""
+                            ? typeof value === "number"
+                              ? formatNumber(value)
+                              : value
+                            : "N/A"}
+                        </p>
+                      </div>
+                    ))}
+                </div>
+              </section>
+
+
+              {/* SHAREHOLDING */}
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>Shareholding Pattern</h2>
+                </div>
+
+                <div className="shareholding-card">
+                  {shareholdingPeriods.length > 0 && (
+                    <div className="shareholding-periods">
+                      {shareholdingPeriods.map((period) => (
+                        <button key={period}
+                          className={
+                            selectedShareholdingPeriod === period
+                              ? "active"
+                              : ""
+                          }
+                          onClick={() => setSelectedShareholdingPeriod(period)}
+                        >
+                          {period}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="shareholding-list">
+                    {selectedShareholding.length > 0 ? (
+                      selectedShareholding.map((item) => (
+                        <div className="shareholding-row" key={item.label}>
+                          <div className="shareholding-label">
+                            <span>{item.label}</span>
+
+                            <p style={{ color: "black", margin: 0, fontWeight: 500, fontSize: 15, }}>
+                              {item.percentage.toFixed(2)}%
+                            </p>
+                          </div>
+
+                          <div className="shareholding-bar">
+                            <div style={{ width: `${Math.min(100, Math.max(0, item.percentage),)}%`, }} />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div>Shareholding data unavailable</div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {/* =================================================
+                FINANCIAL PERFORMANCE
+            ================================================= */}
+
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>Financial performance</h2>
+                </div>
+
                 <div className="chart-card">
                   <header className="chart-header">
-                    <div className="header-date">{financialBarData[financialBarData.length - 1]?.quarter || "—"}</div>
+                    <div className="header-date">
+                      {financialBarData[financialBarData.length - 1]?.quarter ||
+                        "—"}
+                    </div>
+
                     <div className="legend-row">
                       <div className="legend-group">
                         <div className="legend-title">
-                          <span className="legend-badge bg-bar-revenue"></span>
+                          <span className="legend-badge bg-bar-revenue" />
                           <span className="legend-label">Revenue (CR)</span>
                         </div>
+
                         <div className="legend-metrics">
-                          <span className="metric-value">{financialBarData.length ? formatMaybe(financialBarData[financialBarData.length - 1].revenue) : "—"}</span>
-                          <span className="text-accent-green">—</span>
+                          <span className="metric-value">
+                            {financialBarData.length
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 1]
+                                  .revenue,
+                              )
+                              : "—"}
+                          </span>
                         </div>
                       </div>
 
                       <div className="legend-group">
                         <div className="legend-title">
-                          <span className="legend-badge bg-bar-profit"></span>
+                          <span className="legend-badge bg-bar-profit" />
                           <span className="legend-label">Profit (CR)</span>
                         </div>
+
                         <div className="legend-metrics">
-                          <span className="metric-value">{financialBarData.length ? formatMaybe(financialBarData[financialBarData.length - 1].profit) : "—"}</span>
-                          <span className="text-accent-green">—</span>
+                          <span className="metric-value">
+                            {financialBarData.length
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 1]
+                                  .profit,
+                              )
+                              : "—"}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </header>
 
                   <div className="chart-area">
-                    <div className="y-axis">
-                      <span>{financialBarData.length ? formatMaybe(Math.max(...financialBarData.flatMap((x) => [x.revenue, x.profit]))) : "—"}</span>
-                      <span>{financialBarData.length ? formatMaybe(Math.max(...financialBarData.flatMap((x) => [x.revenue, x.profit])) * 0.75) : "—"}</span>
-                      <span>{financialBarData.length ? formatMaybe(Math.max(...financialBarData.flatMap((x) => [x.revenue, x.profit])) * 0.5) : "—"}</span>
-                      <span>{financialBarData.length ? formatMaybe(Math.max(...financialBarData.flatMap((x) => [x.revenue, x.profit])) * 0.25) : "—"}</span>
-                      <span>0</span>
-                    </div>
+                    {financialBarData.length > 0 ? (
+                      <div style={{ display: "flex", alignItems: "flex-end", gap: "2rem", minHeight: "250px", padding: "2rem", }}>
+                        {financialBarData.map((item) => {
+                          const max = Math.max(
+                            1,
+                            ...financialBarData.flatMap((row) => [
+                              row.revenue,
+                              row.profit,
+                            ]),
+                          );
 
-                    <div className="grid-lines-container">
-                      <div className="grid-line-dashed"></div>
-                      <div className="grid-line-dashed"></div>
-                      <div className="grid-line-dashed"></div>
-                      <div className="grid-line-dashed"></div>
-                      <div className="grid-line-axis"></div>
-                    </div>
+                          return (
+                            <div key={item.quarter} style={{ flex: 1, display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "0.4rem", height: "200px", }}>
+                              <div style={{ width: "35%", height: `${(item.revenue / max) * 100}%`, minHeight: item.revenue > 0 ? "4px" : "0", }} className="bar-single bg-bar-revenue" />
 
-                    <div className="bars-container">
-                      {financialBarData.map((item, index) => (
-                        <div key={index} className="bar-group">
-                          <div
-                            className="bar-single bg-bar-revenue"
-                            style={{ height: item.revenueHeight }}
-                          />
-                          <div
-                            className="bar-single bg-bar-profit"
-                            style={{ height: item.profitHeight }}
-                          />
-                          <span
-                            className={`x-axis-label ${item.active ? "active" : ""}`}
-                          >
-                            {item.quarter}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                              <div style={{ width: "35%", height: `${(item.profit / max) * 100}%`, minHeight: item.profit > 0 ? "4px" : "0", }} className="bar-single bg-bar-profit" />
+
+                              <span style={{ position: "absolute", transform: "translateY(125px)", }}>
+                                {item.quarter}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ padding: "2rem", }}>
+                        Financial data unavailable
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* GROWTH METRICS */}
                 <div className="growth-container">
                   <div className="growth-flex">
                     <div className="growth-section growth-section-left">
                       <div className="growth-header">
                         <h3 className="growth-title">Revenue Growth</h3>
+
                         <span className="growth-title">Value</span>
                       </div>
+
                       <div className="growth-rows">
                         <div className="growth-row">
                           <span className="growth-label">Latest period</span>
-                          <span className="text-accent-green">{financialBarData.length ? formatMaybe(financialBarData[financialBarData.length - 1].revenue) : "—"}</span>
+
+                          <span className="text-accent-green">
+                            {financialBarData.length
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 1]
+                                  .revenue,
+                              )
+                              : "—"}
+                          </span>
                         </div>
+
                         <div className="growth-row">
                           <span className="growth-label">Previous period</span>
-                          <span className="text-accent-green">{financialBarData.length > 1 ? formatMaybe(financialBarData[financialBarData.length - 2].revenue) : "—"}</span>
+
+                          <span className="text-accent-green">
+                            {financialBarData.length > 1
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 2]
+                                  .revenue,
+                              )
+                              : "—"}
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="divider"></div>
+                    <div className="divider" />
 
                     <div className="growth-section growth-section-right">
                       <div className="growth-header">
                         <h3 className="growth-title">Profit Growth</h3>
+
                         <span className="growth-title">Value</span>
                       </div>
+
                       <div className="growth-rows">
                         <div className="growth-row">
                           <span className="growth-label">Latest period</span>
-                          <span className="text-accent-green">{financialBarData.length ? formatMaybe(financialBarData[financialBarData.length - 1].profit) : "—"}</span>
+
+                          <span className="text-accent-green">
+                            {financialBarData.length
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 1]
+                                  .profit,
+                              )
+                              : "—"}
+                          </span>
                         </div>
+
                         <div className="growth-row">
                           <span className="growth-label">Previous period</span>
-                          <span className="text-accent-green">{financialBarData.length > 1 ? formatMaybe(financialBarData[financialBarData.length - 2].profit) : "—"}</span>
+
+                          <span className="text-accent-green">
+                            {financialBarData.length > 1
+                              ? formatNumber(
+                                financialBarData[financialBarData.length - 2]
+                                  .profit,
+                              )
+                              : "—"}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </main>
-            </section>
+              </section>
 
-            {/* ABOUT SECTION */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>About</h2>
-              </div>
 
-              <div className="about-card">
-                <p className="about-description">
-                  {isAboutExpanded
-                    ? aboutInfo.description
-                    : `${aboutInfo.description.slice(0, 190)}...`}
-                  <button
-                    type="button"
-                    className="read-more-btn"
-                    onClick={() => setIsAboutExpanded((prev) => !prev)}
-                  >
-                    {isAboutExpanded ? "Read less" : "Read more"}
-                  </button>
-                </p>
-
-                <div className="about-meta-grid">
-                  <div className="about-meta-item">
-                    <span className="about-meta-label">CEO/MD</span>
-                    <p className="about-meta-value">{aboutInfo.ceo}</p>
-                  </div>
-                  <div className="about-meta-item">
-                    <span className="about-meta-label">Founded in</span>
-                    <p className="about-meta-value">{aboutInfo.founded}</p>
-                  </div>
-                  <div className="about-meta-item">
-                    <span className="about-meta-label">NSE symbol</span>
-                    <p className="about-meta-value">{aboutInfo.nseSymbol}</p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* MUTUAL FUNDS */}
-            {/* MUTUAL FUNDS INVESTED */}
-            <section className="content-section">
-              <div className="section-heading">
-                <h2>Mutual Funds Invested ({mutualFunds.length})</h2>
-              </div>
-
-              <div className="mf-table-card">
-                {/* Header Row */}
-                <div className="mf-table-header">
-                  <span className="mf-col-name">Fund name</span>
-                  <span className="mf-col-aum">AUM%</span>
+              {/* ABOUT */}
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>About</h2>
                 </div>
 
-                {/* Table Rows */}
-                <div className="mf-table-body">
-                  {mutualFunds.map((fund, index) => (
-                    <div className="mf-row" key={index}>
-                      <div className="mf-left-group">
-                        <div className="mf-logo-wrapper">
-                          <img
-                            src={fund.logo || fund.icon}
-                            alt={fund.name}
-                            className="mf-logo-img"
-                            onError={(e) => {
-                              e.target.style.display = "none";
-                              e.target.nextSibling.style.display = "flex";
-                            }}
-                          />
-                          <div
-                            className="mf-logo-fallback"
-                            style={{ display: "none" }}
-                          >
-                            {fund.name ? fund.name[0] : "M"}
+                <div className="about-card">
+                  <p className="about-description">
+                    {isAboutExpanded
+                      ? aboutInfo.description
+                      : `${String(aboutInfo.description).slice(0, 190)}${String(aboutInfo.description).length > 190
+                        ? "..."
+                        : ""
+                      }`}
+
+                    {String(aboutInfo.description).length > 190 && (
+                      <button
+                        type="button"
+                        className="read-more-btn"
+                        onClick={() => setIsAboutExpanded((prev) => !prev)}
+                      >
+                        {isAboutExpanded ? "Read less" : "Read more"}
+                      </button>
+                    )}
+                  </p>
+                </div>
+              </section>
+
+
+              {/* MUTUAL FUNDS */}
+              <section className="content-section">
+                <div className="section-heading">
+                  <h2>Mutual Funds Invested ({mutualFunds.length})</h2>
+                </div>
+
+                <div className="mf-table-card">
+                  <div className="mf-table-header">
+                    <span className="mf-col-name">Fund name</span>
+
+                    <span className="mf-col-aum">AUM%</span>
+                  </div>
+
+                  <div className="mf-table-body">
+                    {mutualFunds.length > 0 ? (
+                      mutualFunds.map((fund, index) => (
+                        <div className="mf-row" key={`${fund.name}-${index}`}>
+                          <div className="mf-left-group">
+                            <div className="mf-logo-wrapper">
+                              {fund.logo ? (
+                                <img
+                                  src={fund.logo}
+                                  alt={fund.name}
+                                  className="mf-logo-img"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = "none";
+
+                                    if (e.currentTarget.nextSibling) {
+                                      e.currentTarget.nextSibling.style.display =
+                                        "flex";
+                                    }
+                                  }}
+                                />
+                              ) : null}
+
+                              <div className="mf-logo-fallback" style={{ display: fund.logo ? "none" : "flex" }}>
+                                {fund.name?.[0]}
+                              </div>
+                            </div>
+
+                            <span className="mf-fund-name">{fund.name}</span>
+                          </div>
+
+                          <div className="mf-aum-value">
+                            {fund.percentage !== null
+                              ? `${fund.percentage.toFixed(2)}%`
+                              : "—"}
                           </div>
                         </div>
-                        <span className="mf-fund-name">{fund.name}</span>
+                      ))
+                    ) : (
+                      <div className="mf-row">
+                        Mutual fund ownership data unavailable
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+
+            {/* RIGHT TRADING PANEL */}
+            <div style={{ height: "fit-content", width: "25rem", minWidth: "20rem", position: "sticky", top: "140px", }}>
+              <div className="trading-panel">
+                <div className="trading-header">
+                  <p style={{ margin: 0, fontSize: "1rem", fontWeight: 500 }}>
+                    {snapshot?.symbol || stockInfo?.symbol || symbol}
+                  </p>
+
+                  <div className="trading-market-info">
+                    <span>{exchange}</span>
+                    <span>{ltp !== null ? formatCurrency(ltp) : "—"}</span>
+                    <span>BSE</span>
+
+                    <span>
+                      {bsePrice !== null ? formatCurrency(bsePrice) : "—"}
+                    </span>
+
+                    <span className={positive ? "positive" : "negative"}>
+                      {formatPercent(changePercent)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="order-tabs">
+                  <button className={orderType === "BUY" ? "active buy" : ""} onClick={() => setOrderType("BUY")}>
+                    BUY
+                  </button>
+
+                  <button className={orderType === "SELL" ? "active sell" : ""} onClick={() => setOrderType("SELL")}>
+                    SELL
+                  </button>
+                </div>
+
+                <div className="trading-body">
+                  <div style={{ borderBottom: "1px solid #e2e6ea", paddingBottom: ".5rem", }}>
+                    <div className="order-field">
+                      <div className="order-label">
+                        <span>Qty</span>
                       </div>
 
-                      <div className="mf-aum-value">
-                        {typeof fund.percentage === "number"
-                          ? fund.percentage.toFixed(2)
-                          : fund.percentage}
+                      <input type="number" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="0" />
+                    </div>
+
+                    <div className="order-field">
+                      <div className="order-label">
+                        <span>Price Limit</span>
                       </div>
+
+                      <input type="number" min="0" value={priceLimit} placeholder={ltp !== null ? String(ltp) : ""} onChange={(e) => setPriceLimit(e.target.value)} />
                     </div>
-                  ))}
-                  {mutualFunds.length === 0 && (
-                    <div className="mf-row">Mutual fund ownership data unavailable</div>
-                  )}
-                </div>
-              </div>
-            </section>
-          </div>
+                  </div>
 
-          {/* RIGHT COLUMN TRADING PANEL */}
-          <div
-            style={{
-              height: "fit-content",
-              width: "25rem",
-              minWidth: "20rem",
-              position: "sticky",
-              top: "140px",
-            }}
-          >
-            <div className="trading-panel">
-              <div className="trading-header">
-                <p
-                  style={{
-                    margin: "0",
-                    fontSize: "1rem",
-                    fontWeight: "500",
-                    lineHeight: "1.357rem",
-                  }}
-                >
-                  {snapshot?.symbol || snapshot?.tradingSymbol || symbol}
-                </p>
-                <div className="trading-market-info">
-                  <span>{snapshot?.exchange || exchange}</span>
-                  <span>{formatCurrency(ltp)}</span>
-                  <span>BSE</span>
-                  <span>{bsePrice ? formatCurrency(bsePrice) : "—"}</span>
-                  <span className={positive ? "positive" : "negative"}>
-                    {formatPercent(changePercent)}
-                  </span>
-                </div>
-              </div>
+                  <div className="order-summary">
+                    <span>Balance : ₹0</span>
 
-              <div className="order-tabs">
-                <button
-                  className={orderType === "BUY" ? "active buy" : ""}
-                  onClick={() => setOrderType("BUY")}
-                >
-                  BUY
-                </button>
-                <button
-                  className={orderType === "SELL" ? "active sell" : ""}
-                  onClick={() => setOrderType("SELL")}
-                >
-                  SELL
-                </button>
-              </div>
+                    <div>
+                      <p style={{ margin: 0 }}>Approx</p>
 
-              <div className="trading-body">
-                <div
-                  style={{
-                    borderBottom: "1px solid #e2e6ea",
-                    paddingBottom: ".5rem",
-                  }}
-                >
-                  <div className="order-field">
-                    <div className="order-label">
-                      <span>Qty</span>
+                      <p style={{ margin: 0 }}>
+                        {formatCurrency(approximateRequired)}
+                      </p>
                     </div>
-                    <input
-                      type="number"
-                      min="0"
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                      placeholder="0"
-                    />
                   </div>
-                  <div className="order-field">
-                    <div className="order-label">
-                      <span>Price Limit</span>
-                    </div>
-                    <input
-                      type="number"
-                      min="0"
-                      value={priceLimit}
-                      placeholder={ltp ? String(ltp) : ""}
-                      onChange={(e) => setPriceLimit(e.target.value)}
-                    />
-                  </div>
-                </div>
 
-                <div className="order-summary">
-                  <span>Balance : ₹0</span>
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <p
-                      style={{
-                        margin: "0",
-                        paddingBottom: ".25rem",
-                        maxWidth: "5rem",
-                        textAlign: "end",
-                      }}
-                    >
-                      Approx
-                    </p>
-                    <p style={{ margin: "0" }}>
-                      {formatCurrency(approximateRequired)}
-                    </p>
-                  </div>
+                  <button
+                    className={`place-order ${orderType === "BUY" ? "buy-button" : "sell-button"
+                      }`}
+                    disabled={
+                      !marketOpen || !quantity || numberValue(quantity) <= 0
+                    }
+                  >
+                    {marketOpen ? orderType : "MARKET CLOSED"}
+                  </button>
                 </div>
-
-                <button
-                  className={`place-order ${orderType === "BUY" ? "buy-button" : "sell-button"}`}
-                  disabled={
-                    !marketOpen || !quantity || numberValue(quantity) <= 0
-                  }
-                >
-                  {orderType}
-                </button>
               </div>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
