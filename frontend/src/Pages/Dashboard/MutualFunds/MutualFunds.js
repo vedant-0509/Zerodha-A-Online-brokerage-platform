@@ -1,11 +1,19 @@
-import React from "react";
+import { Routes, Route } from "react-router-dom";
 
-import MutualFundsWrapper from "./MutualFundsWrapper.jsx";
+import MutualFundWrapper from "./MutualFundsWrapper";
+import Explore from "./Explore/Explore.js";
+import Dashboard from "./Dashboard/Dashboard.js";
 
-export default function MutualFunds() {
+export default function MutualFund() {
     return (
         <>
-            <MutualFundsWrapper />
+            <MutualFundWrapper />
+
+            <Routes>
+                <Route index element={<Explore />} />
+                <Route path="explore" element={<Explore />} />
+                <Route path="dashboard" element={<Dashboard />} />
+            </Routes>
         </>
     );
 }

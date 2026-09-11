@@ -1,6 +1,17 @@
 const env = require("./env");
-
+const { getStockFinancials } = require("./upstox");
 const IST_OFFSET_MINUTES = 330;
+const logger = require("./logger");
+
+async function handleStockMarketData(symbol) {
+  try {
+    const financials = await getStockFinancials(symbol);
+    return financials;
+  } catch (error) {
+    logger.error(`Market process error for ${symbol}:`, error);
+    return null;
+  }
+}
 
 function indiaDate(date = new Date()) {
   const utcMillis = date.getTime() + date.getTimezoneOffset() * 60 * 1000;
@@ -89,11 +100,12 @@ function marketStatus(date = new Date()) {
 
 module.exports = {
   indiaDate,
-  indiaMinutes, 
+  indiaMinutes,
   isTradingDay,
   isMarketOpen,
   isBeforeMarketOpen,
   isAfterMarketClose,
   marketStatus,
   hhmmToMinutes,
+  handleStockMarketData,
 };

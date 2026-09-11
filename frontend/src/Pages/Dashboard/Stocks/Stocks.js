@@ -37,7 +37,7 @@ import Holdings from "./Holdings/Holdings.js";
 import Orders from "./Orders/Orders.js";
 import Watchlist from "./Watchlist/Watchlist.js";
 import DetailStock from "./detailStock.js/DetailStock.js";
-import ShareholdingPattern from "./detailStock.js/ShareholdingPattern.jsx";
+import StockDashboard from "./detailStock.js/StockDashboard.jsx";
 
 export default function Stocks() {
     return (
@@ -51,7 +51,7 @@ export default function Stocks() {
                 <Route path="orders" element={<Orders />} />
                 <Route path="watchlist" element={<Watchlist />} />
                 <Route path="detailStock" element={<DetailStock />} />
-                <Route path="explore/:symbol" element={<ShareholdingPattern />} />
+                <Route path="explore/:symbol" element={<StockDashboard />} />
             </Routes>
         </>
     );

@@ -1,0 +1,32 @@
+const express = require('express');
+const {
+  getMutualFunds,
+  getMutualFundFilters,
+  getMutualFund,
+  buyMutualFund,
+  sellMutualFund,
+  getMutualFundHoldings,
+  getMutualFundOrders,
+  syncLatestNAVController,
+  syncReturnsController,
+  syncReturns,
+  getMFSyncStatus,
+  triggerSyncNow,
+} = require('./mutualFundController');
+
+const router = express.Router();
+
+router.get('/filters', getMutualFundFilters);
+router.get('/sync-status', getMFSyncStatus);
+router.post('/sync-now', triggerSyncNow);
+router.post('/orders/buy', buyMutualFund);
+router.post('/orders/sell', sellMutualFund);
+router.get('/holdings/:userId', getMutualFundHoldings);
+router.get('/orders/:userId', getMutualFundOrders);
+router.post('/sync', syncLatestNAVController);
+router.post('/sync-returns', syncReturnsController);
+router.post('/sync-returns-legacy', syncReturns);
+router.get('/', getMutualFunds);
+router.get('/:schemeCode', getMutualFund);
+
+module.exports = router;

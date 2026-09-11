@@ -13,7 +13,7 @@ export default function Dashboard() {
             <DashboardWrapper />
             <Routes>
                 <Route path="stocks/*" element={<Stock />} />
-                <Route path="mutualFunds" element={<MutualFunds />} />
+                <Route path="mutualFunds/*" element={<MutualFunds />} />
             </Routes>
         </>
     );

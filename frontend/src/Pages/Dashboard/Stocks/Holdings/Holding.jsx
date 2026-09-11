@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import "./Holdings.css";
 
 export default function Holdings() {
     const [summary, setSummary] = useState({

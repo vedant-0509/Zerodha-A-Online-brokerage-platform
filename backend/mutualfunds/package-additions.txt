@@ -1,0 +1,3 @@
+Install from the project root if not already installed:
+
+npm install axios node-cron mysql2 express cors dotenv uuid

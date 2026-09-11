@@ -1,14 +1,13 @@
 import { io } from "socket.io-client";
 
-const URL = process.env.REACT_APP_DETAIL_STOCK_SOCKET || "http://localhost:3011";
+const DETAIL_API = "http://localhost:3011";
 
-const detailStockSocket = io(URL, {
-  transports: ["websocket"],
+const detailStockSocket = io(DETAIL_API, {
+  transports: ["websocket", "polling"],
   autoConnect: true,
   reconnection: true,
-  reconnectionAttempts: Infinity,
+  reconnectionAttempts: 5,
   reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
 });
 
 export default detailStockSocket;
