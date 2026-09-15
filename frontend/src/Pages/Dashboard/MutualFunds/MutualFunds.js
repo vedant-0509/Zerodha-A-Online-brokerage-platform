@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router-dom";
 import MutualFundWrapper from "./MutualFundsWrapper";
 import Explore from "./Explore/Explore.js";
 import Dashboard from "./Dashboard/Dashboard.js";
+import DashboardSection2 from "./Dashboard/DashboardSection2.jsx";
 
 export default function MutualFund() {
     return (
@@ -13,6 +14,7 @@ export default function MutualFund() {
                 <Route index element={<Explore />} />
                 <Route path="explore" element={<Explore />} />
                 <Route path="dashboard" element={<Dashboard />} />
+                <Route path="all" element={<DashboardSection2 />} />
             </Routes>
         </>
     );

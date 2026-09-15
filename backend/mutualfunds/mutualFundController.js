@@ -170,6 +170,208 @@ function getFundSubCategory(category, name) {
   return category || "Other";
 }
 
+async function getTopReturns(req, res) {
+  try {
+    const requestedLimit = Number(
+      req.query.limit || 12
+    );
+
+    const requestedOffset = Number(
+      req.query.offset || 0
+    );
+
+    const limit = Math.min(
+      Math.max(
+        Number.isFinite(requestedLimit)
+          ? requestedLimit
+          : 12,
+        1
+      ),
+      52
+    );
+
+    const offset = Math.max(
+      Number.isFinite(requestedOffset)
+        ? requestedOffset
+        : 0,
+      0
+    );
+
+    /*
+    ----------------------------------------------------------------------
+    First find the BEST 1D-return MF from EACH fund house.
+
+    ROW_NUMBER() ensures:
+      Motilal Oswal -> only 1 MF
+      Nippon         -> only 1 MF
+      SBI            -> only 1 MF
+      etc.
+
+    Then sort those 52 selected funds by return_1d.
+    ----------------------------------------------------------------------
+    */
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        schemeId,
+        schemeCode,
+        schemeName,
+        fundHouse,
+        schemeType,
+        schemeCategory,
+        fundSubCategory,
+
+        currentNav,
+        previousNav,
+
+        navDate,
+        previousNavDate,
+
+        dayReturn,
+        dayReturnNavDate,
+
+        return1Y,
+        return3Y,
+        return5Y,
+
+        rating,
+        risk
+
+      FROM (
+        SELECT
+          id AS schemeId,
+          scheme_code AS schemeCode,
+          scheme_name AS schemeName,
+          fund_house AS fundHouse,
+          scheme_type AS schemeType,
+          scheme_category AS schemeCategory,
+          fund_sub_category AS fundSubCategory,
+
+          current_nav AS currentNav,
+          previous_nav AS previousNav,
+
+          nav_date AS navDate,
+          previous_nav_date AS previousNavDate,
+
+          return_1d AS dayReturn,
+          return_1d_nav_date AS dayReturnNavDate,
+
+          return_1y AS return1Y,
+          return_3y AS return3Y,
+          return_5y AS return5Y,
+
+          rating,
+          risk,
+
+          ROW_NUMBER() OVER (
+            PARTITION BY fund_house
+            ORDER BY
+              return_1d DESC,
+              scheme_name ASC,
+              scheme_code ASC
+          ) AS houseRank
+
+        FROM mf_schemes
+
+        WHERE is_active = 1
+
+          AND fund_house IS NOT NULL
+          AND TRIM(fund_house) <> ''
+
+          AND current_nav IS NOT NULL
+          AND current_nav > 0
+
+          AND previous_nav IS NOT NULL
+          AND previous_nav > 0
+
+          AND return_1d IS NOT NULL
+      ) AS ranked
+
+      WHERE houseRank = 1
+
+      ORDER BY
+        dayReturn DESC,
+        fundHouse ASC,
+        schemeName ASC
+
+      LIMIT ? OFFSET ?
+      `,
+      [limit, offset]
+    );
+
+    /*
+    ----------------------------------------------------------------------
+    Total number of fund houses having valid 1D return data.
+    ----------------------------------------------------------------------
+    */
+
+    const [[countResult]] =
+      await pool.query(
+        `
+        SELECT COUNT(*) AS totalHouses
+
+        FROM (
+          SELECT
+            fund_house
+
+          FROM mf_schemes
+
+          WHERE is_active = 1
+
+            AND fund_house IS NOT NULL
+            AND TRIM(fund_house) <> ''
+
+            AND current_nav IS NOT NULL
+            AND current_nav > 0
+
+            AND previous_nav IS NOT NULL
+            AND previous_nav > 0
+
+            AND return_1d IS NOT NULL
+
+          GROUP BY fund_house
+        ) AS houses
+        `
+      );
+
+    const totalHouses = Number(
+      countResult?.totalHouses || 0
+    );
+
+    return res.json({
+      success: true,
+
+      data: rows,
+
+      totalHouses,
+
+      returned: rows.length,
+
+      offset,
+
+      limit,
+
+      hasMore:
+        offset + rows.length <
+        totalHouses,
+    });
+  } catch (error) {
+    console.error(
+      "[MF TOP RETURNS]",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+
+      message:
+        "Unable to fetch top mutual funds",
+    });
+  }
+}
+
+
 function normalizeRisk(risk) {
   if (!risk) {
     return null;
@@ -1112,141 +1314,699 @@ async function sellMutualFund(req, res) {
 |--------------------------------------------------------------------------
 */
 
-async function getMutualFundHoldings(req, res) {
+// async function getMutualFundHoldings(req, res) {
+//   try {
+//     const { userId } = req.params;
+
+//     const [rows] = await pool.query(
+//       `
+//                 SELECT
+
+//                     h.id,
+
+//                     h.user_id,
+
+//                     h.units,
+
+//                     h.invested_amount,
+
+//                     h.created_at,
+
+//                     h.updated_at,
+
+//                     s.id AS scheme_id,
+
+//                     s.scheme_code,
+
+//                     s.scheme_name,
+
+//                     s.fund_house,
+
+//                     s.scheme_category,
+
+//                     s.fund_type,
+
+//                     s.fund_sub_category,
+
+//                     s.current_nav,
+
+//                     s.nav_date,
+
+//                     s.return_1y,
+
+//                     s.return_3y,
+
+//                     s.return_5y,
+
+//                     s.rating,
+
+//                     s.risk,
+
+//                     (
+//                         h.units *
+//                         s.current_nav
+//                     ) AS current_value
+
+//                 FROM mf_holdings h
+
+//                 INNER JOIN mf_schemes s
+//                     ON s.id = h.scheme_id
+
+//                 WHERE h.user_id = ?
+
+//                 ORDER BY
+//                     h.updated_at DESC
+//                 `,
+//       [userId],
+//     );
+
+//     const holdings = rows.map((row) => {
+//       const invested = Number(row.invested_amount);
+
+//       const currentValue = Number(row.current_value);
+
+//       return {
+//         id: row.id,
+
+//         userId: row.user_id,
+
+//         schemeId: row.scheme_id,
+
+//         schemeCode: row.scheme_code,
+
+//         schemeName: row.scheme_name,
+
+//         fundHouse: row.fund_house,
+
+//         schemeCategory: row.scheme_category,
+
+//         fundType: row.fund_type,
+
+//         fundSubCategory: row.fund_sub_category,
+
+//         units: Number(row.units),
+
+//         investedAmount: invested,
+
+//         currentNav: Number(Number(row.current_nav).toFixed(2)),
+
+//         currentValue,
+
+//         navDate: row.nav_date,
+
+//         return1Y: row.return_1y,
+
+//         return3Y: row.return_3y,
+
+//         return5Y: row.return_5y,
+
+//         rating: row.rating,
+
+//         risk: row.risk,
+
+//         profitLoss: Number((currentValue - invested).toFixed(2)),
+
+//         createdAt: row.created_at,
+
+//         updatedAt: row.updated_at,
+//       };
+//     });
+
+//     res.json({
+//       success: true,
+
+//       data: holdings,
+
+//       holdings,
+//     });
+//   } catch (error) {
+//     console.error("getMutualFundHoldings error:", error);
+
+//     res.status(500).json({
+//       success: false,
+
+//       message: "Unable to load mutual fund holdings",
+
+//       error: error.message,
+//     });
+//   }
+// }
+
+
+
+
+
+async function getMutualFundHoldings(
+  req,
+  res
+) {
   try {
     const { userId } = req.params;
 
-    const [rows] = await pool.query(
-      `
-                SELECT
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
 
-                    h.id,
+    const [holdings] =
+      await pool.query(
+        `
+        SELECT
+          h.id,
+          h.user_id,
+          h.scheme_id,
+          h.units,
+          h.invested_amount,
 
-                    h.user_id,
+          h.created_at,
+          h.updated_at,
 
-                    h.units,
+          s.scheme_code,
+          s.scheme_name,
+          s.fund_house,
+          s.scheme_type,
+          s.scheme_category,
+          s.fund_sub_category,
 
-                    h.invested_amount,
+          s.current_nav,
+          s.nav_date,
 
-                    h.created_at,
+          s.previous_nav,
+          s.previous_nav_date,
 
-                    h.updated_at,
+          s.return_1d,
+          s.return_1d_nav_date,
 
-                    s.id AS scheme_id,
+          s.return_1y,
+          s.return_3y,
+          s.return_5y,
 
-                    s.scheme_code,
+          s.rating,
+          s.risk
 
-                    s.scheme_name,
+        FROM mf_holdings h
 
-                    s.fund_house,
+        INNER JOIN mf_schemes s
+          ON s.id = h.scheme_id
 
-                    s.scheme_category,
+        WHERE h.user_id = ?
+          AND h.units > 0
 
-                    s.fund_type,
+        ORDER BY
+          s.scheme_name ASC
+        `,
+        [userId]
+      );
 
-                    s.fund_sub_category,
+    let investedAmount = 0;
+    let currentValue = 0;
+    let todaysPnL = 0;
+    let totalReturn = 0;
 
-                    s.current_nav,
+    const data = holdings.map(
+      (holding) => {
+        const units =
+          Number(
+            holding.units || 0
+          );
 
-                    s.nav_date,
+        const invested =
+          Number(
+            holding.invested_amount || 0
+          );
 
-                    s.return_1y,
+        const currentNav =
+          Number(
+            holding.current_nav || 0
+          );
 
-                    s.return_3y,
+        const previousNav =
+          Number(
+            holding.previous_nav || 0
+          );
 
-                    s.return_5y,
+        const value =
+          units * currentNav;
 
-                    s.rating,
+        /*
+          Today's portfolio value
+          based on previous NAV.
+        */
+        const previousValue =
+          previousNav > 0
+            ? units * previousNav
+            : value;
 
-                    s.risk,
+        const dayPnL =
+          value - previousValue;
 
-                    (
-                        h.units *
-                        s.current_nav
-                    ) AS current_value
+        const dayPercent =
+          previousValue > 0
+            ? (dayPnL /
+                previousValue) *
+              100
+            : 0;
 
-                FROM mf_holdings h
+        /*
+          Total return
+          = current value - invested amount
+        */
+        const totalPnL =
+          value - invested;
 
-                INNER JOIN mf_schemes s
-                    ON s.id = h.scheme_id
+        const totalPercent =
+          invested > 0
+            ? (totalPnL /
+                invested) *
+              100
+            : 0;
 
-                WHERE h.user_id = ?
+        investedAmount +=
+          invested;
 
-                ORDER BY
-                    h.updated_at DESC
-                `,
-      [userId],
+        currentValue +=
+          value;
+
+        todaysPnL +=
+          dayPnL;
+
+        totalReturn +=
+          totalPnL;
+
+        return {
+          id: holding.id,
+
+          userId:
+            holding.user_id,
+
+          schemeId:
+            holding.scheme_id,
+
+          schemeCode:
+            holding.scheme_code,
+
+          schemeName:
+            holding.scheme_name,
+
+          fundHouse:
+            holding.fund_house,
+
+          schemeType:
+            holding.scheme_type,
+
+          schemeCategory:
+            holding.scheme_category,
+
+          fundSubCategory:
+            holding.fund_sub_category,
+
+          units,
+
+          investedAmount:
+            invested,
+
+          currentNav,
+
+          navDate:
+            holding.nav_date,
+
+          previousNav,
+
+          previousNavDate:
+            holding.previous_nav_date,
+
+          currentValue:
+            value,
+
+          previousValue,
+
+          todaysPnL:
+            dayPnL,
+
+          todaysReturnPercent:
+            dayPercent,
+
+          totalReturn:
+            totalPnL,
+
+          totalReturnPercent:
+            totalPercent,
+
+          return1D:
+            Number(
+              holding.return_1d ?? 0
+            ),
+
+          return1Y:
+            holding.return_1y,
+
+          return3Y:
+            holding.return_3y,
+
+          return5Y:
+            holding.return_5y,
+
+          rating:
+            holding.rating,
+
+          risk:
+            holding.risk,
+        };
+      }
     );
 
-    const holdings = rows.map((row) => {
-      const invested = Number(row.invested_amount);
+    /*
+      XIRR based on completed orders
+      plus current portfolio value.
+    */
+    const xirr =
+      await calculatePortfolioXirr(
+        pool,
+        userId,
+        currentValue
+      );
 
-      const currentValue = Number(row.current_value);
+    const totalReturnPercent =
+      investedAmount > 0
+        ? (totalReturn /
+            investedAmount) *
+          100
+        : 0;
 
-      return {
-        id: row.id,
+    const todaysReturnPercent =
+      currentValue - todaysPnL > 0
+        ? (todaysPnL /
+            (currentValue -
+              todaysPnL)) *
+          100
+        : 0;
 
-        userId: row.user_id,
-
-        schemeId: row.scheme_id,
-
-        schemeCode: row.scheme_code,
-
-        schemeName: row.scheme_name,
-
-        fundHouse: row.fund_house,
-
-        schemeCategory: row.scheme_category,
-
-        fundType: row.fund_type,
-
-        fundSubCategory: row.fund_sub_category,
-
-        units: Number(row.units),
-
-        investedAmount: invested,
-
-        currentNav: Number(Number(row.current_nav).toFixed(2)),
-
-        currentValue,
-
-        navDate: row.nav_date,
-
-        return1Y: row.return_1y,
-
-        return3Y: row.return_3y,
-
-        return5Y: row.return_5y,
-
-        rating: row.rating,
-
-        risk: row.risk,
-
-        profitLoss: Number((currentValue - invested).toFixed(2)),
-
-        createdAt: row.created_at,
-
-        updatedAt: row.updated_at,
-      };
-    });
-
-    res.json({
+    return res.json({
       success: true,
 
-      data: holdings,
+      summary: {
+        investedAmount,
+        currentValue,
 
-      holdings,
+        todaysPnL,
+        todaysReturnPercent,
+
+        totalReturn,
+        totalReturnPercent,
+
+        xirr,
+      },
+
+      data,
+
+      /*
+        Keep this for compatibility
+        with existing frontend code.
+      */
+      holdings: data,
     });
   } catch (error) {
-    console.error("getMutualFundHoldings error:", error);
+    console.error(
+      "[MF HOLDINGS]",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
-      message: "Unable to load mutual fund holdings",
-
-      error: error.message,
+      message:
+        "Unable to fetch mutual fund holdings",
     });
+  }
+}
+
+
+function calculateXirrFromCashFlows(
+  cashFlows
+) {
+  if (
+    !Array.isArray(cashFlows) ||
+    cashFlows.length < 2
+  ) {
+    return null;
+  }
+
+  const sorted =
+    [...cashFlows].sort(
+      (a, b) =>
+        a.date.getTime() -
+        b.date.getTime()
+    );
+
+  const firstDate =
+    sorted[0].date;
+
+  const yearFraction = (
+    date
+  ) => {
+    return (
+      (date.getTime() -
+        firstDate.getTime()) /
+      (365 * 24 * 60 * 60 * 1000)
+    );
+  };
+
+  const npv = (rate) => {
+    return sorted.reduce(
+      (sum, flow) => {
+        const years =
+          yearFraction(
+            flow.date
+          );
+
+        return (
+          sum +
+          flow.amount /
+            Math.pow(
+              1 + rate,
+              years
+            )
+        );
+      },
+      0
+    );
+  };
+
+  let low = -0.9999;
+  let high = 10;
+
+  const lowValue =
+    npv(low);
+
+  const highValue =
+    npv(high);
+
+  /*
+    No root in range.
+  */
+  if (
+    !Number.isFinite(
+      lowValue
+    ) ||
+    !Number.isFinite(
+      highValue
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    lowValue * highValue > 0
+  ) {
+    return null;
+  }
+
+  /*
+    Bisection method.
+  */
+  for (
+    let i = 0;
+    i < 200;
+    i++
+  ) {
+    const mid =
+      (low + high) / 2;
+
+    const value =
+      npv(mid);
+
+    if (
+      !Number.isFinite(value)
+    ) {
+      return null;
+    }
+
+    if (
+      Math.abs(value) <
+      0.000001
+    ) {
+      return mid * 100;
+    }
+
+    if (
+      lowValue * value <=
+      0
+    ) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+
+  return (
+    ((low + high) / 2) *
+    100
+  );
+}
+
+async function calculatePortfolioXirr(
+  db,
+  userId,
+  currentValue
+) {
+  try {
+    const [orders] =
+      await db.query(
+        `
+        SELECT
+          order_type,
+          amount,
+          created_at,
+          completed_at
+
+        FROM mf_orders
+
+        WHERE user_id = ?
+          AND status = 'COMPLETED'
+
+        ORDER BY created_at ASC
+        `,
+        [userId]
+      );
+
+    if (
+      !Array.isArray(orders) ||
+      orders.length === 0
+    ) {
+      return null;
+    }
+
+    const cashFlows = [];
+
+    for (
+      const order of orders
+    ) {
+      const amount =
+        Number(
+          order.amount || 0
+        );
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        continue;
+      }
+
+      const dateValue =
+        order.completed_at ||
+        order.created_at;
+
+      const date =
+        new Date(dateValue);
+
+      if (
+        Number.isNaN(
+          date.getTime()
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        order.order_type ===
+        "BUY"
+      ) {
+        /*
+          Investment = negative cash flow
+        */
+        cashFlows.push({
+          amount: -amount,
+          date,
+        });
+      }
+
+      if (
+        order.order_type ===
+        "SELL"
+      ) {
+        /*
+          Sale = positive cash flow
+        */
+        cashFlows.push({
+          amount,
+          date,
+        });
+      }
+    }
+
+    /*
+      Current portfolio value
+      is treated as a positive cash flow
+      on today's date.
+    */
+    if (
+      Number.isFinite(
+        Number(currentValue)
+      ) &&
+      Number(currentValue) > 0
+    ) {
+      cashFlows.push({
+        amount:
+          Number(currentValue),
+        date: new Date(),
+      });
+    }
+
+    /*
+      Need at least one investment
+      and one positive cash flow.
+    */
+    const hasNegative =
+      cashFlows.some(
+        (flow) =>
+          flow.amount < 0
+      );
+
+    const hasPositive =
+      cashFlows.some(
+        (flow) =>
+          flow.amount > 0
+      );
+
+    if (
+      !hasNegative ||
+      !hasPositive
+    ) {
+      return null;
+    }
+
+    return calculateXirrFromCashFlows(
+      cashFlows
+    );
+  } catch (error) {
+    console.error(
+      "[MF XIRR]",
+      error
+    );
+
+    return null;
   }
 }
 
@@ -1531,4 +2291,5 @@ module.exports = {
   syncReturns,
   getMFSyncStatus,
   triggerSyncNow,
+   getTopReturns,
 };

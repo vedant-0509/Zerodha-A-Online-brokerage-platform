@@ -1,36 +1,45 @@
 const env = require("./env");
 const { getStockFinancials } = require("./upstox");
-const IST_OFFSET_MINUTES = 330;
 const logger = require("./logger");
 
-async function handleStockMarketData(symbol) {
-  try {
-    const financials = await getStockFinancials(symbol);
-    return financials;
-  } catch (error) {
-    logger.error(`Market process error for ${symbol}:`, error);
-    return null;
-  }
-}
+const FORCE_MARKET_OPEN = process.env.FORCE_MARKET_OPEN === "true";
 
 function indiaDate(date = new Date()) {
-  const utcMillis = date.getTime() + date.getTimezoneOffset() * 60 * 1000;
-
-  const ist = new Date(utcMillis + IST_OFFSET_MINUTES * 60 * 1000);
-
-  return ist.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function indiaMinutes(date = new Date()) {
-  const utcMillis = date.getTime() + date.getTimezoneOffset() * 60 * 1000;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
 
-  const ist = new Date(utcMillis + IST_OFFSET_MINUTES * 60 * 1000);
+  const values = Object.fromEntries(
+    parts.map((part) => [
+      part.type,
+      part.value,
+    ])
+  );
 
-  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return (
+    Number(values.hour || 0) * 60 +
+    Number(values.minute || 0) +
+    Number(values.second || 0) / 60
+  );
 }
 
 function hhmmToMinutes(value) {
-  const [hours, minutes] = String(value || "09:15")
+  const [hours, minutes] = String(
+    value || "09:15"
+  )
     .split(":")
     .map(Number);
 
@@ -38,64 +47,163 @@ function hhmmToMinutes(value) {
 }
 
 function isTradingDay(date = new Date()) {
-  const dateString = indiaDate(date);
+  const dateString =
+    indiaDate(date);
 
-  const day = new Date(`${dateString}T00:00:00Z`).getUTCDay();
+  const day =
+    new Date(
+      `${dateString}T00:00:00Z`
+    ).getUTCDay();
 
-  // Sunday
   if (day === 0) return false;
-
-  // Saturday
   if (day === 6) return false;
 
-  const holidays = Array.isArray(env.marketHolidays) ? env.marketHolidays : [];
+  const holidays =
+    Array.isArray(
+      env.marketHolidays
+    )
+      ? env.marketHolidays
+      : [];
 
-  return !holidays.includes(dateString);
+  return !holidays.includes(
+    dateString
+  );
 }
 
+// function isMarketOpen(date = new Date()) {
+//   if (!isTradingDay(date)) {
+//     return false;
+//   }
+
+//   const now =
+//     indiaMinutes(date);
+
+//   const openMinutes =
+//     hhmmToMinutes(
+//       env.marketOpen ||
+//       "09:15"
+//     );
+
+//   const closeMinutes =
+//     hhmmToMinutes(
+//       env.marketClose ||
+//       "15:30"
+//     );
+
+//   return (
+//     now >= openMinutes &&
+//     now < closeMinutes
+//   );
+// }
 function isMarketOpen(date = new Date()) {
+  if (FORCE_MARKET_OPEN) {
+    return true;
+  }
+
   if (!isTradingDay(date)) {
     return false;
   }
 
   const now = indiaMinutes(date);
 
-  const openMinutes = hhmmToMinutes(env.marketOpen || "09:15");
+  const openMinutes = hhmmToMinutes(
+    env.marketOpen || "09:15"
+  );
 
-  const closeMinutes = hhmmToMinutes(env.marketClose || "15:30");
+  const closeMinutes = hhmmToMinutes(
+    env.marketClose || "15:30"
+  );
 
-  return now >= openMinutes && now < closeMinutes;
+  return (
+    now >= openMinutes &&
+    now < closeMinutes
+  );
 }
 
-function isBeforeMarketOpen(date = new Date()) {
+function isBeforeMarketOpen(
+  date = new Date()
+) {
   if (!isTradingDay(date)) {
     return false;
   }
 
-  return indiaMinutes(date) < hhmmToMinutes(env.marketOpen || "09:15");
+  return (
+    indiaMinutes(date) <
+    hhmmToMinutes(
+      env.marketOpen ||
+      "09:15"
+    )
+  );
 }
 
-function isAfterMarketClose(date = new Date()) {
+function isAfterMarketClose(
+  date = new Date()
+) {
   if (!isTradingDay(date)) {
     return true;
   }
 
-  return indiaMinutes(date) >= hhmmToMinutes(env.marketClose || "15:30");
+  return (
+    indiaMinutes(date) >=
+    hhmmToMinutes(
+      env.marketClose ||
+      "15:30"
+    )
+  );
 }
 
-function marketStatus(date = new Date()) {
-  const open = isMarketOpen(date);
+function marketStatus(
+  date = new Date()
+) {
+  const open =
+    isMarketOpen(date);
 
   return {
     open,
-    date: indiaDate(date),
-    openTime: env.marketOpen || "09:15",
-    closeTime: env.marketClose || "15:30",
-    timezone: env.timezone || "Asia/Kolkata",
-    tradingDay: isTradingDay(date),
-    beforeOpen: isBeforeMarketOpen(date),
-    afterClose: isAfterMarketClose(date),
+
+    marketOpen: open,
+
+    date:
+      indiaDate(date),
+
+    openTime:
+      env.marketOpen ||
+      "09:15",
+
+    closeTime:
+      env.marketClose ||
+      "15:30",
+
+    timezone:
+      env.timezone ||
+      "Asia/Kolkata",
+
+    tradingDay:
+      isTradingDay(date),
+
+    beforeOpen:
+      isBeforeMarketOpen(date),
+
+    afterClose:
+      isAfterMarketClose(date),
   };
+}
+
+async function handleStockMarketData(
+  symbol
+) {
+  try {
+    return await getStockFinancials(
+      symbol
+    );
+  } catch (error) {
+    logger.error(
+      `Market process error for ${symbol}:`,
+      error
+    );
+
+    return null;
+  }
 }
 
 module.exports = {

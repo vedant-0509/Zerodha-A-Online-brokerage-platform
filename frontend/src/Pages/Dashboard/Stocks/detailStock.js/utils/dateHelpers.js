@@ -15,16 +15,76 @@ export function getDateDaysAgo(days) {
 
 export function getHistoryParams(range) {
   switch (range) {
-    case "1D": return { unit: "minutes", interval: "1", from: getDateDaysAgo(7) };
-    case "1W": return { unit: "minutes", interval: "5", from: getDateDaysAgo(7) };
-    case "1M": return { unit: "days", interval: "1", from: getDateDaysAgo(31) };
-    case "3M": return { unit: "days", interval: "1", from: getDateDaysAgo(92) };
-    case "6M": return { unit: "days", interval: "1", from: getDateDaysAgo(183) };
-    case "1Y": return { unit: "days", interval: "1", from: getDateDaysAgo(365) };
-    case "3Y": return { unit: "weeks", interval: "1", from: getDateDaysAgo(1095) };
-    case "5Y": return { unit: "weeks", interval: "1", from: getDateDaysAgo(1825) };
-    case "All": return { unit: "months", interval: "1", from: "2000-01-01" };
-    default: return { unit: "minutes", interval: "1", from: getDateDaysAgo(7) };
+    // IMPORTANT:
+    // 1D must use Upstox intraday endpoint.
+    // Do NOT send a "from" date.
+    case "1D":
+      return {
+        unit: "minutes",
+        interval: "1",
+      };
+
+    case "1W":
+      return {
+        unit: "minutes",
+        interval: "5",
+        from: getDateDaysAgo(7),
+      };
+
+    case "1M":
+      return {
+        unit: "days",
+        interval: "1",
+        from: getDateDaysAgo(31),
+      };
+
+    case "3M":
+      return {
+        unit: "days",
+        interval: "1",
+        from: getDateDaysAgo(92),
+      };
+
+    case "6M":
+      return {
+        unit: "days",
+        interval: "1",
+        from: getDateDaysAgo(183),
+      };
+
+    case "1Y":
+      return {
+        unit: "days",
+        interval: "1",
+        from: getDateDaysAgo(365),
+      };
+
+    case "3Y":
+      return {
+        unit: "weeks",
+        interval: "1",
+        from: getDateDaysAgo(1095),
+      };
+
+    case "5Y":
+      return {
+        unit: "weeks",
+        interval: "1",
+        from: getDateDaysAgo(1825),
+      };
+
+    case "All":
+      return {
+        unit: "months",
+        interval: "1",
+        from: "2000-01-01",
+      };
+
+    default:
+      return {
+        unit: "minutes",
+        interval: "1",
+      };
   }
 }
 
@@ -65,10 +125,15 @@ export function getIndiaTimeParts(value = Date.now()) {
     second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(new Date(timestamp));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
   return {
     date: `${values.year}-${values.month}-${values.day}`,
-    minutes: Number(values.hour) * 60 + Number(values.minute) + Number(values.second) / 60,
+    minutes:
+      Number(values.hour) * 60 +
+      Number(values.minute) +
+      Number(values.second) / 60,
   };
 }
 
@@ -81,7 +146,14 @@ export function isISTTradingTimestamp(value) {
 export function getMarketTimestamp(data) {
   if (!data) return NaN;
   return parseHistoryTimestamp(
-    data.timestamp ?? data.time ?? data.lastTradeTime ?? data.last_trade_time ?? data.tradeTime ?? data.trade_time ?? data.t ?? data.ltt
+    data.timestamp ??
+    data.time ??
+    data.lastTradeTime ??
+    data.last_trade_time ??
+    data.tradeTime ??
+    data.trade_time ??
+    data.t ??
+    data.ltt,
   );
 }
 
@@ -92,5 +164,12 @@ export function getISTMarketProgress(rawTime) {
   if (!parts) return 0;
   const marketOpenMinutes = 9 * 60 + 15;
   const marketCloseMinutes = 15 * 60 + 30;
-  return Math.max(0, Math.min(1, (parts.minutes - marketOpenMinutes) / (marketCloseMinutes - marketOpenMinutes)));
+  return Math.max(
+    0,
+    Math.min(
+      1,
+      (parts.minutes - marketOpenMinutes) /
+      (marketCloseMinutes - marketOpenMinutes),
+    ),
+  );
 }

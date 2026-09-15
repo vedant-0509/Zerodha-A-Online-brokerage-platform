@@ -1,66 +1,134 @@
-import React, { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
-import axios from "axios";
+// import React, { useEffect, useState } from "react";
+// import { NavLink } from "react-router-dom";
+// import axios from "axios";
+// import SearchModal from "./SearchModal";
+
+// export default function StocksSection1() {
+//     const [search, setSearch] = useState("");
+//     const [results, setResults] = useState([]);
+//     const [openSearch, setOpenSearch] = useState(false);
+
+//     useEffect(() => {
+//         if (search.length < 2) {
+//             setResults([]);
+//             return;
+//         }
+
+//         const timer = setTimeout(async () => {
+//             try {
+//                 const res = await axios.get(
+//                     `http://localhost:3001/search?q=${search}`
+//                 );
+
+//                 setResults(res.data);
+//             } catch (err) {
+//                 console.log(err);
+//             }
+//         }, 300);
+
+//         return () => clearTimeout(timer);
+//     }, [search]);
+
+//     return (
+//         <>
+//             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", }}>
+//                 <div className="StocksSection1-div" style={{ display: "flex", alignItems: "center", gap: "3rem", height: "3rem", fontWeight: "500", marginTop: ".75rem", }}>
+//                     <NavLink to="/dashboard/stocks/explore" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+//                         Explore
+//                     </NavLink>
+
+//                     <NavLink to="/dashboard/stocks/holdings" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+//                         Holdings
+//                     </NavLink>
+
+//                     <NavLink to="/dashboard/stocks/orders" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+//                         Orders
+//                     </NavLink>
+
+//                     <NavLink to="/dashboard/stocks/watchlist" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+//                         Watchlist
+//                     </NavLink>
+//                 </div>
+
+//                 <div className="searchbar" style={{ marginLeft: "17rem", paddingTop: "1rem", position: "relative", }}>
+//                     <SearchModal open={openSearch} onClose={() => setOpenSearch(false)} />
+
+//                     <div className="searchbar" onClick={() => setOpenSearch(true)}>
+//                         <div style={{ border: "1px solid #ddd", padding: "12px", borderRadius: "8px", width: "350px", cursor: "pointer", }}>
+//                             <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "10px", marginTop: ".2rem", }} />
+//                             Search Groww...
+//                         </div>
+//                     </div>
+//                 </div>
+//             </div>
+//         </>
+//     );
+// }
+
+import React, { useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
 import SearchModal from "./SearchModal";
 
 export default function StocksSection1() {
-    const [search, setSearch] = useState("");
-    const [results, setResults] = useState([]);
-    const [openSearch, setOpenSearch] = useState(false);
+  const [openSearch, setOpenSearch] = useState(false);
 
-    useEffect(() => {
-        if (search.length < 2) {
-            setResults([]);
-            return;
-        }
+  const navigate = useNavigate();
 
-        const timer = setTimeout(async () => {
-            try {
-                const res = await axios.get(
-                    `http://localhost:3001/search?q=${search}`
-                );
+  function handleSelectStock(stock) {
+    if (!stock?.symbol) {
+      console.error("Cannot open stock: symbol missing", stock);
+      return;
+    }
 
-                setResults(res.data);
-            } catch (err) {
-                console.log(err);
-            }
-        }, 300);
+    navigate(`/dashboard/stocks/explore/${encodeURIComponent(stock.symbol)}`, {
+      state: {
+        instrumentKey: stock.instrument_key,
 
-        return () => clearTimeout(timer);
-    }, [search]);
+        symbol: stock.symbol,
 
-    return (
-        <>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", }}>
-                <div className="StocksSection1-div" style={{ display: "flex", alignItems: "center", gap: "3rem", height: "3rem", fontWeight: "500", marginTop: ".75rem", }}>
-                    <NavLink to="/dashboard/stocks/explore" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
-                        Explore
-                    </NavLink>
+        companyName: stock.name,
 
-                    <NavLink to="/dashboard/stocks/holdings" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
-                        Holdings
-                    </NavLink>
+        exchange:
+          stock.exchange ||
+          stock.instrument_key?.split("|")[0]?.replace("_EQ", ""),
+      },
+    });
 
-                    <NavLink to="/dashboard/stocks/orders" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
-                        Orders
-                    </NavLink>
+    setOpenSearch(false);
+  }
 
-                    <NavLink to="/dashboard/stocks/watchlist" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
-                        Watchlist
-                    </NavLink>
-                </div>
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", }}>
+        <div className="StocksSection1-div" style={{ display: "flex", alignItems: "center", gap: "3rem", height: "3rem", fontWeight: "500", marginTop: ".75rem", }}>
+          <NavLink to="/dashboard/stocks/explore" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+            Explore
+          </NavLink>
 
-                <div className="searchbar" style={{ marginLeft: "17rem", paddingTop: "1rem", position: "relative", }}>
-                    <SearchModal open={openSearch} onClose={() => setOpenSearch(false)} />
+          <NavLink to="/dashboard/stocks/holdings" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+            Holdings
+          </NavLink>
 
-                    <div className="searchbar" onClick={() => setOpenSearch(true)}>
-                        <div style={{ border: "1px solid #ddd", padding: "12px", borderRadius: "8px", width: "350px", cursor: "pointer", }}>
-                            <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "10px", marginTop: ".2rem", }} />
-                            Search Groww...
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </>
-    );
+          <NavLink to="/dashboard/stocks/orders" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+            Orders
+          </NavLink>
+
+          <NavLink to="/dashboard/stocks/watchlist" className={({ isActive }) => isActive ? "navlink active-link" : "navlink"}>
+            Watchlist
+          </NavLink>
+        </div>
+
+        <div style={{marginTop:"5rem"}}>
+          <SearchModal open={openSearch} onClose={() => setOpenSearch(false)} onSelectStock={handleSelectStock} />
+        </div>
+
+        <div className="searchbar" onClick={() => setOpenSearch(true)}>
+          <div style={{ border: "1px solid #ddd", padding: "12px", borderRadius: "8px", width: "350px", cursor: "pointer", }}>
+            <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "10px", marginTop: ".2rem", }} />
+            Search Groww...
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }

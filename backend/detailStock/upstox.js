@@ -102,42 +102,25 @@ function normalizeFeed(instrumentKey, feed) {
     return null;
   }
 
-  const root =
-    feed?.fullFeed?.marketFF ||
-    feed?.fullFeed?.indexFF ||
-    feed?.marketFF ||
-    feed?.indexFF ||
-    feed?.ff ||
-    feed;
+  const root = feed?.fullFeed?.marketFF || feed?.fullFeed?.indexFF || feed?.marketFF || feed?.indexFF || feed?.ff || feed;
 
   const ltpc = root?.ltpc || feed?.ltpc || {};
   const extended = root?.eFeedDetails || root?.extendedFeedDetails || {};
 
-  const daily =
-    (root?.marketOHLC?.ohlc || feed?.marketOHLC?.ohlc || []).find(
-      (item) => item?.interval === "1d",
-    ) || {};
+  const daily = (root?.marketOHLC?.ohlc || feed?.marketOHLC?.ohlc || []).find((item) => item?.interval === "1d",) || {};
 
   const ltp = n(ltpc.ltp ?? root?.ltp ?? feed?.ltp);
-  const previousClose = n(
-    ltpc.cp ?? extended.cp ?? extended.lastClose ?? root?.lastClose,
-  );
+  const previousClose = n(ltpc.cp ?? extended.cp ?? extended.lastClose ?? root?.lastClose,);
 
   const open = n(daily.open ?? root?.open);
   const high = n(daily.high ?? root?.high);
   const low = n(daily.low ?? root?.low);
 
-  const volume = n(
-    daily.vol ?? daily.volume ?? extended.vtt ?? extended.tv ?? root?.volume,
-  );
+  const volume = n(daily.vol ?? daily.volume ?? extended.vtt ?? extended.tv ?? root?.volume,);
 
-  const upperCircuit = n(
-    extended.uc ?? extended.upperCircuit ?? root?.upperCircuit,
-  );
+  const upperCircuit = n(extended.uc ?? extended.upperCircuit ?? root?.upperCircuit,);
 
-  const lowerCircuit = n(
-    extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit,
-  );
+  const lowerCircuit = n(extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit,);
 
   const yearHigh = n(extended.yh ?? extended.yearHigh ?? root?.yearHigh);
   const yearLow = n(extended.yl ?? extended.yearLow ?? root?.yearLow);
@@ -149,13 +132,9 @@ function normalizeFeed(instrumentKey, feed) {
     return null;
   }
 
-  const change =
-    ltp !== null && previousClose !== null ? ltp - previousClose : null;
+  const change = ltp !== null && previousClose !== null ? ltp - previousClose : null;
 
-  const changePercent =
-    previousClose !== null && previousClose !== 0 && change !== null
-      ? (change / previousClose) * 100
-      : null;
+  const changePercent = previousClose !== null && previousClose !== 0 && change !== null ? (change / previousClose) * 100 : null;
 
   return {
     instrumentKey,
@@ -179,7 +158,7 @@ function normalizeFeed(instrumentKey, feed) {
     week52Low: yearLow,
     lastTradedQuantity,
     lastTradeTime,
-    timestamp: Date.now(),
+    timestamp: lastTradeTime ?? Date.now(),
     source: "upstox-websocket",
   };
 }

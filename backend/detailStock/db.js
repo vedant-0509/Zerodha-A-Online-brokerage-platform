@@ -631,9 +631,9 @@ async function close() {
   if (pool) await pool.end();
   pool = null;
 }
-
 module.exports = {
   initDb,
+  requireDb,
   close,
   getMarketStockInstruments,
   getMarketStockCount,

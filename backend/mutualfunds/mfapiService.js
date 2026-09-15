@@ -86,7 +86,7 @@ async function getHistoricalNAV(
     `&endDate=${encodeURIComponent(endDate)}`;
 
   const response = await axios.get(url, {
-    timeout: MFAPI_TIMEOUT_MS
+    timeout: Number(process.env.MFAPI_TIMEOUT_MS || 60000)
   });
 
   if (!response.data) {

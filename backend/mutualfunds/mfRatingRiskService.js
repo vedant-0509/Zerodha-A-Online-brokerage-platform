@@ -301,10 +301,10 @@ async function getSchemeHistoricalNAV(schemeCode) {
  * ---------------------------------------------------------
  */
 
-async function calculateFundRisk(scheme) {
-  const historicalNAV = await getSchemeHistoricalNAV(
-    scheme.scheme_code
-  );
+async function calculateFundRisk(scheme, providedHistory = null) {
+  const historicalNAV = Array.isArray(providedHistory)
+    ? providedHistory
+    : await getSchemeHistoricalNAV(scheme.scheme_code);
 
   if (historicalNAV.length < MIN_HISTORY_DAYS) {
     return {

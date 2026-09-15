@@ -246,7 +246,17 @@
 
 
 
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({
+  path: path.join(__dirname, "../.env")
+});
+
+console.log(
+  "Upstox token loaded:",
+  process.env.UPSTOX_ANALYTIC_TOKEN
+    ? `${process.env.UPSTOX_ANALYTIC_TOKEN.slice(0, 12)}...`
+    : "MISSING"
+);
 
 const { startScheduler } = require("./marketScheduler");
 const { alreadyUpdatedToday, saveUpdateLog } = require("./marketUpdateLog");
@@ -298,13 +308,8 @@ async function bootstrap() {
             }
 
             console.log("Today's Closing Prices Saved.");
-
         }
-
     }
-
     startScheduler();
-
 }
-
 bootstrap();

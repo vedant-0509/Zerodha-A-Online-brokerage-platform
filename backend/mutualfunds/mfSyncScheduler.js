@@ -501,6 +501,9 @@ async function runDailySyncIfNeeded(
      *
      * The failed count is preserved in mf_sync_status.
      */
+    // NAV synchronization is the core daily sync. Individual return/rating
+    // failures are preserved in counters, but a completely failed ratings
+    // stage is surfaced explicitly instead of being mistaken for a clean run.
     await markSuccess(
       SYNC_NAME,
       {
@@ -515,9 +518,13 @@ async function runDailySyncIfNeeded(
       '================================================'
     );
 
-    console.log(
-      '[MF SYNC] DAILY SYNCHRONIZATION SUCCESSFUL'
-    );
+    if (ratingResult.failed === ratingResult.processed && ratingResult.processed > 0) {
+      console.warn('[MF SYNC] WARNING: ratings/risk stage failed for every scheme; NAV sync succeeded but ratings/risk require retry.');
+    } else if (failed > 0) {
+      console.warn(`[MF SYNC] DAILY SYNCHRONIZATION COMPLETED WITH ${failed} FAILED RECORDS`);
+    } else {
+      console.log('[MF SYNC] DAILY SYNCHRONIZATION SUCCESSFUL');
+    }
 
     console.log(
       `[MF SYNC] NAV records: ${processed}`

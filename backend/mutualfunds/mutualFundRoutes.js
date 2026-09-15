@@ -12,11 +12,13 @@ const {
   syncReturns,
   getMFSyncStatus,
   triggerSyncNow,
+    getTopReturns,
 } = require('./mutualFundController');
 
 const router = express.Router();
 
 router.get('/filters', getMutualFundFilters);
+router.get('/top-returns', getTopReturns);
 router.get('/sync-status', getMFSyncStatus);
 router.post('/sync-now', triggerSyncNow);
 router.post('/orders/buy', buyMutualFund);
