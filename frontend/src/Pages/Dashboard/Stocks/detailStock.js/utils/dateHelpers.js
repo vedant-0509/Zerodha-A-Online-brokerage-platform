@@ -8,9 +8,21 @@ export function getIndiaDate() {
 }
 
 export function getDateDaysAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
+  const indiaToday = getIndiaDate();
+  const date = new Date(`${indiaToday}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - Number(days || 0));
   return date.toISOString().slice(0, 10);
+}
+
+export function getDateMonthsAgo(months) {
+  const indiaToday = getIndiaDate();
+  const date = new Date(`${indiaToday}T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() - Number(months || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+export function getDateYearsAgo(years) {
+  return getDateMonthsAgo(Number(years || 0) * 12);
 }
 
 export function getHistoryParams(range) {
@@ -35,42 +47,42 @@ export function getHistoryParams(range) {
       return {
         unit: "days",
         interval: "1",
-        from: getDateDaysAgo(31),
+        from: getDateMonthsAgo(1),
       };
 
     case "3M":
       return {
         unit: "days",
         interval: "1",
-        from: getDateDaysAgo(92),
+        from: getDateMonthsAgo(3),
       };
 
     case "6M":
       return {
         unit: "days",
         interval: "1",
-        from: getDateDaysAgo(183),
+        from: getDateMonthsAgo(6),
       };
 
     case "1Y":
       return {
         unit: "days",
         interval: "1",
-        from: getDateDaysAgo(365),
+        from: getDateYearsAgo(1),
       };
 
     case "3Y":
       return {
         unit: "weeks",
         interval: "1",
-        from: getDateDaysAgo(1095),
+        from: getDateYearsAgo(3),
       };
 
     case "5Y":
       return {
         unit: "weeks",
         interval: "1",
-        from: getDateDaysAgo(1825),
+        from: getDateYearsAgo(5),
       };
 
     case "All":

@@ -674,6 +674,7 @@ async function getMutualFund(req, res) {
                 FROM mf_schemes
 
                 WHERE scheme_code = ?
+                    AND is_active = 1
 
                 LIMIT 1
                 `,
@@ -2247,8 +2248,9 @@ async function syncReturns(req, res) {
 
 async function getMFSyncStatus(req, res) {
   try {
-    const status = await getSyncStatus('mf_daily_sync');
-    res.json({ success: true, data: status });
+    const daily = await getSyncStatus('mf_daily_sync');
+    const nav = await getSyncStatus('mf_nav_sync');
+    res.json({ success: true, data: { daily, nav } });
   } catch (error) {
     console.error('[MF CONTROLLER] getMFSyncStatus:', error);
     res.status(500).json({ success: false, message: 'Failed to load sync status', error: error.message });

@@ -87,5 +87,7 @@ module.exports = {
 
   closeQuoteBatchSize: numberValue(process.env.CLOSE_QUOTE_BATCH_SIZE, 100),
 
+  closeBatchSize: numberValue(process.env.CLOSING_BATCH_SIZE, 5),
+
   closeBatchDelayMs: numberValue(process.env.CLOSE_BATCH_DELAY_MS, 150),
 };

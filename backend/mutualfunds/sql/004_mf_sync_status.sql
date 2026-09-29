@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS mf_sync_status (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   sync_name          VARCHAR(100)    NOT NULL,
   last_success_date  DATE            NULL,
+  last_attempt_date  DATE            NULL,
+  last_processed_nav_date DATE        NULL,
   last_success_at    DATETIME        NULL,
   status             ENUM('PENDING', 'RUNNING', 'SUCCESS', 'FAILED') NOT NULL DEFAULT 'PENDING',
   records_processed  INT UNSIGNED    NOT NULL DEFAULT 0,
@@ -22,6 +24,6 @@ CREATE TABLE IF NOT EXISTS mf_sync_status (
 -- "has today's sync happened" check has something to read.
 -- INSERT IGNORE means this is a no-op on every subsequent run.
 INSERT IGNORE INTO mf_sync_status
-  (sync_name, last_success_date, last_success_at, status, records_processed, records_updated, records_failed)
+  (sync_name, last_success_date, last_attempt_date, last_processed_nav_date, last_success_at, status, records_processed, records_updated, records_failed)
 VALUES
-  ('mf_daily_sync', NULL, NULL, 'PENDING', 0, 0, 0);
+  ('mf_daily_sync', NULL, NULL, NULL, NULL, 'PENDING', 0, 0, 0);

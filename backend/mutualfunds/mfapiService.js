@@ -1,37 +1,89 @@
-const axios = require('axios');
+const axios = require("axios");
 
-const MFAPI_BASE_URL = process.env.MFAPI_BASE_URL || 'https://api.mfapi.in';
+const MFAPI_BASE_URL = process.env.MFAPI_BASE_URL || "https://api.mfapi.in";
+const AMFI_NAV_URL =
+  process.env.AMFI_NAV_URL || "https://portal.amfiindia.com/spages/NAVAll.txt";
 const NAV_DECIMALS = 2;
+const TIMEOUT_MS = Number(process.env.MFAPI_TIMEOUT_MS || 60000);
+
+const http = axios.create({
+  baseURL: MFAPI_BASE_URL,
+  timeout: TIMEOUT_MS,
+  headers: {
+    Accept: "application/json",
+    "User-Agent": "Zerodha-MF-Module/3.0",
+  },
+});
+
+const amfiHttp = axios.create({
+  timeout: TIMEOUT_MS,
+  maxRedirects: 5,
+  headers: {
+    Accept: "text/plain,text/*,*/*;q=0.8",
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36",
+    Referer: "https://www.amfiindia.com/",
+  },
+});
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function roundNav(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
   return Number(number.toFixed(NAV_DECIMALS));
 }
-const http = axios.create({
-  baseURL: MFAPI_BASE_URL,
-  timeout: Number(process.env.MFAPI_TIMEOUT_MS || 60000),
-  headers: { Accept: 'application/json', 'User-Agent': 'Zerodha-MF-Module/2.0' },
-});
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function parseNavDate(value) {
-  if (!value) return null;
-  const s = String(value).trim();
-  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
-    const [dd, mm, yyyy] = s.split('-');
-    return `${yyyy}-${mm}-${dd}`;
+  if (value === null || value === undefined) return null;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
   }
+
+  const s = String(value).trim();
+  if (!s) return null;
+
+  const months = {
+    jan: "01",
+    feb: "02",
+    mar: "03",
+    apr: "04",
+    may: "05",
+    jun: "06",
+    jul: "07",
+    aug: "08",
+    sep: "09",
+    oct: "10",
+    nov: "11",
+    dec: "12",
+  };
+
+  let m = s.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})$/);
+  if (m) {
+    const month = months[m[2].toLowerCase()];
+    return month ? `${m[3]}-${month}-${m[1]}` : null;
+  }
+
+  m = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toISOString().slice(0, 10);
 }
 
 function formatApiDate(date) {
   const iso = parseNavDate(date);
   if (!iso) return null;
-  const [yyyy, mm, dd] = iso.split('-');
+  const [yyyy, mm, dd] = iso.split("-");
   return `${dd}-${mm}-${yyyy}`;
 }
 
@@ -53,58 +105,209 @@ function addDays(dateString, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/*
+ * AMFI Complete NAV Report supports the current published layouts:
+ *
+ * 6 columns:
+ *   code;isin-growth;isin-reinvestment;scheme-name;nav;date
+ *
+ * 8 columns:
+ *   code;isin-growth;isin-reinvestment;scheme-name;plan;option;nav;date
+ *
+ * Headers/category rows are ignored because the first field is not numeric.
+ */
+function parseAMFINAVReport(text) {
+  const lines = String(text || "")
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/);
+
+  const funds = [];
+
+  for (const line of lines) {
+    const parts = line.split(";").map((item) => item.trim());
+
+    if (parts.length < 6) {
+      continue;
+    }
+
+    const schemeCode = Number(parts[0]);
+
+    if (!Number.isInteger(schemeCode) || schemeCode <= 0) {
+      continue;
+    }
+
+    const isinGrowth = parts[1] && parts[1] !== "-" ? parts[1] : null;
+
+    const isinDivReinvestment = parts[2] && parts[2] !== "-" ? parts[2] : null;
+
+    let schemeName = parts[3] || null;
+
+    let nav;
+    let navDate;
+
+    /*
+    |--------------------------------------------------------------------------
+    | AMFI 8-column format
+    |--------------------------------------------------------------------------
+    |
+    | code;
+    | isinGrowth;
+    | isinReinvestment;
+    | schemeName;
+    | plan;
+    | option;
+    | nav;
+    | date
+    |
+    |--------------------------------------------------------------------------
+    */
+
+    if (parts.length >= 8 && Number.isFinite(Number(parts[6]))) {
+      const plan = parts[4] || "";
+
+      const option = parts[5] || "";
+
+      nav = roundNav(parts[6]);
+
+      navDate = parseNavDate(parts[7]);
+
+      /*
+      ----------------------------------------------------------------------
+      Preserve Plan + Option in scheme_name.
+      ----------------------------------------------------------------------
+      */
+
+      const nameParts = [schemeName, plan, option].filter(
+        (value) => value && value !== "-" && value.trim() !== "",
+      );
+
+      schemeName = nameParts.join(" - ");
+    } else {
+
+    /*
+    |--------------------------------------------------------------------------
+    | AMFI 6-column format
+    |--------------------------------------------------------------------------
+    |
+    | code;
+    | isinGrowth;
+    | isinReinvestment;
+    | schemeName;
+    | nav;
+    | date
+    |
+    |--------------------------------------------------------------------------
+    */
+      nav = roundNav(parts[4]);
+
+      navDate = parseNavDate(parts[5]);
+    }
+
+    if (!navDate || !Number.isFinite(nav) || nav <= 0) {
+      continue;
+    }
+
+    funds.push({
+      schemeCode,
+      schemeName,
+      nav,
+      date: navDate,
+      navDate,
+      fundHouse: null,
+      schemeType: null,
+      schemeCategory: null,
+      isinGrowth,
+      isinDivReinvestment,
+    });
+  }
+
+  return funds;
+}
+
 async function getLatestFunds() {
-  // Retry a handful of times with backoff before giving up - a single
-  // transient network blip should not fail the whole daily sync and
-  // must not be treated the same as a hard MFapi outage.
-  let lastError;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await http.get('/mf/latest');
-      const p = response.data;
-      if (Array.isArray(p)) return p;
-      if (Array.isArray(p?.data)) return p.data;
-      if (Array.isArray(p?.data?.funds)) return p.data.funds;
-      if (Array.isArray(p?.funds)) return p.funds;
-      throw new Error('Unexpected MFapi /mf/latest response format');
-    } catch (err) {
-      lastError = err;
-      if (attempt < 4) await sleep(1000 * attempt);
+      console.log(
+        `[MF NAV] Downloading AMFI NAV report: ${AMFI_NAV_URL} (attempt ${attempt}/3)...`,
+      );
+
+      const response = await amfiHttp.get(AMFI_NAV_URL, {
+        responseType: "arraybuffer",
+        transformResponse: [(data) => data],
+      });
+
+      const buffer = Buffer.from(response.data);
+      let text = buffer.toString("utf8");
+      if (text.includes("\u0000") || text.length < 1000) {
+        text = buffer.toString("latin1");
+      }
+
+      console.log(`[MF NAV] AMFI HTTP status: ${response.status}`);
+      console.log(`[MF NAV] AMFI response length: ${text.length}`);
+      console.log(
+        `[MF NAV] AMFI response preview: ${text.slice(0, 250).replace(/\s+/g, " ").trim()}`,
+      );
+
+      if (/<html|<!doctype|access denied|cloudflare/i.test(text)) {
+        throw new Error(
+          "AMFI returned HTML/access-denied content instead of NAV text",
+        );
+      }
+
+      const funds = parseAMFINAVReport(text);
+      if (!funds.length) {
+        throw new Error("AMFI Complete NAV Report returned zero valid records");
+      }
+
+      const dates = funds
+        .map((fund) => fund.navDate)
+        .filter(Boolean)
+        .sort();
+      const latestDate = dates.length ? dates[dates.length - 1] : null;
+
+      console.log(`[MF NAV] AMFI records loaded: ${funds.length}`);
+      console.log(`[MF NAV] Latest date present in AMFI report: ${latestDate}`);
+
+      return funds;
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `[MF NAV] AMFI attempt ${attempt} failed: ${error.message}`,
+      );
+      if (attempt < 3) await sleep(1500 * attempt);
     }
   }
+
   throw lastError;
 }
 
-async function getHistoricalNAV(
-  schemeCode,
-  startDate,
-  endDate
-) {
+async function getHistoricalNAV(schemeCode, startDate, endDate) {
   const url =
     `${MFAPI_BASE_URL}/mf/${schemeCode}` +
     `?startDate=${encodeURIComponent(startDate)}` +
     `&endDate=${encodeURIComponent(endDate)}`;
 
-  const response = await axios.get(url, {
-    timeout: Number(process.env.MFAPI_TIMEOUT_MS || 60000)
-  });
-
-  if (!response.data) {
-    return [];
-  }
+  const response = await axios.get(url, { timeout: TIMEOUT_MS });
+  if (!response.data) return [];
 
   if (Array.isArray(response.data.data)) {
-    return response.data.data.map(row => ({
-      date: row.date,
-      nav: roundNav(row.nav)
-    }));
+    return response.data.data
+      .map((row) => ({
+        date: parseNavDate(row.date),
+        nav: roundNav(row.nav),
+      }))
+      .filter((row) => row.date && Number.isFinite(row.nav));
   }
 
   if (Array.isArray(response.data)) {
-    return response.data.map(row => ({
-      date: row.date,
-      nav: roundNav(row.nav)
-    }));
+    return response.data
+      .map((row) => ({
+        date: parseNavDate(row.date),
+        nav: roundNav(row.nav),
+      }))
+      .filter((row) => row.date && Number.isFinite(row.nav));
   }
 
   return [];
@@ -117,12 +320,15 @@ async function getSchemeHistory(schemeCode, startDate, endDate) {
   if (start) params.startDate = start;
   if (end) params.endDate = end;
 
-  let lastError;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       const response = await http.get(`/mf/${schemeCode}`, { params });
       if (!Array.isArray(response.data?.data)) {
-        throw new Error(`Invalid historical NAV response for scheme ${schemeCode}`);
+        throw new Error(
+          `Invalid historical NAV response for scheme ${schemeCode}`,
+        );
       }
 
       const byDate = new Map();
@@ -135,11 +341,12 @@ async function getSchemeHistory(schemeCode, startDate, endDate) {
       return [...byDate.entries()]
         .map(([date, nav]) => ({ date, nav }))
         .sort((a, b) => a.date.localeCompare(b.date));
-    } catch (err) {
-      lastError = err;
+    } catch (error) {
+      lastError = error;
       if (attempt < 4) await sleep(1000 * attempt);
     }
   }
+
   throw lastError;
 }
 
@@ -153,18 +360,45 @@ function findNavOnOrBefore(history, targetDate) {
 }
 
 function calculatePointToPoint(currentNav, oldNav) {
-  if (!Number.isFinite(currentNav) || !Number.isFinite(oldNav) || currentNav <= 0 || oldNav <= 0) return null;
-  return Number((((currentNav / oldNav) - 1) * 100).toFixed(4));
+  if (
+    !Number.isFinite(currentNav) ||
+    !Number.isFinite(oldNav) ||
+    currentNav <= 0 ||
+    oldNav <= 0
+  )
+    return null;
+  return Number(((currentNav / oldNav - 1) * 100).toFixed(4));
 }
 
 function calculateCAGR(currentNav, oldNav, years) {
-  if (!Number.isFinite(currentNav) || !Number.isFinite(oldNav) || currentNav <= 0 || oldNav <= 0 || years <= 0) return null;
-  return Number(((Math.pow(currentNav / oldNav, 1 / years) - 1) * 100).toFixed(4));
+  if (
+    !Number.isFinite(currentNav) ||
+    !Number.isFinite(oldNav) ||
+    currentNav <= 0 ||
+    oldNav <= 0 ||
+    years <= 0
+  )
+    return null;
+  return Number(
+    ((Math.pow(currentNav / oldNav, 1 / years) - 1) * 100).toFixed(4),
+  );
 }
 
 function calculateReturns(history, currentNav, currentDate) {
-  if (!history?.length || !Number.isFinite(currentNav) || currentNav <= 0 || !currentDate) {
-    return { return1Y: null, return3Y: null, return5Y: null, nav1YDate: null, nav3YDate: null, nav5YDate: null };
+  if (
+    !history?.length ||
+    !Number.isFinite(currentNav) ||
+    currentNav <= 0 ||
+    !currentDate
+  ) {
+    return {
+      return1Y: null,
+      return3Y: null,
+      return5Y: null,
+      nav1YDate: null,
+      nav3YDate: null,
+      nav5YDate: null,
+    };
   }
 
   const target1Y = subtractYears(currentDate, 1);
@@ -176,9 +410,7 @@ function calculateReturns(history, currentNav, currentDate) {
   const nav5Y = findNavOnOrBefore(history, target5Y);
 
   return {
-    // 1Y is point-to-point. For one year this is mathematically the same as CAGR.
     return1Y: nav1Y ? calculatePointToPoint(currentNav, nav1Y.nav) : null,
-    // 3Y and 5Y are annualized CAGR, which is the standard presentation for multi-year MF returns.
     return3Y: nav3Y ? calculateCAGR(currentNav, nav3Y.nav, 3) : null,
     return5Y: nav5Y ? calculateCAGR(currentNav, nav5Y.nav, 5) : null,
     nav1YDate: nav1Y?.date || null,
@@ -192,8 +424,10 @@ function calculateReturns(history, currentNav, currentDate) {
 
 module.exports = {
   NAV_DECIMALS,
+  AMFI_NAV_URL,
   roundNav,
   getLatestFunds,
+  getHistoricalNAV,
   getSchemeHistory,
   calculateReturns,
   calculatePointToPoint,
@@ -204,5 +438,4 @@ module.exports = {
   subtractDays,
   addDays,
   findNavOnOrBefore,
-  getHistoricalNAV
 };

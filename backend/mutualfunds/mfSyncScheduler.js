@@ -1,693 +1,288 @@
-// /*
-// |--------------------------------------------------------------------------
-// | MF Sync Scheduler
-// |--------------------------------------------------------------------------
-// |
-// | This file owns the ONE decision point for "should we talk to MFapi right
-// | now?". Both development server startup and the production cron job call
-// | the exact same runDailySyncIfNeeded() function below - there is no
-// | separate dev-only or prod-only sync logic.
-// |
-// | Two independent layers of protection are combined, as required:
-// |
-// |   1. mf_sync_status (MySQL table)
-// |      Persistent record of whether TODAY's sync already succeeded.
-// |      Survives process restarts, crashes, and multi-day downtime.
-// |      This answers: "has today's sync already happened?"
-// |
-// |   2. MySQL advisory lock (GET_LOCK / RELEASE_LOCK)
-// |      Prevents two Node processes (or two overlapping triggers on the
-// |      same process) from running MFapi sync at the exact same time.
-// |      This answers: "is a sync running right now, elsewhere?"
-// |
-// | An in-memory flag such as `let alreadySynced = false` is intentionally
-// | NOT used anywhere here - it would not survive a restart and would not
-// | protect against multiple Node instances.
-// |
-// */
-
-// const cron = require('node-cron');
-// const pool = require('./db');
-// const { syncLatestNAV, syncAllReturns } = require('./mfSyncService');
-// const {
-//   hasTodaysSyncSucceeded,
-//   markRunning,
-//   markSuccess,
-//   markFailed,
-// } = require('./mfSyncStatusService');
-
-// const SYNC_NAME = 'mf_daily_sync';
-// const LOCK_NAME = 'mf_daily_sync_lock';
-// // How long (seconds) a process waits for the advisory lock before giving up.
-// // Default 0 = do not wait, skip immediately if another process already holds it.
-// const LOCK_TIMEOUT_SECONDS = Math.max(0, Number(process.env.MF_SYNC_LOCK_TIMEOUT || 0));
-
-// let schedulerTask = null;
-
-// async function acquireLock(connection, name, timeoutSeconds) {
-//   const [rows] = await connection.query('SELECT GET_LOCK(?, ?) AS acquired', [name, timeoutSeconds]);
-//   return Number(rows[0]?.acquired) === 1;
-// }
-
-// async function releaseLock(connection, name) {
-//   try {
-//     await connection.query('SELECT RELEASE_LOCK(?)', [name]);
-//   } catch (_) {
-//     // Releasing a lock we may not hold (e.g. connection already dropped) is not fatal.
-//   }
-// }
-
-// /**
-//  * The single synchronization entry point. Safe to call:
-//  *  - every time the dev server starts (`node server.js`)
-//  *  - from the production cron schedule
-//  *  - concurrently from multiple processes
-//  *  - repeatedly within the same process
-//  *
-//  * @param {string} reason - human-readable trigger, only used for logging.
-//  */
-// async function runDailySyncIfNeeded(reason = 'sync') {
-//   let connection;
-//   let locked = false;
-
-//   try {
-//     connection = await pool.getConnection();
-
-//     console.log(`[MF SYNC] (${reason}) Checking today's sync status`);
-
-//     locked = await acquireLock(connection, LOCK_NAME, LOCK_TIMEOUT_SECONDS);
-//     if (!locked) {
-//       console.log('[MF SYNC] Another synchronization is already running.');
-//       console.log('[MF SYNC] Skipping duplicate sync.');
-//       return { success: true, skipped: true, reason: 'locked' };
-//     }
-//     console.log('[MF SYNC] Acquired sync lock');
-
-//     const alreadyDone = await hasTodaysSyncSucceeded(SYNC_NAME, connection);
-//     if (alreadyDone) {
-//       const today = new Date().toISOString().slice(0, 10);
-//       console.log("[MF SYNC] Today's sync already completed.");
-//       console.log(`[MF SYNC] Date: ${today}`);
-//       console.log('[MF SYNC] Skipping MFapi fetch.');
-//       return { success: true, skipped: true, reason: 'already-done-today' };
-//     }
-
-//     console.log("[MF SYNC] Today's sync not found.");
-//     console.log('[MF SYNC] Starting daily MFapi synchronization...');
-//     await markRunning(SYNC_NAME, connection);
-
-//     console.log('[MF SYNC] Fetching MFapi latest data');
-//     const navResult = await syncLatestNAV();
-//     console.log('[MF SYNC] Updating database. NAV result:', navResult);
-
-//     console.log('[MF SYNC] Returns calculation started');
-//     const returnsResult = await syncAllReturns();
-//     console.log('[MF SYNC] Returns result:', returnsResult);
-
-//     const processed = Number(navResult.fetched || 0);
-//     const updated = Number(navResult.updated || 0) + Number(returnsResult.updated || 0);
-//     const failed = Number(navResult.invalid || 0) + Number(navResult.failed || 0) + Number(returnsResult.failed || 0);
-
-//     await markSuccess(SYNC_NAME, { processed, updated, failed }, connection);
-
-//     console.log(`[MF SYNC] Total records: ${processed}`);
-//     console.log(`[MF SYNC] Updated: ${updated}`);
-//     console.log(`[MF SYNC] Failed: ${failed}`);
-//     console.log('[MF SYNC] Synchronization successful');
-
-//     return { success: true, skipped: false, nav: navResult, returns: returnsResult };
-//   } catch (error) {
-//     console.error('[MF SYNC] Synchronization failed:', error.message);
-//     console.log("[MF SYNC] Keeping previous successful sync date");
-//     try {
-//       if (connection) await markFailed(SYNC_NAME, error.message, {}, connection);
-//     } catch (statusError) {
-//       console.error('[MF SYNC] Could not record failure status:', statusError.message);
-//     }
-//     return { success: false, skipped: false, error: error.message };
-//   } finally {
-//     if (connection && locked) {
-//       await releaseLock(connection, LOCK_NAME);
-//       console.log('[MF SYNC] Releasing sync lock');
-//     }
-//     if (connection) connection.release();
-//   }
-// }
-
-// /**
-//  * Called once at server startup (dev and prod alike). Runs in the
-//  * background so it never blocks the HTTP server from accepting requests.
-//  * On a day where the sync already succeeded, this resolves almost
-//  * instantly after the DB check (no MFapi call at all).
-//  */
-// function runStartupSync() {
-//   setImmediate(() => {
-//     runDailySyncIfNeeded('startup').catch((err) => {
-//       console.error('[MF SYNC] Unexpected startup sync error:', err.message);
-//     });
-//   });
-// }
-
-// /**
-//  * Registers the recurring production schedule. Uses the SAME
-//  * runDailySyncIfNeeded() function as startup, so even if the scheduler
-//  * fires twice, or fires right after a manual/startup sync already
-//  * succeeded today, the DB status check makes the second call a no-op.
-//  */
-// function startMFScheduler() {
-//   const cronExpression = process.env.MF_SYNC_CRON || '0 23 * * 1-5';
-//   const timezone = process.env.MF_SYNC_TIMEZONE || 'Asia/Kolkata';
-
-//   schedulerTask = cron.schedule(
-//     cronExpression,
-//     () => {
-//       runDailySyncIfNeeded('scheduled').catch((err) => {
-//         console.error('[MF SYNC] Unexpected scheduled sync error:', err.message);
-//       });
-//     },
-//     { timezone }
-//   );
-
-//   console.log(`[MF SYNC] Scheduler active: ${cronExpression} ${timezone}`);
-//   return schedulerTask;
-// }
-
-// function stopMFScheduler() {
-//   if (schedulerTask) {
-//     schedulerTask.stop();
-//     schedulerTask = null;
-//     console.log('[MF SYNC] Scheduler stopped');
-//   }
-// }
-
-// module.exports = {
-//   runStartupSync,
-//   startMFScheduler,
-//   stopMFScheduler,
-//   runDailySyncIfNeeded,
-// };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-|--------------------------------------------------------------------------
-| MF Sync Scheduler
-|--------------------------------------------------------------------------
-|
-| One synchronization entry point is used for:
-|
-| 1. Server startup
-| 2. Production cron
-| 3. Manual sync-now endpoint
-|
-| mf_sync_status prevents repeated successful syncs on the same day.
-|
-| MySQL GET_LOCK prevents multiple Node processes from running the
-| synchronization simultaneously.
-|
-*/
-
 const cron = require('node-cron');
-
 const pool = require('./db');
 
+const { syncLatestNAV, syncAllReturns } = require('./mfSyncService');
+const { calculateAllRatings } = require('./mfRatingRiskService');
 const {
-  syncLatestNAV,
-  syncAllReturns
-} = require('./mfSyncService');
-
-const {
-  calculateAllRatings
-} = require('./mfRatingRiskService');
-
-const {
+  getSyncStatus,
   hasTodaysSyncSucceeded,
+  hasAttemptedToday,
   markRunning,
+  markPending,
   markSuccess,
-  markFailed
+  markFailed,
 } = require('./mfSyncStatusService');
 
-const SYNC_NAME = 'mf_daily_sync';
-
-const LOCK_NAME = 'mf_daily_sync_lock';
+const NAV_SYNC_NAME = 'mf_nav_sync';
+const DAILY_SYNC_NAME = 'mf_daily_sync';
+const DAILY_LOCK_NAME = 'mf_daily_sync_lock';
 
 const LOCK_TIMEOUT_SECONDS = Math.max(
   0,
-  Number(
-    process.env.MF_SYNC_LOCK_TIMEOUT || 0
-  )
+  Number(process.env.MF_SYNC_LOCK_TIMEOUT || 0)
 );
+
+const MF_SYNC_CRON = process.env.MF_SYNC_CRON || '15 23 * * 1-5';
+const MF_SYNC_TIMEZONE = process.env.MF_SYNC_TIMEZONE || 'Asia/Kolkata';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const IS_PRODUCTION = NODE_ENV === 'production';
 
 let schedulerTask = null;
 
-/*
-|--------------------------------------------------------------------------
-| Advisory lock
-|--------------------------------------------------------------------------
-*/
-
-async function acquireLock(
-  connection,
-  name,
-  timeoutSeconds
-) {
+async function acquireLock(connection, name) {
   const [rows] = await connection.query(
     'SELECT GET_LOCK(?, ?) AS acquired',
-    [
-      name,
-      timeoutSeconds
-    ]
+    [name, LOCK_TIMEOUT_SECONDS]
   );
-
-  return Number(
-    rows[0]?.acquired
-  ) === 1;
+  return Number(rows[0]?.acquired) === 1;
 }
 
-async function releaseLock(
-  connection,
-  name
-) {
+async function releaseLock(connection, name) {
   try {
-    await connection.query(
-      'SELECT RELEASE_LOCK(?)',
-      [name]
-    );
+    await connection.query('SELECT RELEASE_LOCK(?)', [name]);
   } catch (_) {
-    // Lock release failure is not fatal.
+    // Non-fatal.
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Daily synchronization
-|--------------------------------------------------------------------------
-*/
+function getScheduledMinutes() {
+  const pieces = MF_SYNC_CRON.trim().split(/\s+/);
+  if (pieces.length !== 5) return 23 * 60 + 15;
 
-async function runDailySyncIfNeeded(
-  reason = 'sync'
-) {
-  let connection;
+  const minute = Number(pieces[0]);
+  const hour = Number(pieces[1]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return 23 * 60 + 15;
+  }
+  return hour * 60 + minute;
+}
+
+function isPastScheduledTimeToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MF_SYNC_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0) % 24;
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0);
+  return hour * 60 + minute >= getScheduledMinutes();
+}
+
+async function runPipeline(reason, { startup = false, scheduled = false } = {}) {
+  let connection = null;
   let locked = false;
 
   try {
-    connection =
-      await pool.getConnection();
-
-    console.log(
-      `[MF SYNC] (${reason}) Checking today's sync status`
-    );
-
-    /*
-     * Prevent multiple Node processes from syncing simultaneously.
-     */
-    locked = await acquireLock(
-      connection,
-      LOCK_NAME,
-      LOCK_TIMEOUT_SECONDS
-    );
+    connection = await pool.getConnection();
+    locked = await acquireLock(connection, DAILY_LOCK_NAME);
 
     if (!locked) {
-      console.log(
-        '[MF SYNC] Another synchronization is already running.'
-      );
-
-      console.log(
-        '[MF SYNC] Skipping duplicate sync.'
-      );
-
-      return {
-        success: true,
-        skipped: true,
-        reason: 'locked'
-      };
+      console.log(`[MF SYNC] ${reason}: another daily synchronization is running.`);
+      return { success: true, skipped: true, reason: 'locked' };
     }
 
-    console.log(
-      '[MF SYNC] Acquired daily sync lock'
-    );
-
-    /*
-     * Check persistent status.
-     */
-    const alreadyDone =
-      await hasTodaysSyncSucceeded(
-        SYNC_NAME,
-        connection
-      );
-
-    if (alreadyDone) {
-      console.log(
-        "[MF SYNC] Today's sync already completed successfully."
-      );
-
-      console.log(
-        '[MF SYNC] Skipping MFapi request.'
-      );
-
-      return {
-        success: true,
-        skipped: true,
-        reason: 'already-done-today'
-      };
+    const alreadyComplete = await hasTodaysSyncSucceeded(DAILY_SYNC_NAME, connection);
+    if (alreadyComplete) {
+      console.log(`[MF SYNC] ${reason}: today's complete sync already exists. No provider call.`);
+      return { success: true, skipped: true, reason: 'already-complete-today' };
     }
 
     /*
-     * Mark as running.
+     * Development startup:
+     * one complete attempt per day, regardless of when the server is started.
+     * Repeated starts the same day are blocked by last_attempt_date.
+     *
+     * Production startup:
+     * before the normal 23:15 slot, do not perform the expensive daily job.
+     * If production starts after 23:15 and today's job is missing, repair it.
      */
-    await markRunning(
-      SYNC_NAME,
-      connection
-    );
+    if (startup && IS_PRODUCTION && !isPastScheduledTimeToday()) {
+      console.log('[MF SYNC] production startup: waiting for scheduled daily run.');
+      return { success: true, skipped: true, reason: 'waiting-for-schedule' };
+    }
 
-    console.log(
-      '[MF SYNC] Daily synchronization started'
-    );
+    // if (startup) {
+    //   const attemptedToday = await hasAttemptedToday(DAILY_SYNC_NAME, connection);
+    //   if (attemptedToday) {
+    //     console.log('[MF SYNC] startup: a daily attempt already happened today. No second provider call.');
+    //     return { success: true, skipped: true, reason: 'already-attempted-today' };
+    //   }
+    // }
+
+    await markRunning(DAILY_SYNC_NAME, connection);
+    await markRunning(NAV_SYNC_NAME, connection);
+
+    console.log(`[MF SYNC] ${reason}: starting daily NAV + returns + risk + rating pipeline.`);
 
     /*
-     * STEP 1
-     *
-     * Fetch latest NAV.
+     * One bulk provider call for the entire provider report.
+     * mfSyncService immediately filters that report to active DB schemes.
      */
-    console.log(
-      '[MF SYNC] Step 1/3: Fetching latest NAV'
-    );
+    const navResult = await syncLatestNAV();
 
-    const navResult =
-      await syncLatestNAV();
+    if (!navResult.success || navResult.skipped) {
+      throw new Error(navResult.error || navResult.reason || 'Latest NAV synchronization did not complete');
+    }
 
-    console.log(
-      '[MF SYNC] NAV result:',
-      navResult
-    );
-
-    /*
-     * Make sure MFapi actually returned data.
-     *
-     * If MFapi gives an empty response, don't mark today's
-     * synchronization as successful.
-     */
-    if (
-      !navResult ||
-      navResult.success === false
-    ) {
+    if (navResult.missingActive > 0) {
       throw new Error(
-        'Latest NAV synchronization failed'
+        `${navResult.missingActive} active schemes are missing from the provider report`
       );
     }
 
-    if (
-      !navResult.skipped &&
-      Number(navResult.fetched || 0) === 0
-    ) {
+    if (navResult.failed > 0 || navResult.invalid > 0) {
       throw new Error(
-        'MFapi returned zero latest NAV records'
+        `NAV synchronization completed with invalid/failed records: ` +
+        `invalid=${navResult.invalid}, failed=${navResult.failed}`
       );
     }
 
-    /*
-     * STEP 2
-     *
-     * Calculate 1Y / 3Y / 5Y and risk.
-     */
-    console.log(
-      '[MF SYNC] Step 2/3: Calculating returns and risk'
-    );
-
-    const returnsResult =
-      await syncAllReturns();
-
-    console.log(
-      '[MF SYNC] Returns/risk result:',
-      returnsResult
-    );
-
-    /*
-     * STEP 3
-     *
-     * Calculate relative 1-5 star ratings.
-     */
-    console.log(
-      '[MF SYNC] Step 3/3: Calculating ratings'
-    );
-
-    const ratingResult =
-      await calculateAllRatings(
-        connection
-      );
-
-    console.log(
-      '[MF SYNC] Rating result:',
-      ratingResult
-    );
-
-    /*
-     * Status counters.
-     */
-    const processed =
-      Number(
-        navResult.fetched || 0
-      );
-
-    const updated =
-      Number(
-        navResult.updated || 0
-      ) +
-      Number(
-        returnsResult.updated || 0
-      ) +
-      Number(
-        ratingResult.updated || 0
-      );
-
-    const failed =
-      Number(
-        navResult.invalid || 0
-      ) +
-      Number(
-        navResult.failed || 0
-      ) +
-      Number(
-        returnsResult.failed || 0
-      ) +
-      Number(
-        ratingResult.failed || 0
-      );
-
-    /*
-     * IMPORTANT:
-     *
-     * We still mark the overall sync SUCCESS if individual
-     * schemes failed, because the sync itself completed.
-     *
-     * The failed count is preserved in mf_sync_status.
-     */
-    // NAV synchronization is the core daily sync. Individual return/rating
-    // failures are preserved in counters, but a completely failed ratings
-    // stage is surfaced explicitly instead of being mistaken for a clean run.
     await markSuccess(
-      SYNC_NAME,
+      NAV_SYNC_NAME,
       {
-        processed,
-        updated,
-        failed
+        processed: navResult.fetched,
+        updated: navResult.updated,
+        failed: navResult.failed + navResult.invalid,
       },
+      navResult.latestActiveNavDate,
       connection
     );
 
     console.log(
-      '================================================'
+      `[MF NAV] active=${navResult.activeFunds}, fetched=${navResult.fetched}, ` +
+      `updated=${navResult.updated}, unchanged=${navResult.unchanged}, ` +
+      `newNavDays=${navResult.newNavDays}, latestActiveNavDate=${navResult.latestActiveNavDate}`
     );
 
-    if (ratingResult.failed === ratingResult.processed && ratingResult.processed > 0) {
-      console.warn('[MF SYNC] WARNING: ratings/risk stage failed for every scheme; NAV sync succeeded but ratings/risk require retry.');
-    } else if (failed > 0) {
-      console.warn(`[MF SYNC] DAILY SYNCHRONIZATION COMPLETED WITH ${failed} FAILED RECORDS`);
-    } else {
-      console.log('[MF SYNC] DAILY SYNCHRONIZATION SUCCESSFUL');
+    /*
+     * Returns/risk uses the current DB NAV snapshot and only recalculates
+     * schemes whose returns_for_nav_date differs from nav_date.
+     */
+    console.log(`[MF SYNC] ${reason}: calculating returns and risk.`);
+    const returnsResult = await syncAllReturns();
+
+    if (!returnsResult.success || returnsResult.failed > 0) {
+      throw new Error(
+        `Returns/risk stage failed: processed=${returnsResult.processed}, failed=${returnsResult.failed}`
+      );
     }
 
-    console.log(
-      `[MF SYNC] NAV records: ${processed}`
+    /*
+     * Ratings use already stored returns/risk. They do not perform another
+     * provider history sweep.
+     */
+    console.log(`[MF SYNC] ${reason}: calculating ratings from DB values.`);
+    const ratingResult = await calculateAllRatings(connection);
+
+    if (!ratingResult || ratingResult.failed > 0) {
+      throw new Error(
+        `Rating stage failed: processed=${ratingResult?.processed || 0}, failed=${ratingResult?.failed || 0}`
+      );
+    }
+
+    const [latestRows] = await connection.query(
+      `SELECT MAX(nav_date) AS latest_nav_date
+       FROM mf_schemes
+       WHERE is_active = 1`
     );
 
-    console.log(
-      `[MF SYNC] DB updates: ${updated}`
+    const latestNavDate = latestRows[0]?.latest_nav_date || navResult.latestActiveNavDate || null;
+
+    await markSuccess(
+      DAILY_SYNC_NAME,
+      {
+        processed: returnsResult.processed,
+        updated: navResult.updated + returnsResult.updated + Number(ratingResult.updated || 0),
+        failed: 0,
+      },
+      latestNavDate,
+      connection
     );
 
-    console.log(
-      `[MF SYNC] Failed records: ${failed}`
-    );
-
-    console.log(
-      '================================================'
-    );
+    console.log('================================================');
+    console.log(`[MF SYNC] ${reason}: DAILY SYNCHRONIZATION SUCCESSFUL`);
+    console.log(`[MF SYNC] Active funds: ${navResult.activeFunds}`);
+    console.log(`[MF SYNC] NAV updated: ${navResult.updated}`);
+    console.log(`[MF SYNC] Returns updated: ${returnsResult.updated}`);
+    console.log(`[MF SYNC] Ratings updated: ${ratingResult.updated}`);
+    console.log(`[MF SYNC] NAV date: ${latestNavDate}`);
+    console.log('================================================');
 
     return {
       success: true,
       skipped: false,
-
       nav: navResult,
-
       returns: returnsResult,
-
-      ratings: ratingResult
+      ratings: ratingResult,
     };
   } catch (error) {
-    console.error(
-      '[MF SYNC] Synchronization failed:',
-      error.message
-    );
+    console.error(`[MF SYNC] ${reason}: ${error.message}`);
 
-    /*
-     * DO NOT change last_success_date when the sync fails.
-     *
-     * This means the next startup/cron attempt can retry.
-     */
     try {
       if (connection) {
-        await markFailed(
-          SYNC_NAME,
-          error.message,
-          {},
-          connection
-        );
+        await markFailed(DAILY_SYNC_NAME, error.message, {}, connection);
+        await markFailed(NAV_SYNC_NAME, error.message, {}, connection);
       }
     } catch (statusError) {
-      console.error(
-        '[MF SYNC] Could not record failure status:',
-        statusError.message
-      );
+      console.error(`[MF SYNC] Could not record sync failure: ${statusError.message}`);
     }
 
     return {
       success: false,
       skipped: false,
-      error: error.message
+      error: error.message,
     };
   } finally {
-    if (connection && locked) {
-      await releaseLock(
-        connection,
-        LOCK_NAME
-      );
-
-      console.log(
-        '[MF SYNC] Released daily sync lock'
-      );
-    }
-
-    if (connection) {
-      connection.release();
-    }
+    if (connection && locked) await releaseLock(connection, DAILY_LOCK_NAME);
+    if (connection) connection.release();
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Startup
-|--------------------------------------------------------------------------
-*/
-
-function runStartupSync() {
-  setImmediate(() => {
-    runDailySyncIfNeeded(
-      'startup'
-    ).catch(error => {
-      console.error(
-        '[MF SYNC] Unexpected startup error:',
-        error.message
-      );
-    });
+async function runStartupSync() {
+  setImmediate(async () => {
+    try {
+      await runPipeline('startup', { startup: true, scheduled: false });
+    } catch (error) {
+      console.error(`[MF SYNC] startup error: ${error.message}`);
+    }
   });
 }
 
-/*
-|--------------------------------------------------------------------------
-| Cron scheduler
-|--------------------------------------------------------------------------
-*/
-
 function startMFScheduler() {
-  const cronExpression =
-    process.env.MF_SYNC_CRON ||
-    '0 23 * * 1-5';
-
-  const timezone =
-    process.env.MF_SYNC_TIMEZONE ||
-    'Asia/Kolkata';
-
-  if (!cron.validate(cronExpression)) {
-    throw new Error(
-      `Invalid MF_SYNC_CRON expression: ${cronExpression}`
-    );
+  if (!cron.validate(MF_SYNC_CRON)) {
+    throw new Error(`Invalid MF_SYNC_CRON: ${MF_SYNC_CRON}`);
   }
 
-  schedulerTask =
-    cron.schedule(
-      cronExpression,
-      () => {
-        runDailySyncIfNeeded(
-          'scheduled'
-        ).catch(error => {
-          console.error(
-            '[MF SYNC] Unexpected scheduled error:',
-            error.message
-          );
-        });
-      },
-      {
-        timezone
-      }
-    );
-
-  console.log(
-    `[MF SYNC] Scheduler active: ${cronExpression} (${timezone})`
+  schedulerTask = cron.schedule(
+    MF_SYNC_CRON,
+    () => {
+      runPipeline('scheduled', { startup: false, scheduled: true }).catch((error) => {
+        console.error(`[MF SYNC] scheduled error: ${error.message}`);
+      });
+    },
+    { timezone: MF_SYNC_TIMEZONE }
   );
 
+  console.log(`[MF SYNC] Scheduler active: ${MF_SYNC_CRON} (${MF_SYNC_TIMEZONE})`);
   return schedulerTask;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Stop scheduler
-|--------------------------------------------------------------------------
-*/
-
 function stopMFScheduler() {
-  if (schedulerTask) {
-    schedulerTask.stop();
+  if (!schedulerTask) return;
+  schedulerTask.stop();
+  schedulerTask = null;
+  console.log('[MF SYNC] Scheduler stopped');
+}
 
-    schedulerTask = null;
-
-    console.log(
-      '[MF SYNC] Scheduler stopped'
-    );
-  }
+async function runDailySyncIfNeeded(reason = 'manual') {
+  return runPipeline(reason, { startup: false, scheduled: false });
 }
 
 module.exports = {
   runStartupSync,
   startMFScheduler,
   stopMFScheduler,
-  runDailySyncIfNeeded
+  runDailySyncIfNeeded,
 };

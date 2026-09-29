@@ -401,7 +401,7 @@ const db = mysql.createPool({
 const ACCESS_TOKEN = process.env.UPSTOX_ANALYTIC_TOKEN;
 
 const CUTOFF_HOUR = 15;
-const CUTOFF_MIN = 30;
+const CUTOFF_MIN = 45;
 
 app.use("/search", searchRoutes);
 

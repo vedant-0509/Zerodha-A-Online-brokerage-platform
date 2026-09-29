@@ -539,8 +539,8 @@ async function saveDailyClose(snapshot, tradingDate) {
 
     const sqlDailyClose = `
       INSERT INTO detail_stock_daily_closes
-        (instrument_key, trading_date, symbol, close_price, open_price, high_price, low_price, volume, previous_close, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) AS new_row
+        (instrument_key, trading_date, symbol, close_price, open_price, high_price, low_price, volume, previous_close, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) AS new_row
       ON DUPLICATE KEY UPDATE
         symbol = COALESCE(new_row.symbol, symbol),
         close_price = new_row.close_price,
@@ -548,7 +548,8 @@ async function saveDailyClose(snapshot, tradingDate) {
         high_price = new_row.high_price,
         low_price = new_row.low_price,
         volume = new_row.volume,
-        previous_close = new_row.previous_close
+        previous_close = new_row.previous_close,
+        source = new_row.source
     `;
 
     await connection.query(sqlDailyClose, [
@@ -561,6 +562,7 @@ async function saveDailyClose(snapshot, tradingDate) {
       snapshot.low ?? null,
       snapshot.volume ?? null,
       snapshot.previousClose ?? null,
+      snapshot.source || "upstox",
     ]);
 
     await connection.commit();
