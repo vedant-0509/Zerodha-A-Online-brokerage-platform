@@ -2230,7 +2230,6 @@
 
 
 
-
 import React, {
   useCallback,
   useEffect,
@@ -2781,6 +2780,7 @@ export default function DashboardSection2() {
     setTradeSuccess("");
   };
 
+
   const submitTrade = async () => {
     if (!tradeFund || !tradeType) {
       return;
@@ -2888,11 +2888,6 @@ export default function DashboardSection2() {
         await api.post(`${MF_API_PATH}/orders/buy`, {
           schemeCode,
           scheme_code: schemeCode,
-
-          /*
-                User enters units.
-                Backend can use amount if required.
-              */
           units,
         });
 
@@ -2917,9 +2912,7 @@ export default function DashboardSection2() {
         await api.post(`${MF_API_PATH}/orders/sell`, {
           schemeCode,
           scheme_code: schemeCode,
-
           units,
-          amount,
         });
 
         setTradeSuccess(

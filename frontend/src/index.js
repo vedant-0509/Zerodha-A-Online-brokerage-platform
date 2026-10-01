@@ -43,10 +43,20 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import "./index.css";
 
@@ -62,7 +72,6 @@ import Signup from "./Pages/Signup/Signup.js";
 import Login from "./Pages/Signup/Login.jsx";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
-
 import PublicOnlyRoute from "./components/PublicOnlyRoute.jsx";
 
 import { AuthProvider } from "./context/AuthContext";
@@ -78,9 +87,9 @@ root.render(
       <Navbar />
 
       <Routes>
-        {/* ======================================================
+        {/* ==================================================
                     PUBLIC PAGES
-                ====================================================== */}
+            ================================================== */}
 
         <Route path="/" element={<Home />} />
 
@@ -94,10 +103,10 @@ root.render(
 
         <Route path="/support" element={<Support />} />
 
-        {/* ======================================================
+        {/* ==================================================
                     LOGIN / SIGNUP
                     Authenticated users are redirected away.
-                ====================================================== */}
+            ================================================== */}
 
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<Login />} />
@@ -105,19 +114,21 @@ root.render(
           <Route path="/signup" element={<Signup />} />
         </Route>
 
-        {/* ======================================================
-                    PROTECTED DASHBOARD
-                ====================================================== */}
+        {/* ==================================================
+                    PROTECTED APPLICATION
+                    EVERYTHING under /dashboard/*
+                    requires authentication.
+            ================================================== */}
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard/*" element={<Dashboard />} />
         </Route>
 
-        {/* ======================================================
+        {/* ==================================================
                     FALLBACK
-                ====================================================== */}
+            ================================================== */}
 
-        <Route path="*" element={<Home />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
       <Footer />

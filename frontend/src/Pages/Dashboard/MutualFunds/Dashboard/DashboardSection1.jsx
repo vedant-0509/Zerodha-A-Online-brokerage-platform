@@ -1298,28 +1298,9 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import React, { useEffect, useState } from "react";
 
 const API_BASE = "http://localhost:5000";
-
 const AUTH_BASE = "http://localhost:3010";
 
 /*
@@ -1421,13 +1402,10 @@ const getHoldings = async () => {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(
-    `${API_BASE}/api/mutual-funds/holdings`,
-    {
-      method: "GET",
-      headers,
-    },
-  );
+  const response = await fetch(`${API_BASE}/api/mutual-funds/holdings`, {
+    method: "GET",
+    headers,
+  });
 
   if (!response.ok) {
     throw new Error("Unable to fetch mutual fund holdings");
@@ -1450,7 +1428,6 @@ const DashboardSection1 = () => {
   */
 
   const [holdings, setHoldings] = useState([]);
-
   const [selectedHolding, setSelectedHolding] = useState(null);
 
   const [summary, setSummary] = useState({
@@ -1464,9 +1441,7 @@ const DashboardSection1 = () => {
   });
 
   const [user, setUser] = useState(null);
-
   const [loading, setLoading] = useState(true);
-
   const [error, setError] = useState("");
 
   /*
@@ -1476,13 +1451,9 @@ const DashboardSection1 = () => {
   */
 
   const [sellFund, setSellFund] = useState(null);
-
   const [sellUnits, setSellUnits] = useState("");
-
   const [sellLoading, setSellLoading] = useState(false);
-
   const [sellError, setSellError] = useState("");
-
   const [sellSuccess, setSellSuccess] = useState("");
 
   /*
@@ -1517,6 +1488,12 @@ const DashboardSection1 = () => {
 
   /*
   |--------------------------------------------------------------------------
+  | Get current logged-in user ID
+  |--------------------------------------------------------------------------
+  */
+
+  /*
+  |--------------------------------------------------------------------------
   | SUBMIT SELL
   |--------------------------------------------------------------------------
   */
@@ -1527,9 +1504,7 @@ const DashboardSection1 = () => {
     }
 
     const units = Number(sellUnits);
-
     const availableUnits = Number(sellFund.units || 0);
-
     const currentNav = Number(sellFund.currentNav || 0);
 
     /*
@@ -1615,8 +1590,8 @@ const DashboardSection1 = () => {
 
           ...(token
             ? {
-                Authorization: `Bearer ${token}`,
-              }
+              Authorization: `Bearer ${token}`,
+            }
             : {}),
         },
 
@@ -1626,6 +1601,8 @@ const DashboardSection1 = () => {
           scheme_code: schemeCode,
 
           units,
+
+          amount,
         }),
       });
 
@@ -1634,8 +1611,8 @@ const DashboardSection1 = () => {
       if (!response.ok) {
         throw new Error(
           data?.message ||
-            data?.error?.message ||
-            "Unable to place SELL order.",
+          data?.error?.message ||
+          "Unable to place SELL order.",
         );
       }
 
@@ -1704,12 +1681,13 @@ const DashboardSection1 = () => {
         }
 
         const currentUser = userData?.user || userData;
-
         setUser(currentUser);
 
         /*
           ----------------------------------------------------------------
           HOLDINGS
+
+          The backend derives userId from the verified JWT.
           ----------------------------------------------------------------
           */
 
@@ -1937,12 +1915,7 @@ const DashboardSection1 = () => {
 
           <div className="table-card">
             {holdings.length === 0 ? (
-              <div
-                style={{
-                  padding: "3rem",
-                  textAlign: "center",
-                }}
-              >
+              <div style={{ padding: "3rem", textAlign: "center", }}>
                 <h3>No holdings yet</h3>
 
                 <p>Your purchased mutual funds will appear here.</p>
@@ -1952,66 +1925,37 @@ const DashboardSection1 = () => {
                 <thead>
                   <tr>
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                        }}
-                      >
+                      <p style={{ margin: "0", }}>
                         Fund
                       </p>
                     </th>
 
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                          textAlign: "end",
-                        }}
-                      >
+                      <p style={{ margin: "0", textAlign: "end", }}>
                         NAV
                       </p>
                     </th>
 
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                          textAlign: "end",
-                        }}
-                      >
+                      <p style={{ margin: "0", textAlign: "end", }}>
                         1D Return
                       </p>
                     </th>
 
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                          textAlign: "end",
-                        }}
-                      >
+                      <p style={{ margin: "0", textAlign: "end", }}>
                         Total Return
                       </p>
                     </th>
 
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                          textAlign: "end",
-                        }}
-                      >
+                      <p style={{ margin: "0", textAlign: "end", }}>
                         Current Value
                       </p>
                     </th>
 
                     <th>
-                      <p
-                        style={{
-                          margin: "0",
-                          textAlign: "center",
-                        }}
-                      >
+                      <p style={{ margin: "0", textAlign: "center", }}>
                         Action
                       </p>
                     </th>
@@ -2025,13 +1969,7 @@ const DashboardSection1 = () => {
                     const totalReturn = Number(fund.totalReturn ?? 0);
 
                     return (
-                      <tr
-                        key={fund.id ?? fund.schemeId}
-                        onClick={() => setSelectedHolding(fund)}
-                        style={{
-                          cursor: "pointer",
-                        }}
-                      >
+                      <tr key={fund.id ?? fund.schemeId} onClick={() => setSelectedHolding(fund)} style={{ cursor: "pointer", }}>
                         {/* FUND */}
 
                         <td>
@@ -2045,12 +1983,7 @@ const DashboardSection1 = () => {
                         {/* NAV */}
 
                         <td>
-                          <p
-                            style={{
-                              margin: "0",
-                              textAlign: "end",
-                            }}
-                          >
+                          <p style={{ margin: "0", textAlign: "end", }}>
                             ₹{formatNumber(fund.currentNav)}
                           </p>
                         </td>
@@ -2059,12 +1992,7 @@ const DashboardSection1 = () => {
 
                         <td>
                           <div className={todaysPnL >= 0 ? "profit" : "loss"}>
-                            <p
-                              style={{
-                                margin: "0",
-                                textAlign: "end",
-                              }}
-                            >
+                            <p style={{ margin: "0", textAlign: "end", }}>
                               {formatMoney(todaysPnL)}
                             </p>
                           </div>
@@ -2076,12 +2004,7 @@ const DashboardSection1 = () => {
                                 : "loss"
                             }
                           >
-                            <p
-                              style={{
-                                margin: "0",
-                                textAlign: "end",
-                              }}
-                            >
+                            <p style={{ margin: "0", textAlign: "end", }}>
                               {formatPercent(fund.todaysReturnPercent)}
                             </p>
                           </small>
@@ -2091,29 +2014,13 @@ const DashboardSection1 = () => {
 
                         <td>
                           <div className={totalReturn >= 0 ? "profit" : "loss"}>
-                            <p
-                              style={{
-                                margin: "0",
-                                textAlign: "end",
-                              }}
-                            >
+                            <p style={{ margin: "0", textAlign: "end", }}>
                               {formatMoney(totalReturn)}
                             </p>
                           </div>
 
-                          <small
-                            className={
-                              Number(fund.totalReturnPercent) >= 0
-                                ? "profit"
-                                : "loss"
-                            }
-                          >
-                            <p
-                              style={{
-                                margin: "0",
-                                textAlign: "end",
-                              }}
-                            >
+                          <small className={Number(fund.totalReturnPercent) >= 0 ? "profit" : "loss"}>
+                            <p style={{ margin: "0", textAlign: "end", }}>
                               {formatPercent(fund.totalReturnPercent)}
                             </p>
                           </small>
@@ -2122,12 +2029,7 @@ const DashboardSection1 = () => {
                         {/* CURRENT VALUE */}
 
                         <td>
-                          <p
-                            style={{
-                              margin: "0",
-                              textAlign: "end",
-                            }}
-                          >
+                          <p style={{ margin: "0", textAlign: "end", }}>
                             {formatMoney(fund.currentValue)}
                           </p>
                         </td>

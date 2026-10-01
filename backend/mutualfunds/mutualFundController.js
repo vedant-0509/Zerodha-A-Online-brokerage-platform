@@ -2312,7 +2312,6 @@
 
 
 
-
 const pool = require("./db");
 
 const {
@@ -3071,70 +3070,58 @@ async function buyMutualFund(req, res) {
   const connection = await pool.getConnection();
 
   try {
-    const { schemeCode, amount } = req.body || {};
-    const body = req.body || {};
+    /*
+      SECURITY:
+      User identity always comes from the verified JWT.
+      Never accept userId from the request body.
+    */
     const userId = req.userId;
+    const { schemeCode, units } = req.body;
 
-    if (
-      Object.prototype.hasOwnProperty.call(body, "userId") ||
-      Object.prototype.hasOwnProperty.call(body, "user_id")
-    ) {
-      return res.status(400).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "userId must not be supplied; use the authenticated session",
+        message: "Authentication required",
       });
     }
 
     if (!schemeCode) {
       return res.status(400).json({
         success: false,
-
         message: "schemeCode is required",
       });
     }
 
-    const investmentAmount = Number(amount);
+    /*
+      User enters UNITS.
+      The backend calculates the actual amount from the locked
+      authoritative NAV stored in mf_schemes.
+    */
+    const buyUnits = Number(units);
 
-    if (!Number.isFinite(investmentAmount) || investmentAmount <= 0) {
+    if (!Number.isFinite(buyUnits) || buyUnits <= 0) {
       return res.status(400).json({
         success: false,
-
-        message: "amount must be greater than 0",
+        message: "units must be greater than 0",
       });
     }
 
     await connection.beginTransaction();
 
-    /*
-        |--------------------------------------------------------------------------
-        | Lock MF scheme
-        |--------------------------------------------------------------------------
-        */
-
     const [schemes] = await connection.query(
       `
-                SELECT
-
-                    id,
-
-                    scheme_code,
-
-                    scheme_name,
-
-                    current_nav,
-
-                    nav_date
-
-                FROM mf_schemes
-
-                WHERE scheme_code = ?
-
-                  AND is_active = 1
-
-                LIMIT 1
-
-                FOR UPDATE
-                `,
+      SELECT
+        id,
+        scheme_code,
+        scheme_name,
+        current_nav,
+        nav_date
+      FROM mf_schemes
+      WHERE scheme_code = ?
+        AND is_active = 1
+      LIMIT 1
+      FOR UPDATE
+      `,
       [schemeCode],
     );
 
@@ -3143,13 +3130,11 @@ async function buyMutualFund(req, res) {
 
       return res.status(404).json({
         success: false,
-
         message: "Mutual fund not found",
       });
     }
 
     const scheme = schemes[0];
-
     const nav = Number(Number(scheme.current_nav).toFixed(2));
 
     if (!Number.isFinite(nav) || nav <= 0) {
@@ -3157,161 +3142,113 @@ async function buyMutualFund(req, res) {
 
       return res.status(400).json({
         success: false,
-
         message: "Current NAV unavailable",
       });
     }
 
     /*
-        |--------------------------------------------------------------------------
-        | Calculate units
-        |--------------------------------------------------------------------------
-        */
+      Actual purchase amount = entered units × authoritative NAV.
+      Round monetary value to paise before persisting.
+    */
+    const amount = Number((buyUnits * nav).toFixed(2));
 
-    const units = investmentAmount / nav;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await connection.rollback();
 
-    /*
-        |--------------------------------------------------------------------------
-        | Create order
-        |--------------------------------------------------------------------------
-        */
+      return res.status(400).json({
+        success: false,
+        message: "Unable to calculate purchase amount",
+      });
+    }
 
     const orderId = uuidv4();
 
     await connection.query(
       `
-            INSERT INTO mf_orders (
-
-                order_id,
-
-                user_id,
-
-                scheme_id,
-
-                order_type,
-
-                units,
-
-                nav,
-
-                amount,
-
-                nav_date,
-
-                status,
-
-                completed_at
-
-            )
-
-            VALUES (
-                ?,
-                ?,
-                ?,
-                'BUY',
-                ?,
-                ?,
-                ?,
-                ?,
-                'COMPLETED',
-                NOW()
-            )
-            `,
+      INSERT INTO mf_orders (
+        order_id,
+        user_id,
+        scheme_id,
+        order_type,
+        units,
+        nav,
+        amount,
+        nav_date,
+        status,
+        completed_at
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        'BUY',
+        ?,
+        ?,
+        ?,
+        ?,
+        'COMPLETED',
+        NOW()
+      )
+      `,
       [
         orderId,
-
         userId,
-
         scheme.id,
-
-        units,
-
+        buyUnits,
         nav,
-
-        investmentAmount,
-
+        amount,
         scheme.nav_date,
       ],
     );
 
-    /*
-        |--------------------------------------------------------------------------
-        | Create / update holding
-        |--------------------------------------------------------------------------
-        */
-
     await connection.query(
       `
-            INSERT INTO mf_holdings (
-
-                user_id,
-
-                scheme_id,
-
-                units,
-
-                invested_amount
-
-            )
-
-            VALUES (
-                ?,
-                ?,
-                ?,
-                ?
-            )
-
-            ON DUPLICATE KEY UPDATE
-
-                units =
-                    units +
-                    VALUES(units),
-
-                invested_amount =
-                    invested_amount +
-                    VALUES(invested_amount)
-            `,
-      [userId, scheme.id, units, investmentAmount],
+      INSERT INTO mf_holdings (
+        user_id,
+        scheme_id,
+        units,
+        invested_amount
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?
+      )
+      ON DUPLICATE KEY UPDATE
+        units = units + VALUES(units),
+        invested_amount = invested_amount + VALUES(invested_amount)
+      `,
+      [userId, scheme.id, buyUnits, amount],
     );
 
     await connection.commit();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-
       message: "Mutual fund BUY order completed",
-
       data: {
         orderId,
-
         orderType: "BUY",
-
         schemeCode: scheme.scheme_code,
-
         schemeName: scheme.scheme_name,
-
-        units: Number(units.toFixed(8)),
-
+        units: Number(buyUnits.toFixed(8)),
         nav,
-
-        amount: investmentAmount,
-
+        amount,
         navDate: scheme.nav_date,
-
         status: "COMPLETED",
       },
     });
   } catch (error) {
-    await connection.rollback();
+    try {
+      await connection.rollback();
+    } catch (_) {}
 
     console.error("buyMutualFund error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: "Unable to place BUY order",
-
-      error: error.message,
     });
   } finally {
     connection.release();
@@ -3335,17 +3272,13 @@ async function sellMutualFund(req, res) {
   const connection = await pool.getConnection();
 
   try {
-    const { schemeCode, units } = req.body || {};
-    const body = req.body || {};
     const userId = req.userId;
+    const { schemeCode, units } = req.body;
 
-    if (
-      Object.prototype.hasOwnProperty.call(body, "userId") ||
-      Object.prototype.hasOwnProperty.call(body, "user_id")
-    ) {
-      return res.status(400).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "userId must not be supplied; use the authenticated session",
+        message: "Authentication required",
       });
     }
 
@@ -3786,6 +3719,13 @@ async function getMutualFundHoldings(
 ) {
   try {
     const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
 
     const [holdings] =
       await pool.query(
@@ -4336,6 +4276,13 @@ async function calculatePortfolioXirr(
 async function getMutualFundOrders(req, res) {
   try {
     const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
 
     const [rows] = await pool.query(
       `

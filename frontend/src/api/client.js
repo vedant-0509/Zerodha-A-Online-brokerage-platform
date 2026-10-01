@@ -71,34 +71,27 @@
 
 
 
-
 import axios from "axios";
 
-
 const API_URL = (
-    process.env.REACT_APP_AUTH_API_URL ||
-    process.env.REACT_APP_API_URL ||
-    "http://localhost:3010"
-)
-    .replace(/\/$/, "");
-
+  process.env.REACT_APP_AUTH_API_URL ||
+  process.env.REACT_APP_API_URL ||
+  "http://localhost:3010"
+).replace(/\/$/, "");
 
 const api = axios.create({
-    baseURL:
-        API_URL,
+  baseURL: API_URL,
 
-    timeout:
-        Number(
-            process.env.REACT_APP_REQUEST_TIMEOUT_MS ||
-            15000
-        ),
+  timeout: Number(
+    process.env.REACT_APP_REQUEST_TIMEOUT_MS ||
+    15000
+  ),
 
-    headers: {
-        "Content-Type":
-            "application/json",
-    },
+  headers: {
+    "Content-Type":
+      "application/json",
+  },
 });
-
 
 /*
 |--------------------------------------------------------------------------
@@ -107,31 +100,28 @@ const api = axios.create({
 */
 
 api.interceptors.request.use(
-    (config) => {
+  (config) => {
 
-        const token =
-            localStorage.getItem(
-                "token"
-            );
+    const token =
+      localStorage.getItem(
+        "token"
+      );
 
+    if (token) {
 
-        if (token) {
+      config.headers =
+        config.headers || {};
 
-            config.headers =
-                config.headers || {};
+      config.headers.Authorization =
+        `Bearer ${token}`;
+    }
 
-            config.headers.Authorization =
-                `Bearer ${token}`;
-        }
+    return config;
+  },
 
-
-        return config;
-    },
-
-    (error) =>
-        Promise.reject(error)
+  (error) =>
+    Promise.reject(error)
 );
-
 
 /*
 |--------------------------------------------------------------------------
@@ -141,99 +131,100 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
 
-    (response) =>
-        response,
+  (response) =>
+    response,
 
-    (error) => {
+  (error) => {
 
-        const status =
-            error.response?.status;
+    const status =
+      error.response?.status;
 
-        const url =
-            String(
-                error.config?.url ||
-                ""
-            );
+    const url =
+      String(
+        error.config?.url || ""
+      );
 
+    /*
+    Do NOT treat failed login/signup as
+    session expiry.
+    */
 
-        /*
-        ----------------------------------------------------------------------
-        | Don't treat a failed login attempt as an expired existing session.
-        ----------------------------------------------------------------------
-        */
+    const isAuthAttempt =
+      url.endsWith("/login") ||
+      url.endsWith("/signup");
 
-        const isAuthAttempt =
-            url.endsWith(
-                "/login"
-            ) ||
-            url.endsWith(
-                "/signup"
-            );
+    /*
+    |--------------------------------------------------------------------------
+    | 401
+    |--------------------------------------------------------------------------
+    */
 
+    if (
+      status === 401 &&
+      !isAuthAttempt
+    ) {
 
-        if (
-            status === 401 &&
-            !isAuthAttempt
-        ) {
+      localStorage.removeItem(
+        "token"
+      );
 
-            localStorage.removeItem(
-                "token"
-            );
+      localStorage.removeItem(
+        "user"
+      );
 
-            localStorage.removeItem(
-                "user"
-            );
-
-
-            window.dispatchEvent(
-                new Event(
-                    "auth-expired"
-                )
-            );
-        }
-
-
-        if (
-            status === 403
-        ) {
-
-            window.dispatchEvent(
-                new CustomEvent(
-                    "api-forbidden",
-                    {
-                        detail:
-                            error.response?.data,
-                    }
-                )
-            );
-        }
-
-
-        if (
-            status === 429
-        ) {
-
-            window.dispatchEvent(
-                new CustomEvent(
-                    "api-rate-limited",
-                    {
-                        detail:
-                            error.response?.data,
-                    }
-                )
-            );
-        }
-
-
-        return Promise.reject(
-            error
-        );
+      window.dispatchEvent(
+        new Event(
+          "auth-expired"
+        )
+      );
     }
-);
 
+    /*
+    |--------------------------------------------------------------------------
+    | 403
+    |--------------------------------------------------------------------------
+    */
+
+    if (status === 403) {
+
+      window.dispatchEvent(
+        new CustomEvent(
+          "api-forbidden",
+          {
+            detail:
+              error.response?.data,
+          }
+        )
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 429
+    |--------------------------------------------------------------------------
+    */
+
+    if (status === 429) {
+
+      window.dispatchEvent(
+        new CustomEvent(
+          "api-rate-limited",
+          {
+            detail:
+              error.response?.data,
+          }
+        )
+      );
+    }
+
+    return Promise.reject(
+      error
+    );
+  }
+);
 
 export default api;
 
 export {
-    api,
+  api,
 };
