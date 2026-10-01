@@ -1,11 +1,95 @@
-import { Navigate, Outlet } from "react-router-dom";
+import React from "react";
+
+import {
+    Navigate,
+    Outlet,
+    useLocation,
+} from "react-router-dom";
+
+import { useAuth } from "../context/AuthContext";
+
 
 export default function ProtectedRoute() {
-    const token = localStorage.getItem("token");
 
-    if (!token) {
-        return <Navigate to="/login" replace />;
+    const {
+        status,
+    } = useAuth();
+
+
+    const location =
+        useLocation();
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | WAIT FOR /me
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        status ===
+        "loading"
+    ) {
+
+        return (
+            <div
+                style={{
+                    minHeight:
+                        "60vh",
+
+                    display:
+                        "flex",
+
+                    alignItems:
+                        "center",
+
+                    justifyContent:
+                        "center",
+
+                    fontSize:
+                        "1rem",
+                }}
+            >
+                Checking your session...
+            </div>
+        );
     }
 
-    return <Outlet />;
+
+    /*
+    |--------------------------------------------------------------------------
+    | NOT AUTHENTICATED
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        status !==
+        "authenticated"
+    ) {
+
+        const from =
+            `${location.pathname}${location.search}${location.hash}`;
+
+
+        return (
+            <Navigate
+                to="/login"
+                replace
+                state={{
+                    from,
+                }}
+            />
+        );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | AUTHENTICATED
+    |--------------------------------------------------------------------------
+    */
+
+    return (
+        <Outlet />
+    );
 }

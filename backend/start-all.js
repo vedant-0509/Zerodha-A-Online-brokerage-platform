@@ -15,7 +15,7 @@ const services = [
 const processes = [];
 
 function startService(service) {
-    console.log(`\nStarting ${service.name}...`);
+    console.log(`Starting ${service.name}...`);
 
     const child = spawn(process.execPath, [service.script], {
         cwd: service.cwd,

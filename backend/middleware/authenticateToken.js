@@ -1,36 +1,103 @@
-const jwt = require("jsonwebtoken");
+const {
+    extractBearerToken,
+    verifyAccessToken,
+} = require("../auth/jwt");
 
-const JWT_SECRET = process.env.JWT_SECRET;
 
-if (!JWT_SECRET) {
-    throw new Error("JWT_SECRET is not configured");
-}
+function authenticateToken(
+    req,
+    res,
+    next
+) {
+    const token =
+        extractBearerToken(
+            req.headers.authorization
+        );
 
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    /*
+    |--------------------------------------------------------------------------
+    | No token
+    |--------------------------------------------------------------------------
+    */
+
+    if (!token) {
         return res.status(401).json({
             success: false,
-            message: "Authentication required",
+
+            error: {
+                code:
+                    "AUTHENTICATION_REQUIRED",
+
+                message:
+                    "Authentication required",
+            },
         });
     }
 
-    const token = authHeader.substring(7);
 
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded =
+            verifyAccessToken(token);
 
-        req.user = decoded;
-        req.userId = decoded.userId;
 
-        next();
+        /*
+        ----------------------------------------------------------------------
+        | Validate JWT payload
+        ----------------------------------------------------------------------
+        */
+
+        if (
+            !decoded ||
+            typeof decoded.userId !==
+                "string" ||
+            !decoded.userId.trim()
+        ) {
+            return res.status(401).json({
+                success: false,
+
+                error: {
+                    code:
+                        "INVALID_TOKEN",
+
+                    message:
+                        "Invalid authentication token",
+                },
+            });
+        }
+
+
+        /*
+        ----------------------------------------------------------------------
+        | Attach authenticated identity
+        ----------------------------------------------------------------------
+        */
+
+        req.userId =
+            decoded.userId;
+
+        req.user =
+            decoded;
+
+
+        return next();
+
     } catch (error) {
+
         return res.status(401).json({
             success: false,
-            message: "Invalid or expired token",
+
+            error: {
+                code:
+                    "INVALID_TOKEN",
+
+                message:
+                    "Invalid or expired authentication token",
+            },
         });
     }
 }
 
-module.exports = authenticateToken;
+
+module.exports =
+    authenticateToken;

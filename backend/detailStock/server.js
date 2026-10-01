@@ -12,11 +12,10 @@ const logger = require("./logger");
 const { redis, connectRedis } = require("./redis");
 const upstox = require("./upstox");
 const { getStockFinancials } = upstox;
-const jwt = require("jsonwebtoken");
+
 const { simulateOrder } = require("./simulatedOrderService");
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || "zerodha_secret_key";
+const authenticateToken = require("../middleware/authenticateToken");
 
 const {
   initDb,
@@ -237,68 +236,68 @@ function errorMessage(err) {
    JWT AUTHENTICATION
 ========================================================= */
 
-function authenticateToken(req, res, next) {
-  try {
-    const authHeader =
-      req.headers.authorization;
+// function authenticateToken(req, res, next) {
+//   try {
+//     const authHeader =
+//       req.headers.authorization;
 
-    if (!authHeader) {
-      return res.status(401).json({
-        success: false,
-        message:
-          "Authorization token required",
-      });
-    }
+//     if (!authHeader) {
+//       return res.status(401).json({
+//         success: false,
+//         message:
+//           "Authorization token required",
+//       });
+//     }
 
-    if (!authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        success: false,
-        message:
-          "Invalid authorization format",
-      });
-    }
+//     if (!authHeader.startsWith("Bearer ")) {
+//       return res.status(401).json({
+//         success: false,
+//         message:
+//           "Invalid authorization format",
+//       });
+//     }
 
-    const token =
-      authHeader.slice(7).trim();
+//     const token =
+//       authHeader.slice(7).trim();
 
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Token missing",
-      });
-    }
+//     if (!token) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Token missing",
+//       });
+//     }
 
-    const decoded = jwt.verify(
-      token,
-      JWT_SECRET
-    );
+//     const decoded = jwt.verify(
+//       token,
+//       JWT_SECRET
+//     );
 
-    if (!decoded.userId) {
-      return res.status(401).json({
-        success: false,
-        message:
-          "Invalid token payload",
-      });
-    }
+//     if (!decoded.userId) {
+//       return res.status(401).json({
+//         success: false,
+//         message:
+//           "Invalid token payload",
+//       });
+//     }
 
-    req.userId = decoded.userId;
+//     req.userId = decoded.userId;
 
-    next();
-  } catch (error) {
-    logger.warn(
-      "JWT authentication failed",
-      {
-        error: error.message,
-      }
-    );
+//     next();
+//   } catch (error) {
+//     logger.warn(
+//       "JWT authentication failed",
+//       {
+//         error: error.message,
+//       }
+//     );
 
-    return res.status(401).json({
-      success: false,
-      message:
-        "Invalid or expired token",
-    });
-  }
-}
+//     return res.status(401).json({
+//       success: false,
+//       message:
+//         "Invalid or expired token",
+//     });
+//   }
+// }
 
 /* =========================================================
    CRON HELPERS
