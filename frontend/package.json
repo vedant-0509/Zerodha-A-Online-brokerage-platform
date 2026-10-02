@@ -5,8 +5,9 @@
   "license": "ISC",
   "author": "",
   "main": "index.js",
+  "proxy": "http://localhost:3000",
   "scripts": {
-    "start": "react-scripts start",
+    "start": "set PORT=3002 && react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test"
   },

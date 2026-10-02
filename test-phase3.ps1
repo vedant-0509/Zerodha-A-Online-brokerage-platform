@@ -112,16 +112,16 @@ if ($status -eq 401) {
 
 Section "TEST 5 - HOLDINGS ROUTING"
 
-$status = Get-StatusCode "$BASE_URL/api/holdings"
+$status = Get-StatusCode "$BASE_URL/api/holdings/holdings"
 
 if ($status -eq 401) {
-    Pass "/api/holdings reaches Holdings service -> 401 without token"
+    Pass "/api/holdings/holdings reaches Holdings service -> 401 without token"
 } elseif ($status -eq 404) {
-    Fail "/api/holdings returned 404 - Holdings route is not mapped correctly"
+    Fail "/api/holdings/holdings returned 404 - Holdings route is not mapped correctly"
 } elseif ($status -eq 0) {
     Fail "Central API is unreachable"
 } else {
-    Pass "/api/holdings reached Holdings service -> HTTP $status"
+    Pass "/api/holdings/holdings reached Holdings service -> HTTP $status"
 }
 
 Section "TEST 6 - WATCHLIST ROUTING"
@@ -178,14 +178,16 @@ if ($status -eq 404) {
 
 Section "TEST 10 - DETAIL STOCK ROUTING"
 
-$status = Get-StatusCode "$BASE_URL/api/detail-stock/"
+$status = Get-StatusCode "$BASE_URL/api/detail-stock/health"
 
-if ($status -eq 404) {
-    Fail "/api/detail-stock returned 404 - Detail Stock route is not mapped correctly"
+if ($status -eq 200) {
+    Pass "/api/detail-stock/health reaches Detail Stock service -> 200"
+} elseif ($status -eq 404) {
+    Fail "/api/detail-stock/health returned 404 - Detail Stock route is not mapped correctly"
 } elseif ($status -eq 0) {
     Fail "Central API is unreachable"
 } else {
-    Pass "/api/detail-stock reached Detail Stock service -> HTTP $status"
+    Pass "/api/detail-stock/health reached Detail Stock service -> HTTP $status"
 }
 
 Section "TEST 11 - COMPANY REVIEWS ROUTING"

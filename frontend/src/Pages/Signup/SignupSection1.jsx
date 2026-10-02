@@ -123,574 +123,330 @@
 //     );
 // }
 
+import React, { useState } from "react";
 
+import { useNavigate } from "react-router-dom";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import React, {
-    useState,
-} from "react";
-
-import {
-    useNavigate,
-} from "react-router-dom";
-
-import {
-    useAuth,
-} from "../../context/AuthContext";
-
+import { useAuth } from "../../context/AuthContext";
 
 export default function SignupSection1() {
+  const navigate = useNavigate();
 
-    const navigate =
-        useNavigate();
+  const { signup } = useAuth();
 
+  const [form, setForm] = useState({
+    full_name: "",
 
-    const {
-        signup,
-    } = useAuth();
+    phone: "",
 
+    email: "",
 
-    const [
-        form,
-        setForm,
-    ] = useState({
-        full_name:
-            "",
+    password: "",
 
-        phone:
-            "",
+    confirmPassword: "",
+  });
 
-        email:
-            "",
+  const [error, setError] = useState("");
 
-        password:
-            "",
+  const [success, setSuccess] = useState("");
 
-        confirmPassword:
-            "",
-    });
+  const [loading, setLoading] = useState(false);
 
+  const handleChange = (event) => {
+    setForm((old) => ({
+      ...old,
 
-    const [
-        error,
-        setError,
-    ] = useState("");
+      [event.target.name]: event.target.value,
+    }));
 
+    setError("");
+    setSuccess("");
+  };
 
-    const [
-        success,
-        setSuccess,
-    ] = useState("");
+  const handleSubmit = async (event) => {
+    event.preventDefault();
 
+    setError("");
+    setSuccess("");
 
-    const [
-        loading,
-        setLoading,
-    ] = useState(false);
+    const fullName = form.full_name.trim();
 
+    const phone = form.phone.trim();
 
-    const handleChange =
-        (event) => {
+    const email = form.email.trim().toLowerCase();
 
-            setForm(
-                (old) => ({
-                    ...old,
+    if (
+      !fullName ||
+      !phone ||
+      !email ||
+      !form.password ||
+      !form.confirmPassword
+    ) {
+      setError("Please fill all fields.");
 
-                    [event.target.name]:
-                        event.target.value,
-                })
-            );
+      return;
+    }
 
-            setError("");
-            setSuccess("");
-        };
+    if (form.password !== form.confirmPassword) {
+      setError("Passwords do not match.");
 
+      return;
+    }
 
-    const handleSubmit =
-        async (event) => {
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters.");
 
-            event.preventDefault();
+      return;
+    }
 
-            setError("");
-            setSuccess("");
+    try {
+      setLoading(true);
 
+      await signup({
+        full_name: fullName,
 
-            const fullName =
-                form.full_name.trim();
+        phone: phone,
 
-            const phone =
-                form.phone.trim();
+        email: email,
 
-            const email =
-                form.email.trim()
-                    .toLowerCase();
+        password: form.password,
+      });
 
+      setSuccess("Account created successfully. Redirecting to login...");
 
-            if (
-                !fullName ||
-                !phone ||
-                !email ||
-                !form.password ||
-                !form.confirmPassword
-            ) {
+      setForm({
+        full_name: "",
 
-                setError(
-                    "Please fill all fields."
-                );
+        phone: "",
 
-                return;
-            }
+        email: "",
 
+        password: "",
 
-            if (
-                form.password !==
-                form.confirmPassword
-            ) {
+        confirmPassword: "",
+      });
 
-                setError(
-                    "Passwords do not match."
-                );
+      setTimeout(() => {
+        navigate("/login", {
+          replace: true,
 
-                return;
-            }
-
-
-            if (
-                form.password.length <
-                8
-            ) {
-
-                setError(
-                    "Password must be at least 8 characters."
-                );
-
-                return;
-            }
-
-
-            try {
-
-                setLoading(
-                    true
-                );
-
-
-                await signup({
-                    full_name:
-                        fullName,
-
-                    phone:
-                        phone,
-
-                    email:
-                        email,
-
-                    password:
-                        form.password,
-                });
-
-
-                setSuccess(
-                    "Account created successfully. Redirecting to login..."
-                );
-
-
-                setForm({
-                    full_name:
-                        "",
-
-                    phone:
-                        "",
-
-                    email:
-                        "",
-
-                    password:
-                        "",
-
-                    confirmPassword:
-                        "",
-                });
-
-
-                setTimeout(
-                    () => {
-
-                        navigate(
-                            "/login",
-                            {
-                                replace:
-                                    true,
-
-                                state: {
-                                    email,
-                                },
-                            }
-                        );
-
-                    },
-                    800
-                );
-
-            } catch (err) {
-
-                const message =
-                    err.response?.data
-                        ?.error?.message ||
-                    err.response?.data
-                        ?.message ||
-                    "Signup failed.";
-
-
-                setError(
-                    message
-                );
-
-            } finally {
-
-                setLoading(
-                    false
-                );
-            }
-        };
-
-
-    return (
-        <div
-            style={{
-                display:
-                    "flex",
-
-                alignItems:
-                    "center",
-
-                justifyContent:
-                    "space-between",
-            }}
+          state: {
+            email,
+          },
+        });
+      }, 800);
+    } catch (err) {
+      const message =
+        err.response?.data?.error?.message ||
+        err.response?.data?.message ||
+        "Signup failed.";
+
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+
+        alignItems: "center",
+
+        justifyContent: "space-between",
+      }}
+    >
+      <div
+        style={{
+          minWidth: "25rem",
+
+          maxWidth: "40rem",
+        }}
+      >
+        <h1
+          className="title"
+          style={{
+            margin: 0,
+          }}
         >
+          Create a Demat Account
+        </h1>
 
-            <div
-                style={{
-                    minWidth:
-                        "25rem",
+        <p
+          className="subtitle"
+          style={{
+            marginTop: ".75rem",
 
-                    maxWidth:
-                        "40rem",
-                }}
-            >
+            marginBottom: "2rem",
+          }}
+        >
+          Create a free account
+        </p>
 
-                <h1
-                    className="title"
-                    style={{
-                        margin: 0,
-                    }}
-                >
-                    Create a Demat Account
-                </h1>
+        {error ? (
+          <div
+            style={{
+              marginBottom: "1rem",
 
+              padding: ".75rem 1rem",
 
-                <p
-                    className="subtitle"
-                    style={{
-                        marginTop:
-                            ".75rem",
+              borderRadius: "8px",
 
-                        marginBottom:
-                            "2rem",
-                    }}
-                >
-                    Create a free account
-                </p>
+              background: "#fff1f2",
 
+              color: "#be123c",
+            }}
+          >
+            {error}
+          </div>
+        ) : null}
 
-                {error ? (
-                    <div
-                        style={{
-                            marginBottom:
-                                "1rem",
+        {success ? (
+          <div
+            style={{
+              marginBottom: "1rem",
 
-                            padding:
-                                ".75rem 1rem",
+              padding: ".75rem 1rem",
 
-                            borderRadius:
-                                "8px",
+              borderRadius: "8px",
 
-                            background:
-                                "#fff1f2",
+              background: "#f0fdf4",
 
-                            color:
-                                "#be123c",
-                        }}
-                    >
-                        {error}
-                    </div>
-                ) : null}
+              color: "#166534",
+            }}
+          >
+            {success}
+          </div>
+        ) : null}
 
+        <form className="signup-form" onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>Full Name</label>
 
-                {success ? (
-                    <div
-                        style={{
-                            marginBottom:
-                                "1rem",
+            <input
+              type="text"
+              name="full_name"
+              value={form.full_name}
+              onChange={handleChange}
+              placeholder="Enter Full Name"
+              autoComplete="name"
+              disabled={loading}
+            />
+          </div>
 
-                            padding:
-                                ".75rem 1rem",
+          <div className="form-group">
+            <label>Phone Number</label>
 
-                            borderRadius:
-                                "8px",
+            <input
+              type="tel"
+              name="phone"
+              value={form.phone}
+              onChange={handleChange}
+              placeholder="Phone Number"
+              autoComplete="tel"
+              disabled={loading}
+            />
+          </div>
 
-                            background:
-                                "#f0fdf4",
+          <div className="form-group">
+            <label>Email address</label>
 
-                            color:
-                                "#166534",
-                        }}
-                    >
-                        {success}
-                    </div>
-                ) : null}
+            <input
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+              placeholder="Email Address"
+              autoComplete="email"
+              disabled={loading}
+            />
+          </div>
 
+          <div className="form-group">
+            <label>Password</label>
 
-                <form
-                    className="signup-form"
-                    onSubmit={
-                        handleSubmit
-                    }
-                >
+            <input
+              type="password"
+              name="password"
+              value={form.password}
+              onChange={handleChange}
+              placeholder="Password"
+              autoComplete="new-password"
+              disabled={loading}
+            />
+          </div>
 
-                    <div
-                        className="form-group"
-                    >
-                        <label>
-                            Full Name
-                        </label>
+          <div className="form-group">
+            <label>Repeat Password</label>
 
-                        <input
-                            type="text"
-                            name="full_name"
-                            value={
-                                form.full_name
-                            }
-                            onChange={
-                                handleChange
-                            }
-                            placeholder="Enter Full Name"
-                            autoComplete="name"
-                            disabled={
-                                loading
-                            }
-                        />
-                    </div>
+            <input
+              type="password"
+              name="confirmPassword"
+              value={form.confirmPassword}
+              onChange={handleChange}
+              placeholder="Repeat Password"
+              autoComplete="new-password"
+              disabled={loading}
+            />
+          </div>
 
+          <button
+            type="submit"
+            className="signup-btn"
+            style={{
+              width: "100%",
+            }}
+            disabled={loading}
+          >
+            {loading ? "Creating account..." : "Sign Up"}
+          </button>
 
-                    <div
-                        className="form-group"
-                    >
-                        <label>
-                            Phone Number
-                        </label>
+          <button
+            type="button"
+            className="signup-btn"
+            style={{
+              width: "100%",
+              marginTop: ".75rem",
+            }}
+            onClick={() => navigate("/login")}
+            disabled={loading}
+          >
+            Already have an account? Login
+          </button>
+        </form>
 
-                        <input
-                            type="tel"
-                            name="phone"
-                            value={
-                                form.phone
-                            }
-                            onChange={
-                                handleChange
-                            }
-                            placeholder="Phone Number"
-                            autoComplete="tel"
-                            disabled={
-                                loading
-                            }
-                        />
-                    </div>
-
-
-                    <div
-                        className="form-group"
-                    >
-                        <label>
-                            Email address
-                        </label>
-
-                        <input
-                            type="email"
-                            name="email"
-                            value={
-                                form.email
-                            }
-                            onChange={
-                                handleChange
-                            }
-                            placeholder="Email Address"
-                            autoComplete="email"
-                            disabled={
-                                loading
-                            }
-                        />
-                    </div>
-
-
-                    <div
-                        className="form-group"
-                    >
-                        <label>
-                            Password
-                        </label>
-
-                        <input
-                            type="password"
-                            name="password"
-                            value={
-                                form.password
-                            }
-                            onChange={
-                                handleChange
-                            }
-                            placeholder="Password"
-                            autoComplete="new-password"
-                            disabled={
-                                loading
-                            }
-                        />
-                    </div>
-
-
-                    <div
-                        className="form-group"
-                    >
-                        <label>
-                            Repeat Password
-                        </label>
-
-                        <input
-                            type="password"
-                            name="confirmPassword"
-                            value={
-                                form.confirmPassword
-                            }
-                            onChange={
-                                handleChange
-                            }
-                            placeholder="Repeat Password"
-                            autoComplete="new-password"
-                            disabled={
-                                loading
-                            }
-                        />
-                    </div>
-
-
-                    <button
-                        type="submit"
-                        className="signup-btn"
-                        style={{
-                            width:
-                                "100%",
-                        }}
-                        disabled={
-                            loading
-                        }
-                    >
-                        {loading
-                            ? "Creating account..."
-                            : "Sign Up"}
-                    </button>
-
-
-                    <button
-                        type="button"
-                        className="signup-btn"
-                        style={{
-                            width:
-                                "100%",
-                            marginTop:
-                                ".75rem",
-                        }}
-                        onClick={() =>
-                            navigate(
-                                "/login"
-                            )
-                        }
-                        disabled={
-                            loading
-                        }
-                    >
-                        Already have an account? Login
-                    </button>
-
-                </form>
-
-
-                <div
-                    className="divider"
-                >
-                    <span>
-                        or
-                    </span>
-                </div>
-
-
-                <button
-                    type="button"
-                    className="google-btn"
-                    disabled
-                    title="Google authentication is not configured yet"
-                >
-                    <span>
-                        Sign up with Google
-                    </span>
-                </button>
-
-            </div>
-
-
-            <div
-                style={{
-                    height:
-                        "auto",
-
-                    width:
-                        "auto",
-
-                    overflow:
-                        "hidden",
-                }}
-            >
-                <img
-                    src="/images/bg2.jpg"
-                    style={{
-                        width:
-                            "50rem",
-                    }}
-                    alt="Signup"
-                />
-            </div>
-
+        <div className="divider">
+          <span>or</span>
         </div>
-    );
+
+        <button
+          type="button"
+          className="google-btn"
+          disabled
+          title="Google authentication is not configured yet"
+        >
+          <span>Sign up with Google</span>
+        </button>
+      </div>
+
+      <div
+        style={{
+          height: "auto",
+
+          width: "auto",
+
+          overflow: "hidden",
+        }}
+      >
+        <img
+          src="/images/bg2.jpg"
+          style={{
+            width: "50rem",
+          }}
+          alt="Signup"
+        />
+      </div>
+    </div>
+  );
 }

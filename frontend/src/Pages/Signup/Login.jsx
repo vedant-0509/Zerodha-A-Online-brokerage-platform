@@ -94,423 +94,229 @@
 //     );
 // }
 
+import React, { useState } from "react";
 
+import { useLocation, useNavigate } from "react-router-dom";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import React, {
-    useState,
-} from "react";
-
-import {
-    useLocation,
-    useNavigate,
-} from "react-router-dom";
-
-import {
-    useAuth,
-} from "../../context/AuthContext";
-
+import { useAuth } from "../../context/AuthContext";
 
 export default function Login() {
+  const navigate = useNavigate();
 
-    const navigate =
-        useNavigate();
+  const location = useLocation();
 
+  const { login } = useAuth();
 
-    const location =
-        useLocation();
+  const [form, setForm] = useState({
+    email: location.state?.email || "",
 
+    password: "",
+  });
 
-    const {
-        login,
-    } = useAuth();
+  const [error, setError] = useState("");
 
+  const [loading, setLoading] = useState(false);
 
-    const [
-        form,
-        setForm,
-    ] = useState({
-        email:
-            location.state?.email ||
-            "",
+  const handleChange = (event) => {
+    setForm((old) => ({
+      ...old,
 
-        password:
-            "",
-    });
+      [event.target.name]: event.target.value,
+    }));
 
+    setError("");
+  };
 
-    const [
-        error,
-        setError,
-    ] = useState("");
+  const handleSubmit = async (event) => {
+    event.preventDefault();
 
+    setError("");
 
-    const [
-        loading,
-        setLoading,
-    ] = useState(false);
+    const email = form.email.trim();
 
+    if (!email || !form.password) {
+      setError("Please enter email and password.");
 
-    const handleChange =
-        (event) => {
+      return;
+    }
 
-            setForm(
-                (old) => ({
-                    ...old,
+    try {
+      setLoading(true);
 
-                    [event.target.name]:
-                        event.target.value,
-                })
-            );
+      await login({
+        email,
+        password: form.password,
+      });
 
-            setError("");
-        };
-
-
-    const handleSubmit =
-        async (event) => {
-
-            event.preventDefault();
-
-            setError("");
-
-
-            const email =
-                form.email.trim();
-
-
-            if (
-                !email ||
-                !form.password
-            ) {
-
-                setError(
-                    "Please enter email and password."
-                );
-
-                return;
-            }
-
-
-            try {
-
-                setLoading(
-                    true
-                );
-
-
-                await login({
-                    email,
-                    password:
-                        form.password,
-                });
-
-
-                /*
+      /*
                 Redirect to the page the user originally
                 requested, otherwise dashboard.
                 */
 
-                const from =
-                    location.state?.from;
+      const from = location.state?.from;
 
+      const destination =
+        from && !from.startsWith("/login") && !from.startsWith("/signup")
+          ? from
+          : "/dashboard/stocks/explore";
 
-                const destination =
-                    from &&
-                    !from.startsWith(
-                        "/login"
-                    ) &&
-                    !from.startsWith(
-                        "/signup"
-                    )
-                        ? from
-                        : "/dashboard/stocks/explore";
+      navigate(destination, {
+        replace: true,
+      });
+    } catch (err) {
+      const message =
+        err.response?.data?.error?.message ||
+        err.response?.data?.message ||
+        "Login failed. Please check your credentials.";
 
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-                navigate(
-                    destination,
-                    {
-                        replace:
-                            true,
-                    }
-                );
+  return (
+    <div className="home">
+      <div
+        style={{
+          display: "flex",
 
-            } catch (err) {
+          alignItems: "center",
 
-                const message =
-                    err.response?.data
-                        ?.error?.message ||
-                    err.response?.data
-                        ?.message ||
-                    "Login failed. Please check your credentials.";
-
-
-                setError(
-                    message
-                );
-
-            } finally {
-
-                setLoading(
-                    false
-                );
-            }
-        };
-
-
-    return (
+          justifyContent: "space-between",
+        }}
+      >
         <div
-            className="home"
+          style={{
+            minWidth: "25rem",
+
+            maxWidth: "40rem",
+          }}
         >
+          <h1
+            className="title"
+            style={{
+              margin: 0,
+            }}
+          >
+            Welcome Back
+          </h1>
+
+          <p
+            className="subtitle"
+            style={{
+              marginTop: ".75rem",
+
+              marginBottom: "2rem",
+            }}
+          >
+            Login to your Zerodha account
+          </p>
+
+          {error ? (
             <div
-                style={{
-                    display:
-                        "flex",
+              style={{
+                marginBottom: "1rem",
 
-                    alignItems:
-                        "center",
+                padding: ".75rem 1rem",
 
-                    justifyContent:
-                        "space-between",
-                }}
+                borderRadius: "8px",
+
+                background: "#fff1f2",
+
+                color: "#be123c",
+              }}
             >
-
-                <div
-                    style={{
-                        minWidth:
-                            "25rem",
-
-                        maxWidth:
-                            "40rem",
-                    }}
-                >
-
-                    <h1
-                        className="title"
-                        style={{
-                            margin: 0,
-                        }}
-                    >
-                        Welcome Back
-                    </h1>
-
-
-                    <p
-                        className="subtitle"
-                        style={{
-                            marginTop:
-                                ".75rem",
-
-                            marginBottom:
-                                "2rem",
-                        }}
-                    >
-                        Login to your Zerodha account
-                    </p>
-
-
-                    {error ? (
-                        <div
-                            style={{
-                                marginBottom:
-                                    "1rem",
-
-                                padding:
-                                    ".75rem 1rem",
-
-                                borderRadius:
-                                    "8px",
-
-                                background:
-                                    "#fff1f2",
-
-                                color:
-                                    "#be123c",
-                            }}
-                        >
-                            {error}
-                        </div>
-                    ) : null}
-
-
-                    <form
-                        className="signup-form"
-                        onSubmit={
-                            handleSubmit
-                        }
-                    >
-
-                        <div
-                            className="form-group"
-                        >
-                            <label>
-                                Email address
-                            </label>
-
-                            <input
-                                type="email"
-                                name="email"
-                                value={
-                                    form.email
-                                }
-                                onChange={
-                                    handleChange
-                                }
-                                placeholder="Enter Email"
-                                autoComplete="email"
-                                disabled={
-                                    loading
-                                }
-                            />
-                        </div>
-
-
-                        <div
-                            className="form-group"
-                        >
-                            <label>
-                                Password
-                            </label>
-
-                            <input
-                                type="password"
-                                name="password"
-                                value={
-                                    form.password
-                                }
-                                onChange={
-                                    handleChange
-                                }
-                                placeholder="Enter Password"
-                                autoComplete="current-password"
-                                disabled={
-                                    loading
-                                }
-                            />
-                        </div>
-
-
-                        <button
-                            type="submit"
-                            className="signup-btn"
-                            style={{
-                                width:
-                                    "100%",
-                            }}
-                            disabled={
-                                loading
-                            }
-                        >
-                            {loading
-                                ? "Logging in..."
-                                : "Login"}
-                        </button>
-
-
-                        <button
-                            type="button"
-                            className="signup-btn"
-                            style={{
-                                width:
-                                    "100%",
-                                marginTop:
-                                    ".75rem",
-                            }}
-                            onClick={() =>
-                                navigate(
-                                    "/signup"
-                                )
-                            }
-                            disabled={
-                                loading
-                            }
-                        >
-                            Create Account
-                        </button>
-
-                    </form>
-
-
-                    <div
-                        className="divider"
-                    >
-                        <span>
-                            or
-                        </span>
-                    </div>
-
-
-                    <button
-                        type="button"
-                        className="google-btn"
-                        disabled
-                        title="Google authentication is not configured yet"
-                    >
-                        <span>
-                            Continue with Google
-                        </span>
-                    </button>
-
-                </div>
-
-
-                <div
-                    style={{
-                        height:
-                            "auto",
-
-                        width:
-                            "auto",
-
-                        overflow:
-                            "hidden",
-                    }}
-                >
-                    <img
-                        src="/images/bg2.jpg"
-                        style={{
-                            width:
-                                "50rem",
-                        }}
-                        alt="Login"
-                    />
-                </div>
-
+              {error}
             </div>
+          ) : null}
+
+          <form className="signup-form" onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label>Email address</label>
+
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                placeholder="Enter Email"
+                autoComplete="email"
+                disabled={loading}
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Password</label>
+
+              <input
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={handleChange}
+                placeholder="Enter Password"
+                autoComplete="current-password"
+                disabled={loading}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="signup-btn"
+              style={{
+                width: "100%",
+              }}
+              disabled={loading}
+            >
+              {loading ? "Logging in..." : "Login"}
+            </button>
+
+            <button
+              type="button"
+              className="signup-btn"
+              style={{
+                width: "100%",
+                marginTop: ".75rem",
+              }}
+              onClick={() => navigate("/signup")}
+              disabled={loading}
+            >
+              Create Account
+            </button>
+          </form>
+
+          <div className="divider">
+            <span>or</span>
+          </div>
+
+          <button
+            type="button"
+            className="google-btn"
+            disabled
+            title="Google authentication is not configured yet"
+          >
+            <span>Continue with Google</span>
+          </button>
         </div>
-    );
+
+        <div
+          style={{
+            height: "auto",
+
+            width: "auto",
+
+            overflow: "hidden",
+          }}
+        >
+          <img
+            src="/images/bg2.jpg"
+            style={{
+              width: "50rem",
+            }}
+            alt="Login"
+          />
+        </div>
+      </div>
+    </div>
+  );
 }

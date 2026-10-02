@@ -13,14 +13,54 @@ const PORT = Number(process.env.PORT || 3000);
 const INTERNAL_HOST = process.env.INTERNAL_HOST || "127.0.0.1";
 
 const routes = [
-  { prefix: "/api/auth", target: Number(process.env.AUTH_PORT || 3010), strip: "/api/auth" },
-  { prefix: "/api/holdings", target: Number(process.env.HOLDINGS_PORT || 3006), strip: "/api/holdings" },
-  { prefix: "/api/watchlist", target: Number(process.env.WATCHLIST_PORT || 3008), strip: "/api/watchlist" },
-  { prefix: "/api/orders", target: Number(process.env.ORDERS_PORT || 3007), strip: "/api/orders" },
-  { prefix: "/api/stocks", target: Number(process.env.STOCKS_PORT || 3001), strip: "/api/stocks" },
-  { prefix: "/api/detail-stock", target: Number(process.env.DETAIL_STOCK_PORT || 3021), strip: "" },
-  { prefix: "/api/mutual-funds", target: Number(process.env.MF_PORT || 5000), strip: "" },
-  { prefix: "/api/company-reviews", target: Number(process.env.AUTH_PORT || 3010), strip: "" },
+  {
+    prefix: "/api/auth",
+    target: Number(process.env.AUTH_PORT || 3010),
+    strip: "/api/auth",
+    rootPath: "/",
+  },
+
+  {
+    prefix: "/api/holdings",
+    target: Number(process.env.HOLDINGS_PORT || 3006),
+    strip: "/api/holdings",
+    rootPath: "/holdings",
+  },
+
+  {
+    prefix: "/api/watchlist",
+    target: Number(process.env.WATCHLIST_PORT || 3008),
+    strip: "/api/watchlist",
+    rootPath: "/watchlist",
+  },
+
+  {
+    prefix: "/api/orders",
+    target: Number(process.env.ORDERS_PORT || 3007),
+    strip: "/api/orders",
+    rootPath: "/orders",
+  },
+
+  {
+    prefix: "/api/stocks",
+    target: Number(process.env.STOCKS_PORT || 3001),
+    strip: "/api/stocks",
+    rootPath: "/",
+  },
+
+  {
+    prefix: "/api/detail-stock",
+    target: Number(process.env.DETAIL_STOCK_PORT || 3021),
+    strip: "",
+    rootPath: "/",
+  },
+
+  {
+    prefix: "/api/mutual-funds",
+    target: Number(process.env.MF_PORT || 5000),
+    strip: "",
+    rootPath: "/",
+  },
 ];
 
 const frontendOrigins = String(
@@ -56,35 +96,67 @@ function rewritePath(originalUrl, route) {
   return rewritten.startsWith("/") ? rewritten : `/${rewritten}`;
 }
 
-function proxyRequest(req, res, route) {
-  const targetPath = rewritePath(req.url, route);
-  const headers = { ...req.headers, host: `${INTERNAL_HOST}:${route.target}` };
-  delete headers["content-length"];
+// function proxyRequest(req, res, route) {
+//   const targetPath = rewritePath(req.url, route);
+//   const headers = { ...req.headers, host: `${INTERNAL_HOST}:${route.target}` };
+//   delete headers["content-length"];
 
-  const proxyReq = http.request({
-    hostname: INTERNAL_HOST,
-    port: route.target,
-    method: req.method,
-    path: targetPath,
-    headers,
-  }, (proxyRes) => {
-    res.statusCode = proxyRes.statusCode || 502;
-    for (const [key, value] of Object.entries(proxyRes.headers)) {
-      if (value !== undefined) res.setHeader(key, value);
+//   const proxyReq = http.request({
+//     hostname: INTERNAL_HOST,
+//     port: route.target,
+//     method: req.method,
+//     path: targetPath,
+//     headers,
+//   }, (proxyRes) => {
+//     res.statusCode = proxyRes.statusCode || 502;
+//     for (const [key, value] of Object.entries(proxyRes.headers)) {
+//       if (value !== undefined) res.setHeader(key, value);
+//     }
+//     proxyRes.pipe(res);
+//   });
+
+//   proxyReq.setTimeout(30000, () => {
+//     proxyReq.destroy(new Error("Internal service timeout"));
+//   });
+
+//   proxyReq.on("error", (error) => {
+//     if (res.headersSent) return res.destroy(error);
+//     res.status(502).json({ success: false, message: "Backend service unavailable" });
+//   });
+
+//   req.pipe(proxyReq);
+// }
+
+
+
+
+function rewritePath(originalUrl, route) {
+  const pathname = originalUrl.split("?")[0];
+
+  // Exact public prefix:
+  // /api/holdings -> /holdings
+  // /api/watchlist -> /watchlist
+  // /api/orders -> /orders
+  if (pathname === route.prefix) {
+    const queryIndex = originalUrl.indexOf("?");
+
+    if (queryIndex >= 0) {
+      return `${route.rootPath}${originalUrl.slice(queryIndex)}`;
     }
-    proxyRes.pipe(res);
-  });
 
-  proxyReq.setTimeout(30000, () => {
-    proxyReq.destroy(new Error("Internal service timeout"));
-  });
+    return route.rootPath;
+  }
 
-  proxyReq.on("error", (error) => {
-    if (res.headersSent) return res.destroy(error);
-    res.status(502).json({ success: false, message: "Backend service unavailable" });
-  });
+  if (!route.strip) {
+    return originalUrl;
+  }
 
-  req.pipe(proxyReq);
+  const rewritten =
+    originalUrl.slice(route.strip.length) || "/";
+
+  return rewritten.startsWith("/")
+    ? rewritten
+    : `/${rewritten}`;
 }
 
 app.use((req, res, next) => {
