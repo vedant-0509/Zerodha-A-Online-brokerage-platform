@@ -6,7 +6,6 @@ const { calculateAllRatings } = require('./mfRatingRiskService');
 const {
   getSyncStatus,
   hasTodaysSyncSucceeded,
-  hasAttemptedToday,
   markRunning,
   markPending,
   markSuccess,
@@ -23,9 +22,9 @@ const LOCK_TIMEOUT_SECONDS = Math.max(
 );
 
 const MF_SYNC_CRON = process.env.MF_SYNC_CRON || '15 23 * * 1-5';
+const MF_SYNC_STARTUP_RECOVERY =
+  String(process.env.MF_SYNC_STARTUP_RECOVERY || 'true').toLowerCase() !== 'false';
 const MF_SYNC_TIMEZONE = process.env.MF_SYNC_TIMEZONE || 'Asia/Kolkata';
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const IS_PRODUCTION = NODE_ENV === 'production';
 
 let schedulerTask = null;
 
@@ -90,26 +89,24 @@ async function runPipeline(reason, { startup = false, scheduled = false } = {}) 
     }
 
     /*
-     * Development startup:
-     * one complete attempt per day, regardless of when the server is started.
-     * Repeated starts the same day are blocked by last_attempt_date.
+     * Phase 5 startup recovery:
      *
-     * Production startup:
-     * before the normal 23:15 slot, do not perform the expensive daily job.
-     * If production starts after 23:15 and today's job is missing, repair it.
+     * - Normal scheduled run: 23:15 Asia/Kolkata on weekdays.
+     * - Restart before 23:15: wait; do not call the provider early.
+     * - Restart after 23:15: repair the day only when today's complete sync
+     *   has not succeeded.
+     * - FAILED/RUNNING/PENDING states are recoverable. SUCCESS is the only
+     *   state that suppresses another daily provider call.
      */
-    if (startup && IS_PRODUCTION && !isPastScheduledTimeToday()) {
-      console.log('[MF SYNC] production startup: waiting for scheduled daily run.');
+    if (startup && MF_SYNC_STARTUP_RECOVERY && !isPastScheduledTimeToday()) {
+      console.log('[MF SYNC] startup: before scheduled time; waiting for 23:15 run.');
       return { success: true, skipped: true, reason: 'waiting-for-schedule' };
     }
 
-    // if (startup) {
-    //   const attemptedToday = await hasAttemptedToday(DAILY_SYNC_NAME, connection);
-    //   if (attemptedToday) {
-    //     console.log('[MF SYNC] startup: a daily attempt already happened today. No second provider call.');
-    //     return { success: true, skipped: true, reason: 'already-attempted-today' };
-    //   }
-    // }
+    if (startup && !MF_SYNC_STARTUP_RECOVERY) {
+      console.log('[MF SYNC] startup recovery disabled by configuration.');
+      return { success: true, skipped: true, reason: 'startup-recovery-disabled' };
+    }
 
     await markRunning(DAILY_SYNC_NAME, connection);
     await markRunning(NAV_SYNC_NAME, connection);
@@ -160,19 +157,32 @@ async function runPipeline(reason, { startup = false, scheduled = false } = {}) 
      * Returns/risk uses the current DB NAV snapshot and only recalculates
      * schemes whose returns_for_nav_date differs from nav_date.
      */
+    await markRunning('mf_returns_sync', connection);
     console.log(`[MF SYNC] ${reason}: calculating returns and risk.`);
     const returnsResult = await syncAllReturns();
 
-    if (!returnsResult.success || returnsResult.failed > 0) {
+    if (!returnsResult.success || returnsResult.skipped || returnsResult.failed > 0) {
       throw new Error(
         `Returns/risk stage failed: processed=${returnsResult.processed}, failed=${returnsResult.failed}`
       );
     }
 
+    await markSuccess(
+      'mf_returns_sync',
+      {
+        processed: returnsResult.processed,
+        updated: returnsResult.updated,
+        failed: returnsResult.failed,
+      },
+      latestActiveNavDate,
+      connection
+    );
+
     /*
      * Ratings use already stored returns/risk. They do not perform another
      * provider history sweep.
      */
+    await markRunning('mf_rating_sync', connection);
     console.log(`[MF SYNC] ${reason}: calculating ratings from DB values.`);
     const ratingResult = await calculateAllRatings(connection);
 
@@ -181,6 +191,17 @@ async function runPipeline(reason, { startup = false, scheduled = false } = {}) 
         `Rating stage failed: processed=${ratingResult?.processed || 0}, failed=${ratingResult?.failed || 0}`
       );
     }
+
+    await markSuccess(
+      'mf_rating_sync',
+      {
+        processed: Number(ratingResult?.processed || 0),
+        updated: Number(ratingResult?.updated || 0),
+        failed: Number(ratingResult?.failed || 0),
+      },
+      latestActiveNavDate,
+      connection
+    );
 
     const [latestRows] = await connection.query(
       `SELECT MAX(nav_date) AS latest_nav_date
@@ -224,6 +245,8 @@ async function runPipeline(reason, { startup = false, scheduled = false } = {}) 
       if (connection) {
         await markFailed(DAILY_SYNC_NAME, error.message, {}, connection);
         await markFailed(NAV_SYNC_NAME, error.message, {}, connection);
+        await markFailed('mf_returns_sync', error.message, {}, connection);
+        await markFailed('mf_rating_sync', error.message, {}, connection);
       }
     } catch (statusError) {
       console.error(`[MF SYNC] Could not record sync failure: ${statusError.message}`);

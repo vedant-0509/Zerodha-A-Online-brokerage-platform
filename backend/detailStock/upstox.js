@@ -869,6 +869,16 @@ function parseMarketTick(instrumentKey, feed) {
 ========================================================= */
 
 async function placeOrder(order) {
+  const error = new Error("Real broker order placement is disabled. This application is simulation-only.");
+  error.code = "REAL_ORDER_DISABLED";
+  error.httpStatus = 503;
+  throw error;
+
+  /*
+   * Intentionally unreachable legacy broker-order code is retained below
+   * for reference, but this guard makes accidental real order placement
+   * impossible from the running application.
+   */
   if (!order) {
     throw new Error("Order payload is required");
   }

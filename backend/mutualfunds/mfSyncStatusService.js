@@ -25,6 +25,29 @@ async function getSyncStatus(syncName, connection = pool) {
   return rows[0] || null;
 }
 
+async function getAllSyncStatuses(connection = pool) {
+  const [rows] = await connection.query(
+    `SELECT
+       id,
+       sync_name,
+       last_success_date,
+       last_attempt_date,
+       last_processed_nav_date,
+       last_success_at,
+       status,
+       records_processed,
+       records_updated,
+       records_failed,
+       error_message,
+       created_at,
+       updated_at
+     FROM mf_sync_status
+     ORDER BY sync_name ASC`
+  );
+
+  return rows;
+}
+
 async function hasTodaysSyncSucceeded(syncName, connection = pool) {
   const [rows] = await connection.query(
     `SELECT 1
@@ -152,6 +175,7 @@ async function markFailed(syncName, errorMessage, counts = {}, connection = pool
 
 module.exports = {
   getSyncStatus,
+  getAllSyncStatuses,
   hasTodaysSyncSucceeded,
   hasAttemptedToday,
   markRunning,

@@ -113,6 +113,8 @@ export default function StockDashboard({
   const [isWatchlisted, setIsWatchlisted] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMessage, setOrderMessage] = useState("");
+  const orderIdempotencyKeyRef = useRef(null);
+  const orderFingerprintRef = useRef("");
 
   useEffect(() => {
     chartRangeRef.current = chartRange;
@@ -1708,19 +1710,50 @@ export default function StockDashboard({
     try {
       const token = localStorage.getItem("token");
 
+      const normalizedQuantity = numberValue(quantity);
+      const normalizedOrderType =
+        numberValue(priceLimit, 0) > 0 ? "LIMIT" : "MARKET";
+      const normalizedLimitPrice =
+        normalizedOrderType === "LIMIT"
+          ? numberValue(priceLimit)
+          : null;
+
+      const fingerprint = JSON.stringify({
+        instrumentKey,
+        transactionType: orderType,
+        quantity: normalizedQuantity,
+        orderType: normalizedOrderType,
+        limitPrice: normalizedLimitPrice,
+        product: "CNC",
+      });
+
+      if (orderFingerprintRef.current !== fingerprint) {
+        orderFingerprintRef.current = fingerprint;
+        orderIdempotencyKeyRef.current =
+          window.crypto?.randomUUID?.() ||
+          `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
+
+      const idempotencyKey = orderIdempotencyKeyRef.current;
+
       const payload = {
         symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
         instrumentKey,
         transactionType: orderType,
-        quantity: numberValue(quantity),
-        price: effectivePrice,
-        orderType: numberValue(priceLimit, 0) > 0 ? "LIMIT" : "MARKET",
+        quantity: normalizedQuantity,
+        ...(normalizedOrderType === "LIMIT"
+          ? { limitPrice: normalizedLimitPrice }
+          : {}),
+        orderType: normalizedOrderType,
         product: "CNC",
       };
 
       const response = await axios.post(ENDPOINTS.order(), payload, {
         timeout: 10000,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Idempotency-Key": idempotencyKey,
+        },
       });
 
       if (response.data?.success) {
@@ -1733,6 +1766,8 @@ export default function StockDashboard({
         );
         setQuantity("");
         setPriceLimit("");
+        orderIdempotencyKeyRef.current = null;
+        orderFingerprintRef.current = "";
       } else {
         setOrderMessage(
           response.data?.message || "Order placement request failed.",

@@ -1,5 +1,4 @@
 import React from "react";
-import ShareholdingPattern from "./ShareholdingPattern.jsx";
 import StockDashboard from "./StockDashboard.jsx";
 
 export default function DetailStockWrapper() {

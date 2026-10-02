@@ -165,6 +165,13 @@ async function syncLatestNAV() {
       try {
         const isNewDate = !existingDate || fund.navDate > existingDate;
         const isSameDate = existingDate && fund.navDate === existingDate;
+        const existingNav = Number(existing?.current_nav);
+        const navChangedSameDate =
+          isSameDate &&
+          Number.isFinite(existingNav) &&
+          Math.abs(existingNav - fund.nav) > 0.0000001;
+        const shouldRecalculateDerivedMetrics =
+          isNewDate || navChangedSameDate;
 
         const [result] = await connection.query(
           `UPDATE mf_schemes
@@ -186,14 +193,44 @@ async function syncLatestNAV() {
              END,
 
              return_1d = CASE
-               WHEN ? = 1 AND current_nav IS NOT NULL AND current_nav > 0
-               THEN ROUND(((? - current_nav) / current_nav) * 100, 4)
+               WHEN ? = 1 AND previous_nav IS NOT NULL AND previous_nav > 0
+               THEN ROUND(((? - previous_nav) / previous_nav) * 100, 4)
                ELSE return_1d
              END,
 
              return_1d_nav_date = CASE
                WHEN ? = 1 THEN ?
                ELSE return_1d_nav_date
+             END,
+
+             returns_for_nav_date = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE returns_for_nav_date
+             END,
+
+             return_1y_nav_date = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE return_1y_nav_date
+             END,
+
+             return_3y_nav_date = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE return_3y_nav_date
+             END,
+
+             return_5y_nav_date = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE return_5y_nav_date
+             END,
+
+             risk_source = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE risk_source
+             END,
+
+             risk_updated_at = CASE
+               WHEN ? = 1 THEN NULL
+               ELSE risk_updated_at
              END,
 
              current_nav = ?,
@@ -213,10 +250,16 @@ async function syncLatestNAV() {
             fund.isinDivReinvestment,
             isNewDate ? 1 : 0,
             isNewDate ? 1 : 0,
-            isNewDate ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
             fund.nav,
-            isNewDate ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
             fund.navDate,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
+            shouldRecalculateDerivedMetrics ? 1 : 0,
             fund.nav,
             fund.navDate,
             fund.nav,
@@ -229,7 +272,7 @@ async function syncLatestNAV() {
         else unchanged += 1;
 
         if (isNewDate) newNavDays += 1;
-        else if (isSameDate) sameNavDays += 1;
+        else if (isSameDate && !navChangedSameDate) sameNavDays += 1;
       } catch (error) {
         failed += 1;
         console.error(`[MF NAV] ${fund.schemeCode}: ${error.message}`);
