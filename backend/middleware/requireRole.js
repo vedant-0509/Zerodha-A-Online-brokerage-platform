@@ -1,16 +1,49 @@
 function requireRole(...allowedRoles) {
-    const roles = allowedRoles.flat().map((role) => String(role).trim().toUpperCase()).filter(Boolean);
-    if (roles.length === 0) throw new Error("requireRole() requires at least one role");
+    const roles = allowedRoles
+        .flat()
+        .map((role) =>
+            String(role)
+                .trim()
+                .toUpperCase()
+        )
+        .filter(Boolean);
 
-    return (req, res, next) => {
+    if (roles.length === 0) {
+        throw new Error(
+            "requireRole() requires at least one role"
+        );
+    }
+
+    return function roleMiddleware(req, res, next) {
         if (!req.userId) {
-            return res.status(401).json({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "Authentication required" } });
+            return res.status(401).json({
+                success: false,
+                error: {
+                    code: "AUTHENTICATION_REQUIRED",
+                    message: "Authentication required",
+                },
+            });
         }
 
-        const role = String(req.userRole || req.user?.role || "USER").trim().toUpperCase();
-        if (!roles.includes(role)) {
-            return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to perform this action." } });
+        const userRole = String(
+            req.userRole ||
+                req.user?.role ||
+                "USER"
+        )
+            .trim()
+            .toUpperCase();
+
+        if (!roles.includes(userRole)) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: "FORBIDDEN",
+                    message:
+                        "You do not have permission to perform this action.",
+                },
+            });
         }
+
         return next();
     };
 }

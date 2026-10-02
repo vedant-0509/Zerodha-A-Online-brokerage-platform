@@ -1,61 +1,143 @@
 // import axios from "axios";
 
 // const API_URL = (
-//   process.env.REACT_APP_API_URL ||
-//   process.env.REACT_APP_API_BASE_URL ||
-//   ""
+//     process.env.REACT_APP_API_URL ||
+//     "http://localhost:3000/api"
 // ).replace(/\/$/, "");
 
-// export const api = axios.create({
-//   baseURL: API_URL,
-//   timeout: Number(process.env.REACT_APP_REQUEST_TIMEOUT_MS || 15000),
-//   headers: {
-//     "Content-Type": "application/json",
-//   },
+// const api = axios.create({
+//     baseURL: API_URL,
+
+//     timeout: Number(
+//         process.env.REACT_APP_REQUEST_TIMEOUT_MS ||
+//         15000
+//     ),
+
+//     headers: {
+//         "Content-Type":
+//             "application/json",
+//     },
 // });
 
-// api.interceptors.request.use((config) => {
-//   const token = localStorage.getItem("token");
+// /*
+// |--------------------------------------------------------------------------
+// | REQUEST
+// |--------------------------------------------------------------------------
+// */
 
-//   if (token) {
-//     config.headers.Authorization = `Bearer ${token}`;
-//   }
+// api.interceptors.request.use(
+//     (config) => {
+//         const token =
+//             localStorage.getItem(
+//                 "token"
+//             );
 
-//   return config;
-// });
+//         if (token) {
+//             config.headers =
+//                 config.headers || {};
+
+//             config.headers.Authorization =
+//                 `Bearer ${token}`;
+//         }
+
+//         return config;
+//     },
+
+//     (error) =>
+//         Promise.reject(error)
+// );
+
+// /*
+// |--------------------------------------------------------------------------
+// | RESPONSE
+// |--------------------------------------------------------------------------
+// */
 
 // api.interceptors.response.use(
-//   (response) => response,
-//   (error) => {
-//     const status = error.response?.status;
+//     (response) =>
+//         response,
 
-//     if (status === 401) {
-//       localStorage.removeItem("token");
-//       localStorage.removeItem("user");
-//       window.dispatchEvent(new Event("auth-expired"));
+//     (error) => {
+//         const status =
+//             error.response?.status;
+
+//         const url =
+//             String(
+//                 error.config?.url || ""
+//             );
+
+//         const isAuthAttempt =
+//             url.endsWith("/login") ||
+//             url.endsWith("/signup");
+
+//         /*
+//         | 401
+//         */
+
+//         if (
+//             status === 401 &&
+//             !isAuthAttempt
+//         ) {
+//             localStorage.removeItem(
+//                 "token"
+//             );
+
+//             localStorage.removeItem(
+//                 "user"
+//             );
+
+//             window.dispatchEvent(
+//                 new Event(
+//                     "auth-expired"
+//                 )
+//             );
+//         }
+
+//         /*
+//         | 403
+//         */
+
+//         if (status === 403) {
+//             window.dispatchEvent(
+//                 new CustomEvent(
+//                     "api-forbidden",
+//                     {
+//                         detail:
+//                             error.response
+//                                 ?.data,
+//                     }
+//                 )
+//             );
+//         }
+
+//         /*
+//         | 429
+//         */
+
+//         if (status === 429) {
+//             window.dispatchEvent(
+//                 new CustomEvent(
+//                     "api-rate-limited",
+//                     {
+//                         detail:
+//                             error.response
+//                                 ?.data,
+//                     }
+//                 )
+//             );
+//         }
+
+//         return Promise.reject(
+//             error
+//         );
 //     }
-
-//     if (status === 403) {
-//       window.dispatchEvent(
-//         new CustomEvent("api-forbidden", {
-//           detail: error.response?.data,
-//         })
-//       );
-//     }
-
-//     if (status === 429) {
-//       window.dispatchEvent(
-//         new CustomEvent("api-rate-limited", {
-//           detail: error.response?.data,
-//         })
-//       );
-//     }
-
-//     return Promise.reject(error);
-//   }
 // );
 
 // export default api;
+
+// export { api };
+
+
 
 
 
@@ -75,39 +157,26 @@ import axios from "axios";
 
 const API_URL = (
   process.env.REACT_APP_API_URL ||
-  "http://localhost:3000/api/auth"
+  "http://localhost:3000/api"
 ).replace(/\/$/, "");
 
 const api = axios.create({
   baseURL: API_URL,
-
   timeout: Number(
     process.env.REACT_APP_REQUEST_TIMEOUT_MS ||
     15000
   ),
-
   headers: {
-    "Content-Type":
-      "application/json",
+    "Content-Type": "application/json",
   },
 });
 
-/*
-|--------------------------------------------------------------------------
-| REQUEST INTERCEPTOR
-|--------------------------------------------------------------------------
-*/
-
 api.interceptors.request.use(
   (config) => {
-
     const token =
-      localStorage.getItem(
-        "token"
-      );
+      localStorage.getItem("token");
 
     if (token) {
-
       config.headers =
         config.headers || {};
 
@@ -117,24 +186,13 @@ api.interceptors.request.use(
 
     return config;
   },
-
   (error) =>
     Promise.reject(error)
 );
 
-/*
-|--------------------------------------------------------------------------
-| RESPONSE INTERCEPTOR
-|--------------------------------------------------------------------------
-*/
-
 api.interceptors.response.use(
-
-  (response) =>
-    response,
-
+  (response) => response,
   (error) => {
-
     const status =
       error.response?.status;
 
@@ -143,49 +201,23 @@ api.interceptors.response.use(
         error.config?.url || ""
       );
 
-    /*
-    Do NOT treat failed login/signup as
-    session expiry.
-    */
-
     const isAuthAttempt =
       url.endsWith("/login") ||
       url.endsWith("/signup");
-
-    /*
-    |--------------------------------------------------------------------------
-    | 401
-    |--------------------------------------------------------------------------
-    */
 
     if (
       status === 401 &&
       !isAuthAttempt
     ) {
-
-      localStorage.removeItem(
-        "token"
-      );
-
-      localStorage.removeItem(
-        "user"
-      );
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
 
       window.dispatchEvent(
-        new Event(
-          "auth-expired"
-        )
+        new Event("auth-expired")
       );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | 403
-    |--------------------------------------------------------------------------
-    */
-
     if (status === 403) {
-
       window.dispatchEvent(
         new CustomEvent(
           "api-forbidden",
@@ -197,14 +229,7 @@ api.interceptors.response.use(
       );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | 429
-    |--------------------------------------------------------------------------
-    */
-
     if (status === 429) {
-
       window.dispatchEvent(
         new CustomEvent(
           "api-rate-limited",
@@ -216,14 +241,9 @@ api.interceptors.response.use(
       );
     }
 
-    return Promise.reject(
-      error
-    );
+    return Promise.reject(error);
   }
 );
 
 export default api;
-
-export {
-  api,
-};
+export { api };

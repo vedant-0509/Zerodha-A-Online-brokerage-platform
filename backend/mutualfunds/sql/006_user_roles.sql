@@ -1,5 +1,3 @@
--- Phase 2: USER / ADMIN authorization role
--- Existing users remain USER unless explicitly promoted.
 
 SET @db_name = DATABASE();
 
@@ -24,6 +22,3 @@ DEALLOCATE PREPARE stmt;
 UPDATE users
 SET role = 'USER'
 WHERE role IS NULL OR role = '';
-
--- Promote the intended administrator manually, for example:
--- UPDATE users SET role = 'ADMIN' WHERE email = 'admin@example.com';
