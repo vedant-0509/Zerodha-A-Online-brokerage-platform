@@ -2,7 +2,7 @@
 // // import { useNavigate } from "react-router-dom";
 // // import axios from "axios";
 
-// // const API = "http://localhost:3001";
+// // const API = "/api/stocks";
 
 // // const POPULAR_FUNDS = [
 // //     {
@@ -258,9 +258,9 @@
 // import axios from "axios";
 // import { useNavigate } from "react-router-dom";
 
-// const API = "http://localhost:5000/api/mutual-funds";
+// const API = "/api/mutual-funds";
 
-// const AUTH_API = "http://localhost:3010";
+// const AUTH_API = "/api/auth";
 
 // const INITIAL_LIMIT = 8;
 
@@ -809,7 +809,7 @@
 // import { useNavigate } from "react-router-dom";
 // import axios from "axios";
 
-// const API = "http://localhost:3001";
+// const API = "/api/stocks";
 
 // const POPULAR_FUNDS = [
 //     {
@@ -1065,9 +1065,9 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-const API = "http://localhost:5000/api/mutual-funds";
+const API = "/api/mutual-funds";
 
-const AUTH_API = "http://localhost:3010";
+const AUTH_API = "/api/auth";
 
 const INITIAL_LIMIT = 8;
 

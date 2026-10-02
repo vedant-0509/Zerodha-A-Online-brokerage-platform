@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const DETAIL_API = "http://localhost:3011";
+const DETAIL_API = window.location.origin;
 
 const detailStockSocket = io(DETAIL_API, {
   transports: ["websocket", "polling"],

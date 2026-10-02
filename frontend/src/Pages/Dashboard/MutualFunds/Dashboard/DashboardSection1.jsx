@@ -1,8 +1,8 @@
 // import React, { useEffect, useState } from "react";
 
-// const API_BASE = "http://localhost:5000";
+// const API_BASE = "";
 
-// const AUTH_BASE = "http://localhost:3010";
+// const AUTH_BASE = "/api/auth";
 
 // /*
 // |--------------------------------------------------------------------------
@@ -1300,8 +1300,8 @@
 
 import React, { useEffect, useState } from "react";
 
-const API_BASE = "http://localhost:5000";
-const AUTH_BASE = "http://localhost:3010";
+const API_BASE = "";
+const AUTH_BASE = "/api/auth";
 
 /*
 |--------------------------------------------------------------------------

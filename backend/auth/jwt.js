@@ -16,16 +16,23 @@ const JWT_AUDIENCE =
 |--------------------------------------------------------------------------
 */
 
-function signAccessToken({ userId }) {
+function signAccessToken({ userId, role = "USER" }) {
     if (!userId) {
         throw new Error(
             "userId is required to create JWT"
         );
     }
 
+    const normalizedRole = String(role || "USER").trim().toUpperCase();
+
+    if (!["USER", "ADMIN"].includes(normalizedRole)) {
+        throw new Error("Invalid user role");
+    }
+
     return jwt.sign(
         {
             userId: String(userId),
+            role: normalizedRole,
         },
 
         env.jwtSecret,

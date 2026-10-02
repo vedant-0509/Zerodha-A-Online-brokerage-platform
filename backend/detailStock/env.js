@@ -26,7 +26,7 @@ function listValue(value) {
 }
 
 module.exports = {
-  port: numberValue(process.env.PORT, 3011),
+  port: numberValue(process.env.PORT, 3021),
 
   nodeEnv: process.env.NODE_ENV || "development",
 

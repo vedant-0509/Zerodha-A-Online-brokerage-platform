@@ -16,11 +16,11 @@
 // | app.use('/api/mutual-funds', mutualFundRoutes);
 // |
 // | Server:
-// | http://localhost:5000
+// | 
 // |
 // */
 
-// const API_BASE = process.env.REACT_APP_MF_API_URL || "http://localhost:5000";
+// const API_BASE = process.env.REACT_APP_MF_API_URL || "";
 
 // const MF_API_PATH = "/api/mutual-funds";
 
@@ -555,7 +555,7 @@
 //       throw new Error("Please login first.");
 //     }
 
-//     const response = await axios.get("http://localhost:3010/me", {
+//     const response = await axios.get("/api/auth/me", {
 //       headers: {
 //         Authorization: `Bearer ${token}`,
 //       },
@@ -2248,11 +2248,11 @@ import axios from "axios";
 | app.use('/api/mutual-funds', mutualFundRoutes);
 |
 | Server:
-| http://localhost:5000
+| 
 |
 */
 
-const API_BASE = process.env.REACT_APP_MF_API_URL || "http://localhost:5000";
+const API_BASE = process.env.REACT_APP_MF_API_URL || "";
 
 const MF_API_PATH = "/api/mutual-funds";
 
