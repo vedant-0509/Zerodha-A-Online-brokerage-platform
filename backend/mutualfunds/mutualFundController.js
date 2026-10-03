@@ -2,7 +2,7 @@ const {
   connectMongoDB,
   getMongoDB,
   getMongoClient,
-} = require("../backend/config/mongodb");
+} = require("../config/mongodb");
 
 const { syncLatestNAV, syncAllReturns } = require("./mfSyncService");
 

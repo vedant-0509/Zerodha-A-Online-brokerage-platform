@@ -3,7 +3,7 @@ const cron = require("node-cron");
 const {
   connectMongoDB,
   getMongoDB,
-} = require("../backend/config/mongodb");
+} = require("../config/mongodb");
 
 const {
   syncLatestNAV,
