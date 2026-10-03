@@ -1,48 +1,79 @@
-const mysql = require("mysql2/promise");
+const path = require("path");
 
-const db = mysql.createPool({
-    host: "localhost",
-    user: "root",
-    password: "root",
-    database: "zerodha",
+require("dotenv").config({
+    path: path.join(__dirname, "../.env"),
 });
+
+const {
+    getMongoDB,
+} = require("../config/mongodb");
+
+function getCollection() {
+    return getMongoDB().collection("marketUpdateLog");
+}
+
+
+/* =========================================================
+   CHECK WHETHER TODAY'S UPDATE ALREADY HAPPENED
+========================================================= */
 
 async function alreadyUpdatedToday() {
 
-    const today = new Date().toLocaleDateString("en-CA", {
-        timeZone: "Asia/Kolkata",
+    const collection = getCollection();
+
+    const today = new Date();
+
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const record = await collection.findOne({
+        lastRunDate: {
+            $gte: startOfDay,
+            $lte: endOfDay,
+        },
     });
 
-    const [rows] = await db.execute(
-        `
-        SELECT *
-        FROM market_update_log
-        WHERE last_run_date = ?
-        `,
-        [today]
-    );
-
-    return rows.length > 0;
+    return !!record;
 }
+
+
+/* =========================================================
+   SAVE UPDATE LOG
+========================================================= */
 
 async function saveUpdateLog() {
 
-    const today = new Date().toLocaleDateString("en-CA", {
-        timeZone: "Asia/Kolkata",
-    });
+    const collection = getCollection();
 
-    await db.execute(
-        `
-        INSERT INTO market_update_log(last_run_date)
-        VALUES(?)
-        ON DUPLICATE KEY UPDATE
-        last_run_date = VALUES(last_run_date)
-        `,
-        [today]
+    const now = new Date();
+
+    await collection.updateOne(
+        {
+            logType: "market-close",
+        },
+        {
+            $set: {
+                lastRunDate: now,
+                updatedAt: now,
+            },
+            $setOnInsert: {
+                logType: "market-close",
+                createdAt: now,
+            },
+        },
+        {
+            upsert: true,
+        }
     );
+
+    console.log("Market update log saved.");
 }
+
 
 module.exports = {
     alreadyUpdatedToday,
-    saveUpdateLog
+    saveUpdateLog,
 };

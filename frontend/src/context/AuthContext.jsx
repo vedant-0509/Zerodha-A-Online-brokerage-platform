@@ -11,49 +11,72 @@ import api from "../api/client";
 
 const AuthContext = createContext(null);
 
+
 const AUTH_STATUS = {
   LOADING: "loading",
   AUTHENTICATED: "authenticated",
   UNAUTHENTICATED: "unauthenticated",
 };
 
+
+/*
+|--------------------------------------------------------------------------
+| SESSION HELPERS
+|--------------------------------------------------------------------------
+*/
+
 function clearStoredSession() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
 }
 
+
 function saveStoredUser(user) {
-  if (user) {
-    localStorage.setItem(
-      "user",
-      JSON.stringify(user)
-    );
+  if (!user) {
+    return;
   }
+
+  localStorage.setItem(
+    "user",
+    JSON.stringify(user)
+  );
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| AUTH PROVIDER
+|--------------------------------------------------------------------------
+*/
+
 export function AuthProvider({ children }) {
+
   const [user, setUser] = useState(null);
 
-  const [status, setStatus] =
-    useState(AUTH_STATUS.LOADING);
+  const [status, setStatus] = useState(
+    AUTH_STATUS.LOADING
+  );
+
 
   /*
   |--------------------------------------------------------------------------
-  | GET CURRENT AUTHENTICATED USER
+  | GET CURRENT USER
   |--------------------------------------------------------------------------
   */
 
-  const fetchCurrentUser =
-    useCallback(async () => {
-      const response =
-        await api.get("/auth/me");
+  const fetchCurrentUser = useCallback(
+    async () => {
+
+      const response = await api.get(
+        "/auth/me"
+      );
 
       const currentUser =
         response.data?.user;
 
       if (!currentUser) {
         throw new Error(
-          "Invalid /me response"
+          "Invalid /me response."
         );
       }
 
@@ -66,7 +89,11 @@ export function AuthProvider({ children }) {
       );
 
       return currentUser;
-    }, []);
+    },
+
+    []
+  );
+
 
   /*
   |--------------------------------------------------------------------------
@@ -74,12 +101,14 @@ export function AuthProvider({ children }) {
   |--------------------------------------------------------------------------
   */
 
-  const loadSession =
-    useCallback(async () => {
+  const loadSession = useCallback(
+    async () => {
+
       const token =
         localStorage.getItem("token");
 
       if (!token) {
+
         setUser(null);
 
         setStatus(
@@ -89,9 +118,13 @@ export function AuthProvider({ children }) {
         return null;
       }
 
+
       try {
+
         return await fetchCurrentUser();
+
       } catch (error) {
+
         clearStoredSession();
 
         setUser(null);
@@ -102,7 +135,11 @@ export function AuthProvider({ children }) {
 
         return null;
       }
-    }, [fetchCurrentUser]);
+    },
+
+    [fetchCurrentUser]
+  );
+
 
   /*
   |--------------------------------------------------------------------------
@@ -111,89 +148,91 @@ export function AuthProvider({ children }) {
   */
 
   useEffect(() => {
-    let mounted = true;
 
-    const initialize =
-      async () => {
-        if (!mounted) {
-          return;
-        }
+    loadSession();
 
-        await loadSession();
-      };
-
-    initialize();
-
-    return () => {
-      mounted = false;
-    };
   }, [loadSession]);
+
 
   /*
   |--------------------------------------------------------------------------
-  | EXPIRED / INVALID SESSION
+  | AUTH EXPIRED EVENT
   |--------------------------------------------------------------------------
   */
 
   useEffect(() => {
-    const handleAuthExpired =
-      () => {
-        clearStoredSession();
 
-        setUser(null);
+    const handleAuthExpired = () => {
 
-        setStatus(
-          AUTH_STATUS.UNAUTHENTICATED
-        );
-      };
+      clearStoredSession();
+
+      setUser(null);
+
+      setStatus(
+        AUTH_STATUS.UNAUTHENTICATED
+      );
+    };
+
 
     window.addEventListener(
       "auth-expired",
       handleAuthExpired
     );
 
+
     return () => {
+
       window.removeEventListener(
         "auth-expired",
         handleAuthExpired
       );
     };
+
   }, []);
+
 
   /*
   |--------------------------------------------------------------------------
-  | MULTI-TAB LOGOUT
+  | MULTI TAB SESSION
   |--------------------------------------------------------------------------
   */
 
   useEffect(() => {
-    const handleStorage =
-      (event) => {
-        if (event.key !== "token") {
-          return;
-        }
 
-        if (!event.newValue) {
-          setUser(null);
+    const handleStorage = (event) => {
 
-          setStatus(
-            AUTH_STATUS.UNAUTHENTICATED
-          );
-        }
-      };
+      if (event.key !== "token") {
+        return;
+      }
+
+
+      if (!event.newValue) {
+
+        setUser(null);
+
+        setStatus(
+          AUTH_STATUS.UNAUTHENTICATED
+        );
+      }
+    };
+
 
     window.addEventListener(
       "storage",
       handleStorage
     );
 
+
     return () => {
+
       window.removeEventListener(
         "storage",
         handleStorage
       );
     };
+
   }, []);
+
 
   /*
   |--------------------------------------------------------------------------
@@ -201,105 +240,55 @@ export function AuthProvider({ children }) {
   |--------------------------------------------------------------------------
   */
 
-  const login =
-    useCallback(
-      async ({
-        email,
-        password,
-      }) => {
-        const response =
-          await api.post(
-            "/auth/login",
-            {
-              email,
-              password,
-            }
-          );
+  const login = useCallback(
+    async ({
+      email,
+      password,
+    }) => {
 
-        const token =
-          response.data?.token;
-
-        if (!token) {
-          throw new Error(
-            "Login response did not contain a token."
-          );
+      const response = await api.post(
+        "/auth/login",
+        {
+          email,
+          password,
         }
+      );
 
-        /*
-        Store token first.
-        The API interceptor then sends it to /me.
-        */
 
-        localStorage.setItem(
-          "token",
-          token
+      const token =
+        response.data?.token;
+
+
+      if (!token) {
+
+        throw new Error(
+          "Login response did not contain a token."
         );
+      }
 
-        try {
-          return await fetchCurrentUser();
-        } catch (error) {
-          clearStoredSession();
 
-          setUser(null);
+      /*
+      Store JWT
+      */
 
-          setStatus(
-            AUTH_STATUS.UNAUTHENTICATED
-          );
+      localStorage.setItem(
+        "token",
+        token
+      );
 
-          throw error;
-        }
-      },
-      [fetchCurrentUser]
-    );
 
-  /*
-  |--------------------------------------------------------------------------
-  | SIGNUP
-  |--------------------------------------------------------------------------
-  */
+      /*
+      Fetch authenticated user
+      */
 
-  const signup =
-    useCallback(
-      async (payload) => {
-        const response =
-          await api.post(
-            "/auth/signup",
-            payload
-          );
+      try {
 
-        return response.data;
-      },
-      []
-    );
+        const currentUser =
+          await fetchCurrentUser();
 
-  /*
-  |--------------------------------------------------------------------------
-  | LOGOUT
-  |--------------------------------------------------------------------------
-  */
+        return currentUser;
 
-  const logout =
-    useCallback(
-      async () => {
-        const token =
-          localStorage.getItem(
-            "token"
-          );
-
-        /*
-        Server logout is best effort.
-        Browser session is always cleared.
-        */
-
-        if (token) {
-          try {
-            await api.post(
-              "/logout"
-            );
-          } catch (_) {
-            // Local logout still succeeds.
-          }
-        }
+      } catch (error) {
 
         clearStoredSession();
 
@@ -308,9 +297,89 @@ export function AuthProvider({ children }) {
         setStatus(
           AUTH_STATUS.UNAUTHENTICATED
         );
-      },
-      []
-    );
+
+        throw error;
+      }
+    },
+
+    [fetchCurrentUser]
+  );
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | SIGNUP
+  |--------------------------------------------------------------------------
+  */
+
+  const signup = useCallback(
+    async (payload) => {
+
+      const response =
+        await api.post(
+          "/auth/signup",
+          payload
+        );
+
+      return response.data;
+    },
+
+    []
+  );
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOGOUT
+  |--------------------------------------------------------------------------
+  */
+
+  const logout = useCallback(
+    async () => {
+
+      const token =
+        localStorage.getItem("token");
+
+
+      /*
+      Server logout is best effort.
+      */
+
+      if (token) {
+
+        try {
+
+          await api.post(
+            "/auth/logout"
+          );
+
+        } catch (error) {
+
+          console.warn(
+            "Server logout failed:",
+            error?.response?.data ||
+              error.message
+          );
+        }
+      }
+
+
+      /*
+      Always clear local session.
+      */
+
+      clearStoredSession();
+
+      setUser(null);
+
+      setStatus(
+        AUTH_STATUS.UNAUTHENTICATED
+      );
+    },
+
+    []
+  );
+
 
   /*
   |--------------------------------------------------------------------------
@@ -318,43 +387,43 @@ export function AuthProvider({ children }) {
   |--------------------------------------------------------------------------
   */
 
-  const value =
-    useMemo(
-      () => ({
-        user,
+  const value = useMemo(
+    () => ({
+      user,
 
-        status,
+      status,
 
-        isLoading:
-          status ===
-          AUTH_STATUS.LOADING,
+      isLoading:
+        status === AUTH_STATUS.LOADING,
 
-        isAuthenticated:
-          status ===
-          AUTH_STATUS.AUTHENTICATED,
+      isAuthenticated:
+        status ===
+        AUTH_STATUS.AUTHENTICATED,
 
-        login,
+      login,
 
-        signup,
+      signup,
 
-        logout,
+      logout,
 
-        reloadSession:
-          loadSession,
-
-        refreshUser:
-          fetchCurrentUser,
-      }),
-      [
-        user,
-        status,
-        login,
-        signup,
-        logout,
+      reloadSession:
         loadSession,
+
+      refreshUser:
         fetchCurrentUser,
-      ]
-    );
+    }),
+
+    [
+      user,
+      status,
+      login,
+      signup,
+      logout,
+      loadSession,
+      fetchCurrentUser,
+    ]
+  );
+
 
   return (
     <AuthContext.Provider
@@ -365,21 +434,26 @@ export function AuthProvider({ children }) {
   );
 }
 
+
 /*
 |--------------------------------------------------------------------------
-| useAuth hook
+| useAuth
 |--------------------------------------------------------------------------
 */
 
 export function useAuth() {
+
   const context =
     useContext(AuthContext);
 
+
   if (!context) {
+
     throw new Error(
       "useAuth must be used inside AuthProvider"
     );
   }
+
 
   return context;
 }

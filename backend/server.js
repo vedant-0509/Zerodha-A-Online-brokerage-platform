@@ -5,6 +5,12 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const compression = require("compression");
+const rateLimit = require("express-rate-limit");
+
+const env = require("./config/env");
+const requestContext = require("./middleware/requestContext");
+const createCorsOptions = require("./middleware/corsOptions");
+const errorHandler = require("./middleware/errorHandler");
 const { Server } = require("socket.io");
 const { io: createClient } = require("socket.io-client");
 
@@ -59,15 +65,7 @@ const routes = [
     },
 ];
 
-const frontendOrigins = String(
-    process.env.FRONTEND_ORIGINS ||
-        "http://localhost:3002,http://localhost:3000,http://localhost:3001,http://localhost:5173"
-)
-    .split(",")
-    .map((value) =>
-        value.trim().replace(/\/+$/, "")
-    )
-    .filter(Boolean);
+const frontendOrigins = env.frontendOrigins;
 
 app.set("trust proxy", 1);
 
@@ -79,36 +77,28 @@ app.use(
 
 app.use(compression());
 
-app.use(
-    cors({
-        origin(origin, callback) {
-            if (!origin) {
-                return callback(null, true);
-            }
+app.use(requestContext);
+app.use(cors(createCorsOptions({ credentials: true })));
 
-            const normalizedOrigin = String(origin)
-                .trim()
-                .replace(/\/+$/, "");
+const apiLimiter = rateLimit({
+    windowMs: env.apiRateLimits.windowMs,
+    limit: env.apiRateLimits.limit,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skip: (req) => req.path === "/health" || req.path === "/ready",
+    handler: (req, res) => {
+        res.status(429).json({
+            success: false,
+            error: {
+                code: "RATE_LIMITED",
+                message: "Too many requests. Please try again later.",
+            },
+            requestId: req.requestId,
+        });
+    },
+});
 
-            if (
-                frontendOrigins.includes(
-                    normalizedOrigin
-                )
-            ) {
-                return callback(null, true);
-            }
-
-            console.error(
-                `[Central API] CORS rejected origin: ${origin}`
-            );
-
-            return callback(
-                new Error("CORS origin not allowed")
-            );
-        },
-        credentials: true,
-    })
-);
+app.use("/api", apiLimiter);
 
 app.get("/health", (req, res) => {
     res.json({
@@ -308,6 +298,7 @@ function proxyRequest(req, res, route) {
 
     const headers = {
         ...req.headers,
+        "x-request-id": req.requestId,
         host:
             `${INTERNAL_HOST}:${route.target}`,
     };
@@ -327,19 +318,41 @@ function proxyRequest(req, res, route) {
             headers,
         },
         (proxyRes) => {
-            res.statusCode =
-                proxyRes.statusCode || 502;
+            const statusCode = proxyRes.statusCode || 502;
+
+            if (statusCode >= 500) {
+                const chunks = [];
+
+                proxyRes.on("data", (chunk) => chunks.push(chunk));
+                proxyRes.on("end", () => {
+                    res.statusCode = statusCode;
+                    res.setHeader("Content-Type", "application/json; charset=utf-8");
+                    res.setHeader("X-Request-Id", req.requestId);
+                    res.end(JSON.stringify({
+                        success: false,
+                        error: {
+                            code: "UPSTREAM_ERROR",
+                            message: "Backend service temporarily unavailable.",
+                        },
+                        requestId: req.requestId,
+                    }));
+                });
+                return;
+            }
+
+            res.statusCode = statusCode;
 
             for (
                 const [key, value] of Object.entries(
                     proxyRes.headers
                 )
             ) {
-                if (value !== undefined) {
+                if (value !== undefined && key.toLowerCase() !== "content-length") {
                     res.setHeader(key, value);
                 }
             }
 
+            res.setHeader("X-Request-Id", req.requestId);
             proxyRes.pipe(res);
         }
     );
@@ -364,8 +377,11 @@ function proxyRequest(req, res, route) {
 
         return res.status(502).json({
             success: false,
-            message:
-                "Backend service unavailable",
+            error: {
+                code: "UPSTREAM_UNAVAILABLE",
+                message: "Backend service unavailable.",
+            },
+            requestId: req.requestId,
         });
     });
 
@@ -385,8 +401,11 @@ app.use((req, res, next) => {
     if (!route) {
         return res.status(404).json({
             success: false,
-            message: "Route not found",
-            path: req.path,
+            error: {
+                code: "ROUTE_NOT_FOUND",
+                message: "Route not found.",
+            },
+            requestId: req.requestId,
         });
     }
 
@@ -396,6 +415,8 @@ app.use((req, res, next) => {
         route
     );
 });
+
+app.use(errorHandler);
 
 const server = http.createServer(app);
 

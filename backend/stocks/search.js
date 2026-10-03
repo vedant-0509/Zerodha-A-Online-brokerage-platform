@@ -1,13 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const mysql = require("mysql2/promise");
 
-const db = mysql.createPool({
-    host: "localhost",
-    user: "root",
-    password: "root",
-    database: "zerodha",
-});
+const { getMongoDB } = require("../config/mongodb");
+
+function getCollection() {
+    return getMongoDB().collection("marketStocks");
+}
 
 router.get("/", async (req, res) => {
     try {
@@ -17,46 +15,90 @@ router.get("/", async (req, res) => {
             return res.json([]);
         }
 
-        const [rows] = await db.execute(
-            `
-            SELECT
-                instrument_key,
-                symbol,
-                name
-            FROM market_stocks_data
-            WHERE
-                instrument_key IS NOT NULL
-                AND (
-                    SUBSTRING_INDEX(symbol,'.',1) LIKE ?
-                    OR name LIKE ?
-                )
-            ORDER BY
-                CASE
-                    WHEN SUBSTRING_INDEX(symbol,'.',1)=? THEN 1
-                    WHEN SUBSTRING_INDEX(symbol,'.',1) LIKE ? THEN 2
-                    WHEN name LIKE ? THEN 3
-                    ELSE 4
-                END,
-                symbol
-            LIMIT 15
-            `,
-            [
-                `%${search}%`,
-                `%${search}%`,
-                search,
-                `${search}%`,
-                `${search}%`
-            ]
-        );
+        const collection = getCollection();
 
-        res.json(rows);
+        const rows = await collection
+            .find(
+                {
+                    instrumentKey: { $ne: null },
+                    $or: [
+                        {
+                            symbol: {
+                                $regex: `^${escapeRegex(search)}`,
+                                $options: "i",
+                            },
+                        },
+                        {
+                            name: {
+                                $regex: escapeRegex(search),
+                                $options: "i",
+                            },
+                        },
+                    ],
+                },
+                {
+                    projection: {
+                        _id: 0,
+                        instrumentKey: 1,
+                        symbol: 1,
+                        name: 1,
+                    },
+                }
+            )
+            .limit(50)
+            .toArray();
+
+        const normalized = rows.map((stock) => ({
+            instrument_key: stock.instrumentKey,
+            symbol: stock.symbol,
+            name: stock.name,
+        }));
+
+        normalized.sort((a, b) => {
+            const aSymbol = String(a.symbol || "").split(".")[0].toUpperCase();
+            const bSymbol = String(b.symbol || "").split(".")[0].toUpperCase();
+
+            const aName = String(a.name || "").toUpperCase();
+            const bName = String(b.name || "").toUpperCase();
+
+            const aRank =
+                aSymbol === search
+                    ? 1
+                    : aSymbol.startsWith(search)
+                        ? 2
+                        : aName.includes(search)
+                            ? 3
+                            : 4;
+
+            const bRank =
+                bSymbol === search
+                    ? 1
+                    : bSymbol.startsWith(search)
+                        ? 2
+                        : bName.includes(search)
+                            ? 3
+                            : 4;
+
+            if (aRank !== bRank) {
+                return aRank - bRank;
+            }
+
+            return aSymbol.localeCompare(bSymbol);
+        });
+
+        res.json(normalized.slice(0, 15));
 
     } catch (err) {
-        console.log(err);
+        console.error("Stock search error:", err);
+
         res.status(500).json({
-            message: "Search Failed"
+            message: "Search Failed",
         });
     }
 });
+
+function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 module.exports = router;

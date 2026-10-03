@@ -3,19 +3,29 @@ const marketCache = require("./marketCache");
 
 const { getDailyClose } = require("./historicalCloseService");
 const { instruments } = require("./indexMarketService");
-const db = require("./db");
+const { initDb, requireDb } = require("./db");
 
 async function updateClosingPricesFromUpstox(io = null) {
     console.log("📥 Fetching official closing prices from Upstox...");
 
+    // Make sure MongoDB is connected
+    await initDb();
+
+    const db = requireDb();
+    const collection = db.collection("indexClosingPrices");
+
     try {
         for (const instrumentKey of instruments) {
             try {
+                // ------------------------------------------
                 // Fetch today's official close from Upstox
+                // ------------------------------------------
                 const candle = await getDailyClose(instrumentKey);
 
                 if (!candle) {
-                    console.log(`⚠ Skipping ${instrumentKey}: No candle found.`);
+                    console.log(
+                        `⚠ Skipping ${instrumentKey}: No candle found.`
+                    );
                     continue;
                 }
 
@@ -24,18 +34,23 @@ async function updateClosingPricesFromUpstox(io = null) {
                 // ------------------------------------------
                 // Read previous trading day's close
                 // ------------------------------------------
-                const [rows] = await db.execute(
-                    `
-                    SELECT close_price
-                    FROM index_closing_prices
-                    WHERE instrument_key = ?
-                    ORDER BY trading_date DESC
-                    LIMIT 1
-                    `,
-                    [instrumentKey]
+                const previousRecord = await collection.findOne(
+                    {
+                        instrumentKey,
+                        tradingDate: {
+                            $lt: candle.timestamp.split("T")[0],
+                        },
+                    },
+                    {
+                        sort: {
+                            tradingDate: -1,
+                        },
+                    }
                 );
 
-                const previousClose = rows.length > 0 ? rows[0].close_price : candle.close; // first run fallback
+                const previousClose = previousRecord
+                    ? Number(previousRecord.closePrice)
+                    : Number(candle.close);
 
                 // ------------------------------------------
                 // Prepare latest object for Redis
@@ -56,44 +71,55 @@ async function updateClosingPricesFromUpstox(io = null) {
                     source: "Upstox Historical",
                 };
 
+                const tradingDate = candle.timestamp.split("T")[0];
+
                 // ------------------------------------------
                 // Store today's official close
                 // ------------------------------------------
-                await db.execute(
-                    `
-                    INSERT INTO index_closing_prices
-                    (instrument_key, trading_date, close_price)
-                    VALUES (?, ?, ?)
-                    ON DUPLICATE KEY UPDATE
-                        close_price = VALUES(close_price)
-                    `,
-                    [
+                await collection.updateOne(
+                    {
                         instrumentKey,
-                        candle.timestamp.split("T")[0],
-                        candle.close,
-                    ]
+                        tradingDate,
+                    },
+                    {
+                        $set: {
+                            closePrice: Number(candle.close),
+                            updatedAt: new Date(),
+                        },
+                        $setOnInsert: {
+                            instrumentKey,
+                            tradingDate,
+                            createdAt: new Date(),
+                        },
+                    },
+                    {
+                        upsert: true,
+                    }
                 );
 
                 // ------------------------------------------
                 // Keep only latest 2 trading days
-                // (Requires MySQL 8+)
                 // ------------------------------------------
-                await db.execute(`
-                    DELETE FROM index_closing_prices
-                    WHERE id IN (
-                        SELECT id
-                        FROM (
-                            SELECT
-                                id,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY instrument_key
-                                    ORDER BY trading_date DESC
-                                ) AS rn
-                            FROM index_closing_prices
-                        ) x
-                        WHERE rn > 2
-                    )
-                `);
+                const oldRecords = await collection
+                    .find({
+                        instrumentKey,
+                    })
+                    .sort({
+                        tradingDate: -1,
+                    })
+                    .skip(2)
+                    .project({
+                        _id: 1,
+                    })
+                    .toArray();
+
+                if (oldRecords.length > 0) {
+                    await collection.deleteMany({
+                        _id: {
+                            $in: oldRecords.map((record) => record._id),
+                        },
+                    });
+                }
 
                 // ------------------------------------------
                 // Update RAM Cache
@@ -116,7 +142,10 @@ async function updateClosingPricesFromUpstox(io = null) {
                     `✅ ${instrumentKey} | Today: ${candle.close} | Previous: ${previousClose}`
                 );
             } catch (err) {
-                console.error(`❌ ${instrumentKey}:`, err.message);
+                console.error(
+                    `❌ ${instrumentKey}:`,
+                    err.message
+                );
             }
         }
 
@@ -146,7 +175,9 @@ async function updateClosingPricesFromUpstox(io = null) {
             console.log("📡 Snapshot broadcasted.");
         }
 
-        console.log("🎉 Official closing prices updated successfully.");
+        console.log(
+            "🎉 Official closing prices updated successfully."
+        );
     } catch (err) {
         console.error("❌ Closing price update failed.");
         console.error(err);
@@ -154,4 +185,6 @@ async function updateClosingPricesFromUpstox(io = null) {
     }
 }
 
-module.exports = { updateClosingPricesFromUpstox };
+module.exports = {
+    updateClosingPricesFromUpstox,
+};

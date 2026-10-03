@@ -1,6 +1,9 @@
-require('dotenv').config();
+require("dotenv").config();
 
-const pool = require('./db');
+const {
+  connectMongoDB,
+  getMongoDB,
+} = require("../config/mongodb");
 
 const {
   getSchemeHistory,
@@ -8,64 +11,113 @@ const {
   subtractDays,
   addDays,
   roundNav,
-} = require('./mfapiService');
+} = require("./mfapiService");
 
 const CONCURRENCY = Math.max(
   1,
-  Number(process.env.MF_BACKFILL_CONCURRENCY || 5)
+  Number(
+    process.env.MF_BACKFILL_CONCURRENCY || 5
+  )
 );
 
 const DELAY_MS = Math.max(
   0,
-  Number(process.env.MF_BACKFILL_DELAY_MS || 150)
+  Number(
+    process.env.MF_BACKFILL_DELAY_MS || 150
+  )
 );
 
 const sleep = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+  new Promise((resolve) =>
+    setTimeout(resolve, ms)
+  );
 
-async function backfill() {
-  const connection = await pool.getConnection();
+/*
+|--------------------------------------------------------------------------
+| Mongo lock
+|--------------------------------------------------------------------------
+|
+| Replaces MySQL GET_LOCK().
+|
+*/
 
-  let locked = false;
+async function acquireLock(db) {
+  const collection =
+    db.collection("mfSyncLocks");
+
+  const now = new Date();
 
   try {
-    /* -----------------------------------------
-       Advisory lock
-    ------------------------------------------ */
-    const [lockRows] = await connection.query(
-      'SELECT GET_LOCK(?, 0) AS acquired',
-      ['mf_previous_nav_backfill']
-    );
+    await collection.insertOne({
+      _id: "mf_previous_nav_backfill",
+      status: "RUNNING",
+      startedAt: now,
+      updatedAt: now,
+    });
 
-    locked = Number(lockRows[0]?.acquired) === 1;
-
-    if (!locked) {
-      console.log(
-        'Another previous-NAV backfill is already running.'
-      );
-
-      return;
+    return true;
+  } catch (error) {
+    if (error.code === 11000) {
+      return false;
     }
 
-    /* -----------------------------------------
-       Get schemes that need previous NAV
-    ------------------------------------------ */
-    const [schemes] = await connection.query(
-      `
-      SELECT
-        id,
-        scheme_code,
-        current_nav,
-        nav_date
-      FROM mf_schemes
-      WHERE is_active = 1
-        AND current_nav IS NOT NULL
-        AND current_nav > 0
-        AND nav_date IS NOT NULL
-        AND previous_nav IS NULL
-      ORDER BY id ASC
-      `
+    throw error;
+  }
+}
+
+async function releaseLock(db) {
+  await db
+    .collection("mfSyncLocks")
+    .deleteOne({
+      _id: "mf_previous_nav_backfill",
+    });
+}
+
+/*
+|--------------------------------------------------------------------------
+| Backfill
+|--------------------------------------------------------------------------
+*/
+
+async function backfill() {
+  await connectMongoDB();
+
+  const db = getMongoDB();
+
+  const locked =
+    await acquireLock(db);
+
+  if (!locked) {
+    console.log(
+      "Another previous-NAV backfill is already running."
     );
+
+    return;
+  }
+
+  try {
+    const schemes =
+      await db
+        .collection("mfSchemes")
+        .find({
+          isActive: true,
+
+          currentNav: {
+            $ne: null,
+            $gt: 0,
+          },
+
+          navDate: {
+            $ne: null,
+          },
+
+          previousNav: null,
+        })
+        .sort({
+          mysqlId: 1,
+          schemeCode: 1,
+        })
+        .toArray();
 
     console.log(
       `Schemes needing previous NAV: ${schemes.length}`
@@ -77,100 +129,113 @@ async function backfill() {
     let skipped = 0;
     let failed = 0;
 
-    /* -----------------------------------------
-       Worker
-    ------------------------------------------ */
     async function worker() {
       while (true) {
         const index = cursor++;
 
-        if (index >= schemes.length) {
+        if (
+          index >=
+          schemes.length
+        ) {
           return;
         }
 
-        const scheme = schemes[index];
+        const scheme =
+          schemes[index];
 
         try {
-          const currentDate = parseNavDate(
-            scheme.nav_date
-          );
+          const currentDate =
+            parseNavDate(
+              scheme.navDate
+            );
 
           if (!currentDate) {
             skipped++;
             continue;
           }
 
-          /*
-            Search a small historical window.
-            No daily NAV table is created.
-          */
-          const start = subtractDays(
-            currentDate,
-            10
-          );
-
-          const end = addDays(
-            currentDate,
-            1
-          );
-
-          const history = await getSchemeHistory(
-            scheme.scheme_code,
-            start,
-            end
-          );
-
-          const currentNav = roundNav(
-            scheme.current_nav
-          );
-
-          const candidates = (
-            Array.isArray(history)
-              ? history
-              : []
-          )
-            .map((item) => {
-              /*
-                MFAPI may return arrays.
-              */
-              if (Array.isArray(item)) {
-                return {
-                  date: parseNavDate(item[0]),
-                  nav: roundNav(
-                    item[1] ?? item[4]
-                  ),
-                };
-              }
-
-              /*
-                Or object-like data.
-              */
-              return {
-                date: parseNavDate(
-                  item?.date ??
-                  item?.navDate ??
-                  item?.nav_date
-                ),
-
-                nav: roundNav(
-                  item?.nav ??
-                  item?.current_nav ??
-                  item?.close
-                ),
-              };
-            })
-            .filter(
-              (item) =>
-                item.date &&
-                Number.isFinite(item.nav) &&
-                item.nav > 0 &&
-                item.date < currentDate
-            )
-            .sort((a, b) =>
-              a.date < b.date ? 1 : -1
+          const start =
+            subtractDays(
+              currentDate,
+              10
             );
 
-          const previous = candidates[0];
+          const end =
+            addDays(
+              currentDate,
+              1
+            );
+
+          const history =
+            await getSchemeHistory(
+              scheme.schemeCode,
+              start,
+              end
+            );
+
+          const currentNav =
+            roundNav(
+              scheme.currentNav
+            );
+
+          const candidates =
+            (
+              Array.isArray(history)
+                ? history
+                : []
+            )
+              .map((item) => {
+                if (
+                  Array.isArray(item)
+                ) {
+                  return {
+                    date:
+                      parseNavDate(
+                        item[0]
+                      ),
+
+                    nav:
+                      roundNav(
+                        item[1] ??
+                        item[4]
+                      ),
+                  };
+                }
+
+                return {
+                  date:
+                    parseNavDate(
+                      item?.date ??
+                      item?.navDate ??
+                      item?.nav_date
+                    ),
+
+                  nav:
+                    roundNav(
+                      item?.nav ??
+                      item?.current_nav ??
+                      item?.close
+                    ),
+                };
+              })
+              .filter(
+                (item) =>
+                  item.date &&
+                  Number.isFinite(
+                    item.nav
+                  ) &&
+                  item.nav > 0 &&
+                  item.date <
+                    currentDate
+              )
+              .sort((a, b) =>
+                a.date < b.date
+                  ? 1
+                  : -1
+              );
+
+          const previous =
+            candidates[0];
 
           if (!previous) {
             skipped++;
@@ -180,37 +245,61 @@ async function backfill() {
           const dayReturn =
             previous.nav > 0
               ? (
-                  (currentNav - previous.nav) /
+                  (
+                    currentNav -
+                    previous.nav
+                  ) /
                   previous.nav
                 ) * 100
               : null;
 
-          await connection.query(
-            `
-            UPDATE mf_schemes
-            SET
-              previous_nav = ?,
-              previous_nav_date = ?,
-              return_1d = ?,
-              return_1d_nav_date = ?,
-              updated_at = NOW()
-            WHERE id = ?
-            `,
-            [
-              previous.nav,
-              previous.date,
-              dayReturn,
-              currentDate,
-              scheme.id,
-            ]
-          );
+          const result =
+            await db
+              .collection("mfSchemes")
+              .updateOne(
+                {
+                  _id:
+                    scheme._id,
 
-          updated++;
+                  schemeCode:
+                    scheme.schemeCode,
+
+                  isActive: true,
+
+                  previousNav: null,
+                },
+                {
+                  $set: {
+                    previousNav:
+                      previous.nav,
+
+                    previousNavDate:
+                      previous.date,
+
+                    return1d:
+                      dayReturn,
+
+                    return1dNavDate:
+                      currentDate,
+
+                    updatedAt:
+                      new Date(),
+                  },
+                }
+              );
+
+          if (
+            result.modifiedCount === 1
+          ) {
+            updated++;
+          } else {
+            skipped++;
+          }
         } catch (error) {
           failed++;
 
           console.error(
-            `[MF BACKFILL] ${scheme.scheme_code}: ${error.message}`
+            `[MF BACKFILL] ${scheme.schemeCode}: ${error.message}`
           );
         }
 
@@ -225,7 +314,8 @@ async function backfill() {
 
         if (
           processed % 100 === 0 ||
-          processed === schemes.length
+          processed ===
+            schemes.length
         ) {
           console.log(
             `[MF BACKFILL] ${processed}/${schemes.length} ` +
@@ -237,9 +327,6 @@ async function backfill() {
       }
     }
 
-    /* -----------------------------------------
-       Start workers
-    ------------------------------------------ */
     await Promise.all(
       Array.from(
         {
@@ -259,40 +346,21 @@ async function backfill() {
       `failed=${failed}`
     );
   } finally {
-    /* -----------------------------------------
-       Release advisory lock
-    ------------------------------------------ */
-    if (locked) {
-      try {
-        await connection.query(
-          'SELECT RELEASE_LOCK(?)',
-          ['mf_previous_nav_backfill']
-        );
-      } catch (_) {
-        // Ignore release errors.
-      }
-    }
-
-    connection.release();
+    await releaseLock(db);
   }
 }
 
-/* -----------------------------------------
-   Run
------------------------------------------- */
-backfill()
-  .catch((error) => {
-    console.error(
-      '[MF BACKFILL] fatal:',
-      error
-    );
+/*
+|--------------------------------------------------------------------------
+| Run
+|--------------------------------------------------------------------------
+*/
 
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    try {
-      await pool.end();
-    } catch (_) {
-      // Ignore pool close errors.
-    }
-  });
+backfill().catch((error) => {
+  console.error(
+    "[MF BACKFILL] fatal:",
+    error
+  );
+
+  process.exitCode = 1;
+});

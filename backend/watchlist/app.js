@@ -1,1866 +1,47 @@
-// require("dotenv").config();
-
-// const express = require("express");
-// const cors = require("cors");
-// const mysql = require("mysql2/promise");
-// const crypto = require("crypto");
-
-// const app = express();
-
-// const PORT = 3008;
-
-// // =====================================================
-// // MIDDLEWARE
-// // =====================================================
-
-// app.use(
-//     cors({
-//         origin: true,
-//         credentials: true,
-//     }),
-// );
-
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-
-// // =====================================================
-// // MYSQL CONNECTION
-// // =====================================================
-
-// const db = mysql.createPool({
-//     host: "localhost",
-//     user: "root",
-//     password: "root",
-//     database: "zerodha",
-
-//     waitForConnections: true,
-//     connectionLimit: 10,
-//     queueLimit: 0,
-// });
-
-// // =====================================================
-// // DATABASE TEST
-// // =====================================================
-
-// async function testDatabase() {
-//     try {
-//         const connection = await db.getConnection();
-
-//         console.log("✅ MySQL Connected Successfully");
-
-//         connection.release();
-//     } catch (error) {
-//         console.error("❌ MySQL Connection Failed");
-//         console.error(error);
-//     }
-// }
-
-// testDatabase();
-
-// // =====================================================
-// // HOME
-// // =====================================================
-
-// app.get("/", (req, res) => {
-//     res.json({
-//         success: true,
-//         message: "Watchlist API Running 🚀",
-//         port: PORT,
-//     });
-// });
-
-// // =====================================================
-// // GET USER WATCHLIST
-// //
-// // GET
-// // /watchlist/:userId
-// //
-// // Example:
-// // /watchlist/b9246e0a-96aa-49ea-8593-9b0912d7ced8
-// // =====================================================
-
-// app.get("/watchlist/:userId", async (req, res) => {
-//     try {
-//         const { userId } = req.params;
-
-//         if (!userId) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "User ID is required",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT
-//                 user_id,
-//                 full_name,
-//                 email
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Get user's watchlist
-//         //
-//         // IMPORTANT:
-//         // Data comes directly from market_stocks_data
-//         // -------------------------------------------------
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 w.watchlist_id,
-//                 w.user_id,
-//                 w.instrument_key,
-//                 w.added_at,
-
-//                 m.id,
-//                 m.symbol,
-//                 m.name,
-//                 m.price,
-//                 m.change_value,
-//                 m.change_percent,
-//                 m.open_price,
-//                 m.previous_close,
-//                 m.day_high,
-//                 m.day_low,
-//                 m.volume,
-//                 m.updated_at,
-//                 m.sector
-
-//             FROM watchlist w
-
-//             INNER JOIN market_stocks_data m
-//                 ON w.instrument_key = m.instrument_key
-
-//             WHERE w.user_id = ?
-
-//             ORDER BY w.added_at DESC
-//             `,
-//             [userId],
-//         );
-
-//         const stocks = rows.map((stock) => ({
-//             watchlist_id: stock.watchlist_id,
-
-//             user_id: stock.user_id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             current_price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-
-//             updated_at: stock.updated_at,
-
-//             added_at: stock.added_at,
-//         }));
-
-//         res.json({
-//             success: true,
-
-//             user: {
-//                 user_id: users[0].user_id,
-//                 full_name: users[0].full_name,
-//                 email: users[0].email,
-//             },
-
-//             count: stocks.length,
-
-//             stocks,
-//         });
-//     } catch (error) {
-//         console.error("❌ Get Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to fetch watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // SEARCH STOCKS
-// //
-// // GET
-// // /search?q=reliance
-// //
-// // IMPORTANT:
-// // Search happens ONLY inside market_stocks_data.
-// // =====================================================
-
-// app.get("/search", async (req, res) => {
-//     try {
-//         const q = String(req.query.q || "").trim();
-
-//         // Don't search for empty/very short queries
-//         if (q.length < 2) {
-//             return res.json({
-//                 success: true,
-//                 results: [],
-//             });
-//         }
-
-//         const searchTerm = `%${q}%`;
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 id,
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_value,
-//                 change_percent,
-//                 open_price,
-//                 previous_close,
-//                 day_high,
-//                 day_low,
-//                 volume,
-//                 sector,
-//                 updated_at
-
-//             FROM market_stocks_data
-
-//             WHERE
-//                 name LIKE ?
-//                 OR symbol LIKE ?
-//                 OR instrument_key LIKE ?
-
-//             ORDER BY
-
-//                 CASE
-//                     WHEN symbol LIKE ? THEN 1
-//                     WHEN name LIKE ? THEN 2
-//                     ELSE 3
-//                 END,
-
-//                 name ASC
-
-//             LIMIT 10
-//             `,
-//             [searchTerm, searchTerm, searchTerm, `${q}%`, `${q}%`],
-//         );
-
-//         const results = rows.map((stock) => ({
-//             id: stock.id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-//         }));
-
-//         res.json({
-//             success: true,
-//             query: q,
-//             count: results.length,
-//             results,
-//         });
-//     } catch (error) {
-//         console.error("❌ Search Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Search failed",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // ADD STOCK TO USER WATCHLIST
-// //
-// // POST
-// // /watchlist
-// //
-// // Body:
-// //
-// // {
-// //     "userId": "...",
-// //     "instrumentKey": "NSE_EQ|INE002A01018"
-// // }
-// // =====================================================
-
-// app.post("/watchlist", async (req, res) => {
-//     try {
-//         const { userId, instrumentKey } = req.body;
-
-//         if (!userId || !instrumentKey) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "userId and instrumentKey are required",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT user_id
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check stock exists
-//         // -------------------------------------------------
-
-//         const [stocks] = await db.execute(
-//             `
-//             SELECT
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_percent,
-//                 volume,
-//                 day_high,
-//                 day_low
-//             FROM market_stocks_data
-//             WHERE instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [instrumentKey],
-//         );
-
-//         if (stocks.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in market_stocks_data",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check duplicate
-//         // -------------------------------------------------
-
-//         const [existing] = await db.execute(
-//             `
-//             SELECT watchlist_id
-//             FROM watchlist
-//             WHERE
-//                 user_id = ?
-//                 AND instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (existing.length > 0) {
-//             return res.status(409).json({
-//                 success: false,
-//                 message: "Stock already exists in watchlist",
-//                 watchlist_id: existing[0].watchlist_id,
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Create watchlist ID
-//         // -------------------------------------------------
-
-//         const watchlistId = crypto.randomUUID();
-
-//         // -------------------------------------------------
-//         // Insert
-//         // -------------------------------------------------
-
-//         await db.execute(
-//             `
-//             INSERT INTO watchlist
-//             (
-//                 watchlist_id,
-//                 user_id,
-//                 instrument_key
-//             )
-//             VALUES
-//             (?, ?, ?)
-//             `,
-//             [watchlistId, userId, instrumentKey],
-//         );
-
-//         res.status(201).json({
-//             success: true,
-
-//             message: "Stock added to watchlist",
-
-//             watchlist_id: watchlistId,
-
-//             stock: {
-//                 instrument_key: stocks[0].instrument_key,
-
-//                 symbol: stocks[0].symbol,
-
-//                 name: stocks[0].name,
-//             },
-//         });
-//     } catch (error) {
-//         console.error("❌ Add Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to add stock to watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // DELETE STOCK FROM WATCHLIST
-// //
-// // DELETE
-// // /watchlist/:userId/:instrumentKey
-// //
-// // =====================================================
-
-// app.delete("/watchlist/:userId/:instrumentKey", async (req, res) => {
-//     try {
-//         const { userId, instrumentKey } = req.params;
-
-//         const [result] = await db.execute(
-//             `
-//                 DELETE FROM watchlist
-
-//                 WHERE
-//                     user_id = ?
-//                     AND instrument_key = ?
-//                 `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (result.affectedRows === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in watchlist",
-//             });
-//         }
-
-//         res.json({
-//             success: true,
-//             message: "Stock removed from watchlist",
-//         });
-//     } catch (error) {
-//         console.error("❌ Delete Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to remove stock",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // 404
-// // =====================================================
-
-// app.use((req, res) => {
-//     res.status(404).json({
-//         success: false,
-//         message: "Route Not Found",
-//     });
-// });
-
-// // =====================================================
-// // SERVER
-// // =====================================================
-
-// const server = app.listen(PORT, () => {
-//     console.log("");
-//     console.log("========================================");
-//     console.log(`🚀 Watchlist Server Running`);
-//     console.log(`http://localhost:${PORT}`);
-//     console.log("========================================");
-
-//     console.log("Available routes:");
-
-//     console.log(`GET  http://localhost:${PORT}/`);
-
-//     console.log(`GET  http://localhost:${PORT}/watchlist/:userId`);
-
-//     console.log(`GET  http://localhost:${PORT}/search?q=reliance`);
-
-//     console.log(`POST http://localhost:${PORT}/watchlist`);
-
-//     console.log(
-//         `DELETE http://localhost:${PORT}/watchlist/:userId/:instrumentKey`,
-//     );
-
-//     console.log("========================================");
-// });
-
-// server.on("error", (error) => {
-//     console.error("❌ Server Error:", error);
-// });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// require("dotenv").config();
-
-// const express = require("express");
-// const cors = require("cors");
-// const mysql = require("mysql2/promise");
-// const crypto = require("crypto");
-// const authenticateToken = require("../middleware/authenticateToken");
-
-// const app = express();
-
-// const PORT = 3008;
-
-// // =====================================================
-// // MIDDLEWARE
-// // =====================================================
-
-// app.use(
-//     cors({
-//         origin: true,
-//         credentials: true,
-//     }),
-// );
-
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-
-// // =====================================================
-// // MYSQL CONNECTION
-// // =====================================================
-
-// const db = mysql.createPool({
-//     host: "localhost",
-//     user: "root",
-//     password: "root",
-//     database: "zerodha",
-
-//     waitForConnections: true,
-//     connectionLimit: 10,
-//     queueLimit: 0,
-// });
-
-// // =====================================================
-// // DATABASE TEST
-// // =====================================================
-
-// async function testDatabase() {
-//     try {
-//         const connection = await db.getConnection();
-
-//         console.log("✅ MySQL Connected Successfully");
-
-//         connection.release();
-//     } catch (error) {
-//         console.error("❌ MySQL Connection Failed");
-//         console.error(error);
-//     }
-// }
-
-// testDatabase();
-
-// // =====================================================
-// // HOME
-// // =====================================================
-
-// app.get("/", (req, res) => {
-//     res.json({
-//         success: true,
-//         message: "Watchlist API Running 🚀",
-//         port: PORT,
-//     });
-// });
-
-// // =====================================================
-// // GET USER WATCHLIST
-// //
-// // GET
-// // /watchlist (authenticated; user comes from JWT)
-// //
-// // Example:
-// // /watchlist/b9246e0a-96aa-49ea-8593-9b0912d7ced8
-// // =====================================================
-
-// app.get("/watchlist", authenticateToken, async (req, res) => {
-//     try {
-//         // Phase 2: never trust a userId from params/query/body.
-//         const userId = req.userId;
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT
-//                 user_id,
-//                 full_name,
-//                 email
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Get user's watchlist
-//         //
-//         // IMPORTANT:
-//         // Data comes directly from market_stocks_data
-//         // -------------------------------------------------
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 w.watchlist_id,
-//                 w.user_id,
-//                 w.instrument_key,
-//                 w.added_at,
-
-//                 m.id,
-//                 m.symbol,
-//                 m.name,
-//                 m.price,
-//                 m.change_value,
-//                 m.change_percent,
-//                 m.open_price,
-//                 m.previous_close,
-//                 m.day_high,
-//                 m.day_low,
-//                 m.volume,
-//                 m.updated_at,
-//                 m.sector
-
-//             FROM watchlist w
-
-//             INNER JOIN market_stocks_data m
-//                 ON w.instrument_key = m.instrument_key
-
-//             WHERE w.user_id = ?
-
-//             ORDER BY w.added_at DESC
-//             `,
-//             [userId],
-//         );
-
-//         const stocks = rows.map((stock) => ({
-//             watchlist_id: stock.watchlist_id,
-
-//             user_id: stock.user_id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             current_price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-
-//             updated_at: stock.updated_at,
-
-//             added_at: stock.added_at,
-//         }));
-
-//         res.json({
-//             success: true,
-
-//             user: {
-//                 user_id: users[0].user_id,
-//                 full_name: users[0].full_name,
-//                 email: users[0].email,
-//             },
-
-//             count: stocks.length,
-
-//             stocks,
-//         });
-//     } catch (error) {
-//         console.error("❌ Get Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to fetch watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // SEARCH STOCKS
-// //
-// // GET
-// // /search?q=reliance
-// //
-// // IMPORTANT:
-// // Search happens ONLY inside market_stocks_data.
-// // =====================================================
-
-// app.get("/search", async (req, res) => {
-//     try {
-//         const q = String(req.query.q || "").trim();
-
-//         // Don't search for empty/very short queries
-//         if (q.length < 2) {
-//             return res.json({
-//                 success: true,
-//                 results: [],
-//             });
-//         }
-
-//         const searchTerm = `%${q}%`;
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 id,
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_value,
-//                 change_percent,
-//                 open_price,
-//                 previous_close,
-//                 day_high,
-//                 day_low,
-//                 volume,
-//                 sector,
-//                 updated_at
-
-//             FROM market_stocks_data
-
-//             WHERE
-//                 name LIKE ?
-//                 OR symbol LIKE ?
-//                 OR instrument_key LIKE ?
-
-//             ORDER BY
-
-//                 CASE
-//                     WHEN symbol LIKE ? THEN 1
-//                     WHEN name LIKE ? THEN 2
-//                     ELSE 3
-//                 END,
-
-//                 name ASC
-
-//             LIMIT 10
-//             `,
-//             [searchTerm, searchTerm, searchTerm, `${q}%`, `${q}%`],
-//         );
-
-//         const results = rows.map((stock) => ({
-//             id: stock.id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-//         }));
-
-//         res.json({
-//             success: true,
-//             query: q,
-//             count: results.length,
-//             results,
-//         });
-//     } catch (error) {
-//         console.error("❌ Search Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Search failed",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // ADD STOCK TO USER WATCHLIST
-// //
-// // POST
-// // /watchlist
-// //
-// // Body:
-// //
-// // {
-// //     "instrumentKey": "NSE_EQ|INE002A01018"
-// // }
-// //
-// // The user is taken from req.userId.
-// // =====================================================
-
-// app.post("/watchlist", authenticateToken, async (req, res) => {
-//     try {
-//         const { instrumentKey } = req.body || {};
-//         const body = req.body || {};
-
-//         // Phase 2: reject attempts to supply a different user identity.
-//         if (
-//             Object.prototype.hasOwnProperty.call(body, "userId") ||
-//             Object.prototype.hasOwnProperty.call(body, "user_id")
-//         ) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "userId must not be supplied; use the authenticated session",
-//             });
-//         }
-
-//         const userId = req.userId;
-
-//         if (!instrumentKey) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "instrumentKey is required",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT user_id
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check stock exists
-//         // -------------------------------------------------
-
-//         const [stocks] = await db.execute(
-//             `
-//             SELECT
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_percent,
-//                 volume,
-//                 day_high,
-//                 day_low
-//             FROM market_stocks_data
-//             WHERE instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [instrumentKey],
-//         );
-
-//         if (stocks.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in market_stocks_data",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check duplicate
-//         // -------------------------------------------------
-
-//         const [existing] = await db.execute(
-//             `
-//             SELECT watchlist_id
-//             FROM watchlist
-//             WHERE
-//                 user_id = ?
-//                 AND instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (existing.length > 0) {
-//             return res.status(409).json({
-//                 success: false,
-//                 message: "Stock already exists in watchlist",
-//                 watchlist_id: existing[0].watchlist_id,
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Create watchlist ID
-//         // -------------------------------------------------
-
-//         const watchlistId = crypto.randomUUID();
-
-//         // -------------------------------------------------
-//         // Insert
-//         // -------------------------------------------------
-
-//         await db.execute(
-//             `
-//             INSERT INTO watchlist
-//             (
-//                 watchlist_id,
-//                 user_id,
-//                 instrument_key
-//             )
-//             VALUES
-//             (?, ?, ?)
-//             `,
-//             [watchlistId, userId, instrumentKey],
-//         );
-
-//         res.status(201).json({
-//             success: true,
-
-//             message: "Stock added to watchlist",
-
-//             watchlist_id: watchlistId,
-
-//             stock: {
-//                 instrument_key: stocks[0].instrument_key,
-
-//                 symbol: stocks[0].symbol,
-
-//                 name: stocks[0].name,
-//             },
-//         });
-//     } catch (error) {
-//         console.error("❌ Add Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to add stock to watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // DELETE STOCK FROM WATCHLIST
-// //
-// // DELETE
-// // DELETE /watchlist/:instrumentKey (authenticated)
-// //
-// // =====================================================
-
-// app.delete("/watchlist/:instrumentKey", authenticateToken, async (req, res) => {
-//     try {
-//         const userId = req.userId;
-//         const { instrumentKey } = req.params;
-
-//         const [result] = await db.execute(
-//             `
-//                 DELETE FROM watchlist
-
-//                 WHERE
-//                     user_id = ?
-//                     AND instrument_key = ?
-//                 `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (result.affectedRows === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in watchlist",
-//             });
-//         }
-
-//         res.json({
-//             success: true,
-//             message: "Stock removed from watchlist",
-//         });
-//     } catch (error) {
-//         console.error("❌ Delete Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to remove stock",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // 404
-// // =====================================================
-
-// app.use((req, res) => {
-//     res.status(404).json({
-//         success: false,
-//         message: "Route Not Found",
-//     });
-// });
-
-// // =====================================================
-// // SERVER
-// // =====================================================
-
-// const server = app.listen(PORT, () => {
-//     console.log("");
-//     console.log("========================================");
-//     console.log(`🚀 Watchlist Server Running`);
-//     console.log(`http://localhost:${PORT}`);
-//     console.log("========================================");
-
-//     console.log("Available routes:");
-
-//     console.log(`GET  http://localhost:${PORT}/`);
-
-//     console.log(`GET  http://localhost:${PORT}/watchlist`);
-
-//     console.log(`GET  http://localhost:${PORT}/search?q=reliance`);
-
-//     console.log(`POST http://localhost:${PORT}/watchlist`);
-
-//     console.log(
-//         `DELETE http://localhost:${PORT}/watchlist/:instrumentKey`,
-//     );
-
-//     console.log("========================================");
-// });
-
-// server.on("error", (error) => {
-//     console.error("❌ Server Error:", error);
-// });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// require("dotenv").config();
-
-// const express = require("express");
-// const cors = require("cors");
-// const mysql = require("mysql2/promise");
-// const crypto = require("crypto");
-
-// const app = express();
-
-// const PORT = Number(process.env.PORT || 3008);
-
-// // =====================================================
-// // MIDDLEWARE
-// // =====================================================
-
-// app.use(
-//     cors({
-//         origin: true,
-//         credentials: true,
-//     }),
-// );
-
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-
-// // =====================================================
-// // MYSQL CONNECTION
-// // =====================================================
-
-// const db = mysql.createPool({
-//     host: "localhost",
-//     user: "root",
-//     password: "root",
-//     database: "zerodha",
-
-//     waitForConnections: true,
-//     connectionLimit: 10,
-//     queueLimit: 0,
-// });
-
-// // =====================================================
-// // DATABASE TEST
-// // =====================================================
-
-// async function testDatabase() {
-//     try {
-//         const connection = await db.getConnection();
-
-//         console.log("✅ MySQL Connected Successfully");
-
-//         connection.release();
-//     } catch (error) {
-//         console.error("❌ MySQL Connection Failed");
-//         console.error(error);
-//     }
-// }
-
-// testDatabase();
-
-// // =====================================================
-// // HOME
-// // =====================================================
-
-// app.get("/", (req, res) => {
-//     res.json({
-//         success: true,
-//         message: "Watchlist API Running 🚀",
-//         port: PORT,
-//     });
-// });
-
-// // =====================================================
-// // GET USER WATCHLIST
-// //
-// // GET
-// // /watchlist/:userId
-// //
-// // Example:
-// // /watchlist/b9246e0a-96aa-49ea-8593-9b0912d7ced8
-// // =====================================================
-
-// app.get("/watchlist/:userId", async (req, res) => {
-//     try {
-//         const { userId } = req.params;
-
-//         if (!userId) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "User ID is required",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT
-//                 user_id,
-//                 full_name,
-//                 email
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Get user's watchlist
-//         //
-//         // IMPORTANT:
-//         // Data comes directly from market_stocks_data
-//         // -------------------------------------------------
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 w.watchlist_id,
-//                 w.user_id,
-//                 w.instrument_key,
-//                 w.added_at,
-
-//                 m.id,
-//                 m.symbol,
-//                 m.name,
-//                 m.price,
-//                 m.change_value,
-//                 m.change_percent,
-//                 m.open_price,
-//                 m.previous_close,
-//                 m.day_high,
-//                 m.day_low,
-//                 m.volume,
-//                 m.updated_at,
-//                 m.sector
-
-//             FROM watchlist w
-
-//             INNER JOIN market_stocks_data m
-//                 ON w.instrument_key = m.instrument_key
-
-//             WHERE w.user_id = ?
-
-//             ORDER BY w.added_at DESC
-//             `,
-//             [userId],
-//         );
-
-//         const stocks = rows.map((stock) => ({
-//             watchlist_id: stock.watchlist_id,
-
-//             user_id: stock.user_id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             current_price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-
-//             updated_at: stock.updated_at,
-
-//             added_at: stock.added_at,
-//         }));
-
-//         res.json({
-//             success: true,
-
-//             user: {
-//                 user_id: users[0].user_id,
-//                 full_name: users[0].full_name,
-//                 email: users[0].email,
-//             },
-
-//             count: stocks.length,
-
-//             stocks,
-//         });
-//     } catch (error) {
-//         console.error("❌ Get Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to fetch watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // SEARCH STOCKS
-// //
-// // GET
-// // /search?q=reliance
-// //
-// // IMPORTANT:
-// // Search happens ONLY inside market_stocks_data.
-// // =====================================================
-
-// app.get("/search", async (req, res) => {
-//     try {
-//         const q = String(req.query.q || "").trim();
-
-//         // Don't search for empty/very short queries
-//         if (q.length < 2) {
-//             return res.json({
-//                 success: true,
-//                 results: [],
-//             });
-//         }
-
-//         const searchTerm = `%${q}%`;
-
-//         const [rows] = await db.execute(
-//             `
-//             SELECT
-//                 id,
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_value,
-//                 change_percent,
-//                 open_price,
-//                 previous_close,
-//                 day_high,
-//                 day_low,
-//                 volume,
-//                 sector,
-//                 updated_at
-
-//             FROM market_stocks_data
-
-//             WHERE
-//                 name LIKE ?
-//                 OR symbol LIKE ?
-//                 OR instrument_key LIKE ?
-
-//             ORDER BY
-
-//                 CASE
-//                     WHEN symbol LIKE ? THEN 1
-//                     WHEN name LIKE ? THEN 2
-//                     ELSE 3
-//                 END,
-
-//                 name ASC
-
-//             LIMIT 10
-//             `,
-//             [searchTerm, searchTerm, searchTerm, `${q}%`, `${q}%`],
-//         );
-
-//         const results = rows.map((stock) => ({
-//             id: stock.id,
-
-//             instrument_key: stock.instrument_key,
-
-//             symbol: stock.symbol,
-
-//             name: stock.name,
-
-//             price: Number(stock.price || 0),
-
-//             change_value: Number(stock.change_value || 0),
-
-//             change_percent: Number(stock.change_percent || 0),
-
-//             open_price: Number(stock.open_price || 0),
-
-//             previous_close: Number(stock.previous_close || 0),
-
-//             day_high: Number(stock.day_high || 0),
-
-//             day_low: Number(stock.day_low || 0),
-
-//             volume: Number(stock.volume || 0),
-
-//             sector: stock.sector,
-//         }));
-
-//         res.json({
-//             success: true,
-//             query: q,
-//             count: results.length,
-//             results,
-//         });
-//     } catch (error) {
-//         console.error("❌ Search Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Search failed",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // ADD STOCK TO USER WATCHLIST
-// //
-// // POST
-// // /watchlist
-// //
-// // Body:
-// //
-// // {
-// //     "userId": "...",
-// //     "instrumentKey": "NSE_EQ|INE002A01018"
-// // }
-// // =====================================================
-
-// app.post("/watchlist", async (req, res) => {
-//     try {
-//         const { userId, instrumentKey } = req.body;
-
-//         if (!userId || !instrumentKey) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "userId and instrumentKey are required",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check user
-//         // -------------------------------------------------
-
-//         const [users] = await db.execute(
-//             `
-//             SELECT user_id
-//             FROM users
-//             WHERE user_id = ?
-//             LIMIT 1
-//             `,
-//             [userId],
-//         );
-
-//         if (users.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "User not found",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check stock exists
-//         // -------------------------------------------------
-
-//         const [stocks] = await db.execute(
-//             `
-//             SELECT
-//                 instrument_key,
-//                 symbol,
-//                 name,
-//                 price,
-//                 change_percent,
-//                 volume,
-//                 day_high,
-//                 day_low
-//             FROM market_stocks_data
-//             WHERE instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [instrumentKey],
-//         );
-
-//         if (stocks.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in market_stocks_data",
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Check duplicate
-//         // -------------------------------------------------
-
-//         const [existing] = await db.execute(
-//             `
-//             SELECT watchlist_id
-//             FROM watchlist
-//             WHERE
-//                 user_id = ?
-//                 AND instrument_key = ?
-//             LIMIT 1
-//             `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (existing.length > 0) {
-//             return res.status(409).json({
-//                 success: false,
-//                 message: "Stock already exists in watchlist",
-//                 watchlist_id: existing[0].watchlist_id,
-//             });
-//         }
-
-//         // -------------------------------------------------
-//         // Create watchlist ID
-//         // -------------------------------------------------
-
-//         const watchlistId = crypto.randomUUID();
-
-//         // -------------------------------------------------
-//         // Insert
-//         // -------------------------------------------------
-
-//         await db.execute(
-//             `
-//             INSERT INTO watchlist
-//             (
-//                 watchlist_id,
-//                 user_id,
-//                 instrument_key
-//             )
-//             VALUES
-//             (?, ?, ?)
-//             `,
-//             [watchlistId, userId, instrumentKey],
-//         );
-
-//         res.status(201).json({
-//             success: true,
-
-//             message: "Stock added to watchlist",
-
-//             watchlist_id: watchlistId,
-
-//             stock: {
-//                 instrument_key: stocks[0].instrument_key,
-
-//                 symbol: stocks[0].symbol,
-
-//                 name: stocks[0].name,
-//             },
-//         });
-//     } catch (error) {
-//         console.error("❌ Add Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to add stock to watchlist",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // DELETE STOCK FROM WATCHLIST
-// //
-// // DELETE
-// // /watchlist/:userId/:instrumentKey
-// //
-// // =====================================================
-
-// app.delete("/watchlist/:userId/:instrumentKey", async (req, res) => {
-//     try {
-//         const { userId, instrumentKey } = req.params;
-
-//         const [result] = await db.execute(
-//             `
-//                 DELETE FROM watchlist
-
-//                 WHERE
-//                     user_id = ?
-//                     AND instrument_key = ?
-//                 `,
-//             [userId, instrumentKey],
-//         );
-
-//         if (result.affectedRows === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Stock not found in watchlist",
-//             });
-//         }
-
-//         res.json({
-//             success: true,
-//             message: "Stock removed from watchlist",
-//         });
-//     } catch (error) {
-//         console.error("❌ Delete Watchlist Error:", error);
-
-//         res.status(500).json({
-//             success: false,
-//             message: "Failed to remove stock",
-//         });
-//     }
-// });
-
-// // =====================================================
-// // 404
-// // =====================================================
-
-// app.use((req, res) => {
-//     res.status(404).json({
-//         success: false,
-//         message: "Route Not Found",
-//     });
-// });
-
-// // =====================================================
-// // SERVER
-// // =====================================================
-
-// const server = app.listen(PORT, "127.0.0.1", () => {
-//     console.log("");
-//     console.log("========================================");
-//     console.log(`🚀 Watchlist Server Running`);
-//     console.log(`http://localhost:${PORT}`);
-//     console.log("========================================");
-
-//     console.log("Available routes:");
-
-//     console.log(`GET  http://localhost:${PORT}/`);
-
-//     console.log(`GET  http://localhost:${PORT}/watchlist/:userId`);
-
-//     console.log(`GET  http://localhost:${PORT}/search?q=reliance`);
-
-//     console.log(`POST http://localhost:${PORT}/watchlist`);
-
-//     console.log(
-//         `DELETE http://localhost:${PORT}/watchlist/:userId/:instrumentKey`,
-//     );
-
-//     console.log("========================================");
-// });
-
-// server.on("error", (error) => {
-//     console.error("❌ Server Error:", error);
-// });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const mysql = require("mysql2/promise");
+const helmet = require("helmet");
 const crypto = require("crypto");
+
 const authenticateToken = require("../middleware/authenticateToken");
+const requestContext = require("../middleware/requestContext");
+const createCorsOptions = require("../middleware/corsOptions");
+const errorHandler = require("../middleware/errorHandler");
+const { validateBodyObject } = require("../middleware/validateRequest");
+
+const {
+    connectMongoDB,
+    getMongoDB,
+    closeMongoDB,
+} = require("../config/mongodb");
 
 const app = express();
 
-const PORT = Number(process.env.PORT || 3008);
+const PORT = 3008;
 
 // =====================================================
 // MIDDLEWARE
 // =====================================================
 
-app.use(
-    cors({
-        origin: true,
-        credentials: true,
-    }),
-);
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(requestContext);
+app.use(helmet());
+app.use(cors(createCorsOptions({ credentials: true })));
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 
 // =====================================================
-// MYSQL CONNECTION
+// MONGODB
 // =====================================================
 
-const db = mysql.createPool({
-    host: "localhost",
-    user: "root",
-    password: "root",
-    database: "zerodha",
-
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-});
-
-// =====================================================
-// DATABASE TEST
-// =====================================================
-
-async function testDatabase() {
-    try {
-        const connection = await db.getConnection();
-
-        console.log("✅ MySQL Connected Successfully");
-
-        connection.release();
-    } catch (error) {
-        console.error("❌ MySQL Connection Failed");
-        console.error(error);
-    }
+function getCollection(name) {
+    return getMongoDB().collection(name);
 }
 
-testDatabase();
+const usersCollection = () => getCollection("users");
+const watchlistCollection = () => getCollection("watchlist");
+const marketStocksCollection = () => getCollection("marketStocks");
 
 // =====================================================
 // HOME
@@ -1871,42 +52,38 @@ app.get("/", (req, res) => {
         success: true,
         message: "Watchlist API Running 🚀",
         port: PORT,
+        database: "MongoDB",
     });
 });
 
 // =====================================================
 // GET USER WATCHLIST
-//
-// GET
-// /watchlist (authenticated; user comes from JWT)
-//
-// Example:
-// /watchlist/b9246e0a-96aa-49ea-8593-9b0912d7ced8
+// GET /watchlist
 // =====================================================
 
 app.get("/watchlist", authenticateToken, async (req, res) => {
     try {
-        // Phase 2: never trust a userId from params/query/body.
         const userId = req.userId;
 
         // -------------------------------------------------
         // Check user
         // -------------------------------------------------
 
-        const [users] = await db.execute(
-            `
-            SELECT
-                user_id,
-                full_name,
-                email
-            FROM users
-            WHERE user_id = ?
-            LIMIT 1
-            `,
-            [userId],
+        const user = await usersCollection().findOne(
+            {
+                userId,
+            },
+            {
+                projection: {
+                    _id: 0,
+                    userId: 1,
+                    fullName: 1,
+                    email: 1,
+                },
+            },
         );
 
-        if (users.length === 0) {
+        if (!user) {
             return res.status(404).json({
                 success: false,
                 message: "User not found",
@@ -1915,88 +92,114 @@ app.get("/watchlist", authenticateToken, async (req, res) => {
 
         // -------------------------------------------------
         // Get user's watchlist
-        //
-        // IMPORTANT:
-        // Data comes directly from market_stocks_data
         // -------------------------------------------------
 
-        const [rows] = await db.execute(
-            `
-            SELECT
-                w.watchlist_id,
-                w.user_id,
-                w.instrument_key,
-                w.added_at,
+        const watchlist = await watchlistCollection()
+            .find({
+                userId,
+            })
+            .sort({
+                addedAt: -1,
+            })
+            .toArray();
 
-                m.id,
-                m.symbol,
-                m.name,
-                m.price,
-                m.change_value,
-                m.change_percent,
-                m.open_price,
-                m.previous_close,
-                m.day_high,
-                m.day_low,
-                m.volume,
-                m.updated_at,
-                m.sector
+        const instrumentKeys = watchlist
+            .map((item) => item.instrumentKey)
+            .filter(Boolean);
 
-            FROM watchlist w
+        let marketStocks = [];
 
-            INNER JOIN market_stocks_data m
-                ON w.instrument_key = m.instrument_key
+        if (instrumentKeys.length > 0) {
+            marketStocks = await marketStocksCollection()
+                .find({
+                    instrumentKey: {
+                        $in: instrumentKeys,
+                    },
+                })
+                .toArray();
+        }
 
-            WHERE w.user_id = ?
-
-            ORDER BY w.added_at DESC
-            `,
-            [userId],
+        const stockMap = new Map(
+            marketStocks.map((stock) => [
+                stock.instrumentKey,
+                stock,
+            ]),
         );
 
-        const stocks = rows.map((stock) => ({
-            watchlist_id: stock.watchlist_id,
+        const stocks = watchlist
+            .map((item) => {
+                const stock = stockMap.get(
+                    item.instrumentKey,
+                );
 
-            user_id: stock.user_id,
+                // Preserve SQL INNER JOIN behavior:
+                // if market stock doesn't exist, don't return it.
+                if (!stock) {
+                    return null;
+                }
 
-            instrument_key: stock.instrument_key,
+                return {
+                    watchlist_id:
+                        item.watchlistId,
 
-            symbol: stock.symbol,
+                    user_id:
+                        item.userId,
 
-            name: stock.name,
+                    instrument_key:
+                        item.instrumentKey,
 
-            price: Number(stock.price || 0),
+                    symbol:
+                        stock.symbol,
 
-            current_price: Number(stock.price || 0),
+                    name:
+                        stock.name,
 
-            change_value: Number(stock.change_value || 0),
+                    price:
+                        Number(stock.price || 0),
 
-            change_percent: Number(stock.change_percent || 0),
+                    current_price:
+                        Number(stock.price || 0),
 
-            open_price: Number(stock.open_price || 0),
+                    change_value:
+                        Number(stock.changeValue || 0),
 
-            previous_close: Number(stock.previous_close || 0),
+                    change_percent:
+                        Number(stock.changePercent || 0),
 
-            day_high: Number(stock.day_high || 0),
+                    open_price:
+                        Number(stock.openPrice || 0),
 
-            day_low: Number(stock.day_low || 0),
+                    previous_close:
+                        Number(stock.previousClose || 0),
 
-            volume: Number(stock.volume || 0),
+                    day_high:
+                        Number(stock.dayHigh || 0),
 
-            sector: stock.sector,
+                    day_low:
+                        Number(stock.dayLow || 0),
 
-            updated_at: stock.updated_at,
+                    volume:
+                        Number(stock.volume || 0),
 
-            added_at: stock.added_at,
-        }));
+                    sector:
+                        stock.sector,
+
+                    updated_at:
+                        stock.updatedAt ?? null,
+
+                    added_at:
+                        item.addedAt ?? null,
+                };
+            })
+            .filter(Boolean);
 
         res.json({
             success: true,
 
             user: {
-                user_id: users[0].user_id,
-                full_name: users[0].full_name,
-                email: users[0].email,
+                user_id: user.userId,
+                full_name: user.fullName,
+                email: user.email,
             },
 
             count: stocks.length,
@@ -2004,7 +207,10 @@ app.get("/watchlist", authenticateToken, async (req, res) => {
             stocks,
         });
     } catch (error) {
-        console.error("❌ Get Watchlist Error:", error);
+        console.error(
+            "❌ Get Watchlist Error:",
+            error,
+        );
 
         res.status(500).json({
             success: false,
@@ -2015,19 +221,15 @@ app.get("/watchlist", authenticateToken, async (req, res) => {
 
 // =====================================================
 // SEARCH STOCKS
-//
-// GET
-// /search?q=reliance
-//
-// IMPORTANT:
-// Search happens ONLY inside market_stocks_data.
+// GET /search?q=reliance
 // =====================================================
 
 app.get("/search", async (req, res) => {
     try {
-        const q = String(req.query.q || "").trim();
+        const q = String(
+            req.query.q || "",
+        ).trim();
 
-        // Don't search for empty/very short queries
         if (q.length < 2) {
             return res.json({
                 success: true,
@@ -2035,75 +237,130 @@ app.get("/search", async (req, res) => {
             });
         }
 
-        const searchTerm = `%${q}%`;
-
-        const [rows] = await db.execute(
-            `
-            SELECT
-                id,
-                instrument_key,
-                symbol,
-                name,
-                price,
-                change_value,
-                change_percent,
-                open_price,
-                previous_close,
-                day_high,
-                day_low,
-                volume,
-                sector,
-                updated_at
-
-            FROM market_stocks_data
-
-            WHERE
-                name LIKE ?
-                OR symbol LIKE ?
-                OR instrument_key LIKE ?
-
-            ORDER BY
-
-                CASE
-                    WHEN symbol LIKE ? THEN 1
-                    WHEN name LIKE ? THEN 2
-                    ELSE 3
-                END,
-
-                name ASC
-
-            LIMIT 10
-            `,
-            [searchTerm, searchTerm, searchTerm, `${q}%`, `${q}%`],
+        const escaped = q.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
         );
 
-        const results = rows.map((stock) => ({
-            id: stock.id,
+        const regex = new RegExp(
+            escaped,
+            "i",
+        );
 
-            instrument_key: stock.instrument_key,
+        const prefixRegex = new RegExp(
+            `^${escaped}`,
+            "i",
+        );
 
-            symbol: stock.symbol,
+        const stocks =
+            await marketStocksCollection()
+                .find({
+                    $or: [
+                        {
+                            name: regex,
+                        },
+                        {
+                            symbol: regex,
+                        },
+                        {
+                            instrumentKey: regex,
+                        },
+                    ],
+                })
+                .limit(50)
+                .toArray();
 
-            name: stock.name,
+        const results = stocks
+            .map((stock) => {
+                let rank = 3;
 
-            price: Number(stock.price || 0),
+                if (
+                    prefixRegex.test(
+                        stock.symbol || "",
+                    )
+                ) {
+                    rank = 1;
+                } else if (
+                    prefixRegex.test(
+                        stock.name || "",
+                    )
+                ) {
+                    rank = 2;
+                }
 
-            change_value: Number(stock.change_value || 0),
+                return {
+                    stock,
+                    rank,
+                };
+            })
+            .sort((a, b) => {
+                if (a.rank !== b.rank) {
+                    return a.rank - b.rank;
+                }
 
-            change_percent: Number(stock.change_percent || 0),
+                return String(
+                    a.stock.name || "",
+                ).localeCompare(
+                    String(
+                        b.stock.name || "",
+                    ),
+                );
+            })
+            .slice(0, 10)
+            .map(({ stock }) => ({
+                id:
+                    stock.mysqlId ??
+                    stock.id ??
+                    null,
 
-            open_price: Number(stock.open_price || 0),
+                instrument_key:
+                    stock.instrumentKey,
 
-            previous_close: Number(stock.previous_close || 0),
+                symbol:
+                    stock.symbol,
 
-            day_high: Number(stock.day_high || 0),
+                name:
+                    stock.name,
 
-            day_low: Number(stock.day_low || 0),
+                price:
+                    Number(stock.price || 0),
 
-            volume: Number(stock.volume || 0),
+                change_value:
+                    Number(
+                        stock.changeValue || 0,
+                    ),
 
-            sector: stock.sector,
-        }));
+                change_percent:
+                    Number(
+                        stock.changePercent || 0,
+                    ),
+
+                open_price:
+                    Number(
+                        stock.openPrice || 0,
+                    ),
+
+                previous_close:
+                    Number(
+                        stock.previousClose || 0,
+                    ),
+
+                day_high:
+                    Number(
+                        stock.dayHigh || 0,
+                    ),
+
+                day_low:
+                    Number(
+                        stock.dayLow || 0,
+                    ),
+
+                volume:
+                    Number(stock.volume || 0),
+
+                sector:
+                    stock.sector,
+            }));
 
         res.json({
             success: true,
@@ -2112,7 +369,10 @@ app.get("/search", async (req, res) => {
             results,
         });
     } catch (error) {
-        console.error("❌ Search Error:", error);
+        console.error(
+            "❌ Search Error:",
+            error,
+        );
 
         res.status(500).json({
             success: false,
@@ -2122,212 +382,256 @@ app.get("/search", async (req, res) => {
 });
 
 // =====================================================
-// ADD STOCK TO USER WATCHLIST
-//
-// POST
-// /watchlist
-//
-// Body:
-//
-// {
-//     "instrumentKey": "NSE_EQ|INE002A01018"
-// }
-//
-// The user is taken from req.userId.
+// ADD STOCK TO WATCHLIST
+// POST /watchlist
 // =====================================================
 
-app.post("/watchlist", authenticateToken, async (req, res) => {
-    try {
-        const { instrumentKey } = req.body || {};
-        const body = req.body || {};
-
-        // Phase 2: reject attempts to supply a different user identity.
-        if (
-            Object.prototype.hasOwnProperty.call(body, "userId") ||
-            Object.prototype.hasOwnProperty.call(body, "user_id")
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "userId must not be supplied; use the authenticated session",
-            });
-        }
-
-        const userId = req.userId;
-
-        if (!instrumentKey) {
-            return res.status(400).json({
-                success: false,
-                message: "instrumentKey is required",
-            });
-        }
-
-        // -------------------------------------------------
-        // Check user
-        // -------------------------------------------------
-
-        const [users] = await db.execute(
-            `
-            SELECT user_id
-            FROM users
-            WHERE user_id = ?
-            LIMIT 1
-            `,
-            [userId],
-        );
-
-        if (users.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found",
-            });
-        }
-
-        // -------------------------------------------------
-        // Check stock exists
-        // -------------------------------------------------
-
-        const [stocks] = await db.execute(
-            `
-            SELECT
-                instrument_key,
-                symbol,
-                name,
-                price,
-                change_percent,
-                volume,
-                day_high,
-                day_low
-            FROM market_stocks_data
-            WHERE instrument_key = ?
-            LIMIT 1
-            `,
-            [instrumentKey],
-        );
-
-        if (stocks.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "Stock not found in market_stocks_data",
-            });
-        }
-
-        // -------------------------------------------------
-        // Check duplicate
-        // -------------------------------------------------
-
-        const [existing] = await db.execute(
-            `
-            SELECT watchlist_id
-            FROM watchlist
-            WHERE
-                user_id = ?
-                AND instrument_key = ?
-            LIMIT 1
-            `,
-            [userId, instrumentKey],
-        );
-
-        if (existing.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: "Stock already exists in watchlist",
-                watchlist_id: existing[0].watchlist_id,
-            });
-        }
-
-        // -------------------------------------------------
-        // Create watchlist ID
-        // -------------------------------------------------
-
-        const watchlistId = crypto.randomUUID();
-
-        // -------------------------------------------------
-        // Insert
-        // -------------------------------------------------
-
-        await db.execute(
-            `
-            INSERT INTO watchlist
-            (
-                watchlist_id,
-                user_id,
-                instrument_key
-            )
-            VALUES
-            (?, ?, ?)
-            `,
-            [watchlistId, userId, instrumentKey],
-        );
-
-        res.status(201).json({
-            success: true,
-
-            message: "Stock added to watchlist",
-
-            watchlist_id: watchlistId,
-
-            stock: {
-                instrument_key: stocks[0].instrument_key,
-
-                symbol: stocks[0].symbol,
-
-                name: stocks[0].name,
+app.post(
+    "/watchlist",
+    authenticateToken,
+    validateBodyObject({
+        allowEmpty: false,
+        allowedFields: ["instrumentKey"],
+        requiredFields: ["instrumentKey"],
+        fieldRules: {
+            instrumentKey: {
+                type: "string",
+                maxLength: 255,
             },
-        });
-    } catch (error) {
-        console.error("❌ Add Watchlist Error:", error);
+        },
+    }),
+    async (req, res) => {
+        try {
+            const {
+                instrumentKey,
+            } = req.body || {};
 
-        res.status(500).json({
-            success: false,
-            message: "Failed to add stock to watchlist",
-        });
-    }
-});
+            const body = req.body || {};
+
+            // Never allow client-controlled user ID.
+            if (
+                Object.prototype.hasOwnProperty.call(
+                    body,
+                    "userId",
+                ) ||
+                Object.prototype.hasOwnProperty.call(
+                    body,
+                    "user_id",
+                )
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "userId must not be supplied; use the authenticated session",
+                });
+            }
+
+            const userId = req.userId;
+
+            if (!instrumentKey) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "instrumentKey is required",
+                });
+            }
+
+            // -------------------------------------------------
+            // Check user
+            // -------------------------------------------------
+
+            const user =
+                await usersCollection().findOne(
+                    {
+                        userId,
+                    },
+                    {
+                        projection: {
+                            _id: 1,
+                        },
+                    },
+                );
+
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found",
+                });
+            }
+
+            // -------------------------------------------------
+            // Check stock
+            // -------------------------------------------------
+
+            const stock =
+                await marketStocksCollection()
+                    .findOne({
+                        instrumentKey,
+                    });
+
+            if (!stock) {
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Stock not found in marketStocks",
+                });
+            }
+
+            // -------------------------------------------------
+            // Check duplicate
+            // -------------------------------------------------
+
+            const existing =
+                await watchlistCollection()
+                    .findOne({
+                        userId,
+                        instrumentKey,
+                    });
+
+            if (existing) {
+                return res.status(409).json({
+                    success: false,
+                    message:
+                        "Stock already exists in watchlist",
+                    watchlist_id:
+                        existing.watchlistId,
+                });
+            }
+
+            // -------------------------------------------------
+            // Create watchlist ID
+            // -------------------------------------------------
+
+            const watchlistId =
+                crypto.randomUUID();
+
+            const now = new Date();
+
+            // -------------------------------------------------
+            // Insert
+            // -------------------------------------------------
+
+            try {
+                await watchlistCollection()
+                    .insertOne({
+                        watchlistId,
+                        userId,
+                        instrumentKey,
+                        addedAt: now,
+                        createdAt: now,
+                        updatedAt: now,
+                    });
+            } catch (insertError) {
+                // Protect against race-condition duplicate inserts.
+                if (
+                    insertError?.code === 11000
+                ) {
+                    const duplicate =
+                        await watchlistCollection()
+                            .findOne({
+                                userId,
+                                instrumentKey,
+                            });
+
+                    return res.status(409).json({
+                        success: false,
+                        message:
+                            "Stock already exists in watchlist",
+                        watchlist_id:
+                            duplicate?.watchlistId ||
+                            null,
+                    });
+                }
+
+                throw insertError;
+            }
+
+            res.status(201).json({
+                success: true,
+
+                message:
+                    "Stock added to watchlist",
+
+                watchlist_id:
+                    watchlistId,
+
+                stock: {
+                    instrument_key:
+                        stock.instrumentKey,
+
+                    symbol:
+                        stock.symbol,
+
+                    name:
+                        stock.name,
+                },
+            });
+        } catch (error) {
+            console.error(
+                "❌ Add Watchlist Error:",
+                error,
+            );
+
+            res.status(500).json({
+                success: false,
+                message:
+                    "Failed to add stock to watchlist",
+            });
+        }
+    },
+);
 
 // =====================================================
 // DELETE STOCK FROM WATCHLIST
-//
-// DELETE
-// DELETE /watchlist/:instrumentKey (authenticated)
-//
+// DELETE /watchlist/:instrumentKey
 // =====================================================
 
-app.delete("/watchlist/:instrumentKey", authenticateToken, async (req, res) => {
-    try {
-        const userId = req.userId;
-        const { instrumentKey } = req.params;
+app.delete(
+    "/watchlist/:instrumentKey",
+    authenticateToken,
+    async (req, res) => {
+        try {
+            const userId = req.userId;
 
-        const [result] = await db.execute(
-            `
-                DELETE FROM watchlist
+            const instrumentKey =
+                decodeURIComponent(
+                    req.params.instrumentKey,
+                );
 
-                WHERE
-                    user_id = ?
-                    AND instrument_key = ?
-                `,
-            [userId, instrumentKey],
-        );
+            const result =
+                await watchlistCollection()
+                    .deleteOne({
+                        userId,
+                        instrumentKey,
+                    });
 
-        if (result.affectedRows === 0) {
-            return res.status(404).json({
+            if (result.deletedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Stock not found in watchlist",
+                });
+            }
+
+            res.json({
+                success: true,
+                message:
+                    "Stock removed from watchlist",
+            });
+        } catch (error) {
+            console.error(
+                "❌ Delete Watchlist Error:",
+                error,
+            );
+
+            res.status(500).json({
                 success: false,
-                message: "Stock not found in watchlist",
+                message:
+                    "Failed to remove stock",
             });
         }
-
-        res.json({
-            success: true,
-            message: "Stock removed from watchlist",
-        });
-    } catch (error) {
-        console.error("❌ Delete Watchlist Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to remove stock",
-        });
-    }
-});
+    },
+);
 
 // =====================================================
 // 404
@@ -2340,34 +644,128 @@ app.use((req, res) => {
     });
 });
 
+app.use(errorHandler);
+
 // =====================================================
 // SERVER
 // =====================================================
 
-const server = app.listen(PORT, "127.0.0.1", () => {
-    console.log("");
-    console.log("========================================");
-    console.log(`🚀 Watchlist Server Running`);
-    console.log(`http://localhost:${PORT}`);
-    console.log("========================================");
+let server;
 
-    console.log("Available routes:");
+async function startServer() {
+    try {
+        await connectMongoDB();
 
-    console.log(`GET  http://localhost:${PORT}/`);
+        server = app.listen(
+            PORT,
+            "127.0.0.1",
+            () => {
+                console.log("");
+                console.log(
+                    "========================================",
+                );
+                console.log(
+                    "🚀 Watchlist Server Running",
+                );
+                console.log(
+                    `http://localhost:${PORT}`,
+                );
+                console.log(
+                    "Database: MongoDB",
+                );
+                console.log(
+                    "========================================",
+                );
 
-    console.log(`GET  http://localhost:${PORT}/watchlist`);
+                console.log(
+                    "Available routes:",
+                );
 
-    console.log(`GET  http://localhost:${PORT}/search?q=reliance`);
+                console.log(
+                    `GET  http://localhost:${PORT}/`,
+                );
 
-    console.log(`POST http://localhost:${PORT}/watchlist`);
+                console.log(
+                    `GET  http://localhost:${PORT}/watchlist`,
+                );
 
+                console.log(
+                    `GET  http://localhost:${PORT}/search?q=reliance`,
+                );
+
+                console.log(
+                    `POST http://localhost:${PORT}/watchlist`,
+                );
+
+                console.log(
+                    `DELETE http://localhost:${PORT}/watchlist/:instrumentKey`,
+                );
+
+                console.log(
+                    "========================================",
+                );
+            },
+        );
+
+        server.on("error", (error) => {
+            console.error(
+                "❌ Server Error:",
+                error,
+            );
+
+            process.exit(1);
+        });
+    } catch (error) {
+        console.error(
+            "❌ Watchlist startup failed:",
+            error,
+        );
+
+        process.exit(1);
+    }
+}
+
+// =====================================================
+// GRACEFUL SHUTDOWN
+// =====================================================
+
+async function shutdown(signal) {
     console.log(
-        `DELETE http://localhost:${PORT}/watchlist/:instrumentKey`,
+        `\nReceived ${signal}. Shutting down Watchlist service...`,
     );
 
-    console.log("========================================");
-});
+    try {
+        if (server) {
+            await new Promise((resolve) => {
+                server.close(resolve);
+            });
+        }
 
-server.on("error", (error) => {
-    console.error("❌ Server Error:", error);
-});
+        await closeMongoDB();
+
+        console.log(
+            "Watchlist service shutdown complete.",
+        );
+
+        process.exit(0);
+    } catch (error) {
+        console.error(
+            "Shutdown error:",
+            error,
+        );
+
+        process.exit(1);
+    }
+}
+
+process.on(
+    "SIGINT",
+    () => shutdown("SIGINT"),
+);
+
+process.on(
+    "SIGTERM",
+    () => shutdown("SIGTERM"),
+);
+
+startServer();

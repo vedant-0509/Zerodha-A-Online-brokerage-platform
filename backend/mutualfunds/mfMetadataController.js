@@ -1,58 +1,185 @@
-const pool = require('./db');
+const {
+  connectMongoDB,
+  getMongoDB,
+} = require("../config/mongodb");
 
-const RISK_VALUES = ['Low', 'Low to Moderate', 'Moderate', 'Moderately High', 'High', 'Very High'];
+const RISK_VALUES = [
+  "Low",
+  "Low to Moderate",
+  "Moderate",
+  "Moderately High",
+  "High",
+  "Very High",
+];
 
 function normalizeRisk(value) {
   if (!value) return null;
-  const v = String(value).trim().toLowerCase().replace(/[_-]+/g, ' ');
-  if (v === 'low') return 'Low';
-  if (v === 'low to moderate' || v === 'moderately low') return 'Low to Moderate';
-  if (v === 'moderate') return 'Moderate';
-  if (v === 'moderately high') return 'Moderately High';
-  if (v === 'high') return 'High';
-  if (v === 'very high') return 'Very High';
+
+  const v = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+
+  if (v === "low") return "Low";
+
+  if (
+    v === "low to moderate" ||
+    v === "moderately low"
+  ) {
+    return "Low to Moderate";
+  }
+
+  if (v === "moderate") return "Moderate";
+
+  if (v === "moderately high") {
+    return "Moderately High";
+  }
+
+  if (v === "high") return "High";
+
+  if (v === "very high") {
+    return "Very High";
+  }
+
   return null;
 }
 
 async function importMetadata(req, res) {
-  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  if (!rows.length) return res.status(400).json({ success: false, message: 'rows[] is required' });
+  const rows = Array.isArray(req.body?.rows)
+    ? req.body.rows
+    : [];
 
-  const connection = await pool.getConnection();
+  if (!rows.length) {
+    return res.status(400).json({
+      success: false,
+      message: "rows[] is required",
+    });
+  }
+
   try {
-    await connection.beginTransaction();
+    await connectMongoDB();
+
+    const db = getMongoDB();
+    const schemes = db.collection("mfSchemes");
+
     let updated = 0;
     let skipped = 0;
+
     for (const row of rows) {
-      const schemeCode = Number(row.schemeCode ?? row.scheme_code);
-      const rating = row.rating === null || row.rating === undefined || row.rating === '' ? null : Number(row.rating);
+      const schemeCode = Number(
+        row.schemeCode ??
+        row.scheme_code
+      );
+
+      const rating =
+        row.rating === null ||
+        row.rating === undefined ||
+        row.rating === ""
+          ? null
+          : Number(row.rating);
+
       const risk = normalizeRisk(row.risk);
-      if (!Number.isInteger(schemeCode) || schemeCode <= 0 || (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)) || (risk !== null && !RISK_VALUES.includes(risk))) {
+
+      /*
+       * Validate metadata.
+       */
+      if (
+        !Number.isInteger(schemeCode) ||
+        schemeCode <= 0 ||
+        (
+          rating !== null &&
+          (
+            !Number.isInteger(rating) ||
+            rating < 1 ||
+            rating > 5
+          )
+        ) ||
+        (
+          risk !== null &&
+          !RISK_VALUES.includes(risk)
+        )
+      ) {
         skipped++;
         continue;
       }
-      const [result] = await connection.query(
-        `UPDATE mf_schemes SET
-          rating = COALESCE(?, rating),
-          rating_source = COALESCE(?, rating_source),
-          rating_updated_at = CASE WHEN ? IS NULL THEN rating_updated_at ELSE NOW() END,
-          risk = COALESCE(?, risk),
-          risk_source = COALESCE(?, risk_source),
-          risk_updated_at = CASE WHEN ? IS NULL THEN risk_updated_at ELSE NOW() END,
-          updated_at = NOW()
-         WHERE scheme_code = ? AND is_active = 1`,
-        [rating, row.ratingSource || 'VALUE_RESEARCH', rating, risk, row.riskSource || 'AMFI', risk, schemeCode]
-      );
-      if (result.affectedRows) updated += result.affectedRows; else skipped++;
+
+      /*
+       * Build MongoDB update.
+       *
+       * This preserves the old MySQL COALESCE behavior:
+       *
+       * rating:
+       *   supplied value -> update
+       *   null -> keep existing value
+       *
+       * risk:
+       *   supplied value -> update
+       *   null -> keep existing value
+       */
+      const setFields = {
+        updatedAt: new Date(),
+      };
+
+      if (rating !== null) {
+        setFields.rating = rating;
+        setFields.ratingSource =
+          row.ratingSource ||
+          "VALUE_RESEARCH";
+        setFields.ratingUpdatedAt =
+          new Date();
+      }
+
+      if (risk !== null) {
+        setFields.risk = risk;
+        setFields.riskSource =
+          row.riskSource ||
+          "AMFI";
+        setFields.riskUpdatedAt =
+          new Date();
+      }
+
+      /*
+       * Only update active mutual-fund schemes.
+       */
+      const result =
+        await schemes.updateOne(
+          {
+            schemeCode: schemeCode,
+            isActive: true,
+          },
+          {
+            $set: setFields,
+          }
+        );
+
+      if (result.matchedCount === 1) {
+        updated++;
+      } else {
+        skipped++;
+      }
     }
-    await connection.commit();
-    res.json({ success: true, data: { received: rows.length, updated, skipped } });
+
+    return res.json({
+      success: true,
+      data: {
+        received: rows.length,
+        updated,
+        skipped,
+      },
+    });
   } catch (error) {
-    await connection.rollback();
-    res.status(500).json({ success: false, message: 'Metadata import failed', error: error.message });
-  } finally {
-    connection.release();
+    console.error(
+      `[MF METADATA] Import failed: ${error.message}`
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Metadata import failed",
+      error: error.message,
+    });
   }
 }
 
-module.exports = { importMetadata };
+module.exports = {
+  importMetadata,
+};

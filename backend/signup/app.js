@@ -1,24 +1,25 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
-const rateLimit =
-    require("express-rate-limit");
-const mysql =
-    require("mysql2/promise");
-const bcrypt =
-    require("bcrypt");
-const crypto =
-    require("crypto");
+const rateLimit = require("express-rate-limit");
+const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
-const env =
-    require("../config/env");
+const env = require("../config/env");
 
 const {
-    signAccessToken,
-} = require("../auth/jwt");
+    connectMongoDB,
+    getMongoDB,
+    closeMongoDB,
+} = require("../config/mongodb");
 
-const authenticateToken =
-    require("../middleware/authenticateToken");
+const { signAccessToken } = require("../auth/jwt");
+
+const authenticateToken = require("../middleware/authenticateToken");
+const requestContext = require("../middleware/requestContext");
+const createCorsOptions = require("../middleware/corsOptions");
+const errorHandler = require("../middleware/errorHandler");
+const { validateBodyObject } = require("../middleware/validateRequest");
 
 
 /*
@@ -27,32 +28,29 @@ const authenticateToken =
 |--------------------------------------------------------------------------
 */
 
-const app =
-    express();
+const app = express();
 
-app.disable(
-    "x-powered-by"
-);
+app.disable("x-powered-by");
 
 
 /*
 |--------------------------------------------------------------------------
 | TRUST PROXY
 |--------------------------------------------------------------------------
-|
-| Required when deployed behind Render/Nginx/etc.
+*/
+
+if (env.nodeEnv === "production") {
+    app.set("trust proxy", 1);
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| REQUEST CONTEXT
 |--------------------------------------------------------------------------
 */
 
-if (
-    env.nodeEnv ===
-    "production"
-) {
-    app.set(
-        "trust proxy",
-        1
-    );
-}
+app.use(requestContext);
 
 
 /*
@@ -61,57 +59,7 @@ if (
 |--------------------------------------------------------------------------
 */
 
-app.use(
-    cors({
-        origin(origin, callback) {
-
-            /*
-            No Origin:
-            Postman, curl, server-to-server
-            */
-
-            if (!origin) {
-                return callback(
-                    null,
-                    true
-                );
-            }
-
-
-            if (
-                env.frontendOrigins.includes(
-                    origin
-                )
-            ) {
-                return callback(
-                    null,
-                    true
-                );
-            }
-
-
-            return callback(
-                new Error(
-                    "CORS origin not allowed"
-                )
-            );
-        },
-
-        credentials:
-            false,
-
-        methods: [
-            "GET",
-            "POST",
-            "OPTIONS",
-        ],
-
-        allowedHeaders: [
-            "Content-Type",
-            "Authorization",
-        ],
-    })
-);
+app.use(cors(createCorsOptions({ credentials: false })));
 
 
 /*
@@ -120,9 +68,7 @@ app.use(
 |--------------------------------------------------------------------------
 */
 
-app.use(
-    helmet()
-);
+app.use(helmet());
 
 
 /*
@@ -133,55 +79,29 @@ app.use(
 
 app.use(
     express.json({
-        limit:
-            "16kb",
-    })
+        limit: "16kb",
+    }),
 );
 
 app.use(
     express.urlencoded({
         extended: false,
-        limit:
-            "16kb",
-    })
+        limit: "16kb",
+    }),
 );
 
 
 /*
 |--------------------------------------------------------------------------
-| MYSQL
+| MONGODB
 |--------------------------------------------------------------------------
 */
 
-const db =
-    mysql.createPool({
-        host:
-            env.mysql.host,
+function getUsersCollection() {
+    const db = getMongoDB();
 
-        port:
-            env.mysql.port,
-
-        user:
-            env.mysql.user,
-
-        password:
-            env.mysql.password,
-
-        database:
-            env.mysql.database,
-
-        waitForConnections:
-            true,
-
-        connectionLimit:
-            env.mysql.connectionLimit,
-
-        queueLimit:
-            env.mysql.queueLimit,
-
-        charset:
-            "utf8mb4",
-    });
+    return db.collection("users");
+}
 
 
 /*
@@ -190,64 +110,36 @@ const db =
 |--------------------------------------------------------------------------
 */
 
-const loginLimiter =
-    rateLimit({
-        windowMs:
-            env.authRateLimits
-                .loginWindowMs,
+const loginLimiter = rateLimit({
+    windowMs: env.authRateLimits.loginWindowMs,
+    limit: env.authRateLimits.loginLimit,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
 
-        limit:
-            env.authRateLimits
-                .loginLimit,
-
-        standardHeaders:
-            "draft-8",
-
-        legacyHeaders:
-            false,
-
-        message: {
-            success: false,
-
-            error: {
-                code:
-                    "RATE_LIMITED",
-
-                message:
-                    "Too many login attempts. Please try again later.",
-            },
+    message: {
+        success: false,
+        error: {
+            code: "RATE_LIMITED",
+            message: "Too many login attempts. Please try again later.",
         },
-    });
+    },
+});
 
 
-const signupLimiter =
-    rateLimit({
-        windowMs:
-            env.authRateLimits
-                .signupWindowMs,
+const signupLimiter = rateLimit({
+    windowMs: env.authRateLimits.signupWindowMs,
+    limit: env.authRateLimits.signupLimit,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
 
-        limit:
-            env.authRateLimits
-                .signupLimit,
-
-        standardHeaders:
-            "draft-8",
-
-        legacyHeaders:
-            false,
-
-        message: {
-            success: false,
-
-            error: {
-                code:
-                    "RATE_LIMITED",
-
-                message:
-                    "Too many signup attempts. Please try again later.",
-            },
+    message: {
+        success: false,
+        error: {
+            code: "RATE_LIMITED",
+            message: "Too many signup attempts. Please try again later.",
         },
-    });
+    },
+});
 
 
 /*
@@ -257,27 +149,21 @@ const signupLimiter =
 */
 
 function normalizeEmail(email) {
-    return String(
-        email || ""
-    )
+    return String(email || "")
         .trim()
         .toLowerCase();
 }
 
 
 function normalizeName(name) {
-    return String(
-        name || ""
-    )
+    return String(name || "")
         .trim()
         .replace(/\s+/g, " ");
 }
 
 
 function normalizePhone(phone) {
-    return String(
-        phone || ""
-    )
+    return String(phone || "")
         .trim()
         .replace(/[\s()-]/g, "");
 }
@@ -286,28 +172,23 @@ function normalizePhone(phone) {
 function isValidEmail(email) {
     return (
         email.length <= 254 &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-            email
-        )
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
     );
 }
 
 
 function isValidPhone(phone) {
-    return /^\+?[0-9]{10,15}$/.test(
-        phone
-    );
+    return /^\+?[0-9]{10,15}$/.test(phone);
 }
 
 
 function isValidPassword(password) {
     /*
-    BCrypt input should remain <= 72 bytes.
-    */
+     * BCrypt input should remain <= 72 bytes.
+     */
 
     return (
-        typeof password ===
-            "string" &&
+        typeof password === "string" &&
         password.length >= 8 &&
         password.length <= 72
     );
@@ -316,25 +197,14 @@ function isValidPassword(password) {
 
 function safeUser(user) {
     return {
-        user_id:
-            user.user_id,
-
-        full_name:
-            user.full_name,
-
-        email:
-            user.email,
-
-        phone:
-            user.phone,
-
-        account_status:
-            user.account_status,
-
-        role:
-            String(user.role || "USER")
-                .trim()
-                .toUpperCase(),
+        user_id: user.userId,
+        full_name: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        account_status: user.accountStatus,
+        role: String(user.role || "USER")
+            .trim()
+            .toUpperCase(),
     };
 }
 
@@ -345,23 +215,15 @@ function safeUser(user) {
 |--------------------------------------------------------------------------
 */
 
-app.get(
-    "/",
-    (req, res) => {
-        return res.json({
-            success: true,
-
-            service:
-                "signup-auth",
-
-            message:
-                "Authentication API running",
-
-            port:
-                env.authPort,
-        });
-    }
-);
+app.get("/", (req, res) => {
+    return res.json({
+        success: true,
+        service: "signup-auth",
+        message: "Authentication API running",
+        port: env.authPort,
+        database: "MongoDB",
+    });
+});
 
 
 /*
@@ -372,123 +234,112 @@ app.get(
 
 app.post(
     "/signup",
+
     signupLimiter,
+
+    validateBodyObject({
+        allowEmpty: false,
+
+        allowedFields: [
+            "full_name",
+            "phone",
+            "email",
+            "password",
+        ],
+
+        requiredFields: [
+            "full_name",
+            "phone",
+            "email",
+            "password",
+        ],
+
+        fieldRules: {
+            full_name: {
+                type: "string",
+                maxLength: 100,
+            },
+
+            phone: {
+                type: "string",
+                maxLength: 30,
+            },
+
+            email: {
+                type: "string",
+                maxLength: 254,
+            },
+
+            password: {
+                type: "string",
+                maxLength: 128,
+            },
+        },
+    }),
+
     async (req, res) => {
-
         try {
-
-            const fullName =
-                normalizeName(
-                    req.body.full_name
-                );
-
-            const phone =
-                normalizePhone(
-                    req.body.phone
-                );
-
-            const email =
-                normalizeEmail(
-                    req.body.email
-                );
-
-            const password =
-                String(
-                    req.body.password ||
-                    ""
-                );
+            const fullName = normalizeName(req.body.full_name);
+            const phone = normalizePhone(req.body.phone);
+            const email = normalizeEmail(req.body.email);
+            const password = String(req.body.password || "");
 
 
             /*
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             | VALIDATION
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             */
 
-            if (
-                !fullName ||
-                !phone ||
-                !email ||
-                !password
-            ) {
+            if (!fullName || !phone || !email || !password) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
-                        message:
-                            "Please fill all required fields.",
+                        code: "VALIDATION_ERROR",
+                        message: "Please fill all required fields.",
                     },
                 });
             }
 
 
-            if (
-                fullName.length < 2 ||
-                fullName.length > 100
-            ) {
+            if (fullName.length < 2 || fullName.length > 100) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
-                        message:
-                            "Full name is invalid.",
+                        code: "VALIDATION_ERROR",
+                        message: "Full name is invalid.",
                     },
                 });
             }
 
 
-            if (
-                !isValidEmail(email)
-            ) {
+            if (!isValidEmail(email)) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
-                        message:
-                            "Please enter a valid email address.",
+                        code: "VALIDATION_ERROR",
+                        message: "Please enter a valid email address.",
                     },
                 });
             }
 
 
-            if (
-                !isValidPhone(phone)
-            ) {
+            if (!isValidPhone(phone)) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
-                        message:
-                            "Please enter a valid phone number.",
+                        code: "VALIDATION_ERROR",
+                        message: "Please enter a valid phone number.",
                     },
                 });
             }
 
 
-            if (
-                !isValidPassword(
-                    password
-                )
-            ) {
+            if (!isValidPassword(password)) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
+                        code: "VALIDATION_ERROR",
                         message:
                             "Password must be between 8 and 72 characters.",
                     },
@@ -497,36 +348,38 @@ app.post(
 
 
             /*
-            ------------------------------------------------------------------
-            | CHECK DUPLICATE EMAIL
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
+            | MONGODB COLLECTION
+            |--------------------------------------------------------------------------
             */
 
-            const [
-                existing,
-            ] =
-                await db.execute(
-                    `
-                    SELECT user_id
-                    FROM users
-                    WHERE email = ?
-                    LIMIT 1
-                    `,
-                    [email]
-                );
+            const users = getUsersCollection();
 
 
-            if (
-                existing.length >
-                0
-            ) {
+            /*
+            |--------------------------------------------------------------------------
+            | CHECK DUPLICATE EMAIL
+            |--------------------------------------------------------------------------
+            */
+
+            const existing = await users.findOne(
+                {
+                    email,
+                },
+                {
+                    projection: {
+                        _id: 1,
+                        userId: 1,
+                    },
+                },
+            );
+
+
+            if (existing) {
                 return res.status(409).json({
                     success: false,
-
                     error: {
-                        code:
-                            "EMAIL_ALREADY_EXISTS",
-
+                        code: "EMAIL_ALREADY_EXISTS",
                         message:
                             "An account with this email already exists.",
                     },
@@ -535,90 +388,73 @@ app.post(
 
 
             /*
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             | HASH PASSWORD
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             */
 
-            const passwordHash =
-                await bcrypt.hash(
-                    password,
-                    12
-                );
+            const passwordHash = await bcrypt.hash(password, 12);
 
+            const userId = crypto.randomUUID();
 
-            const userId =
-                crypto.randomUUID();
+            const now = new Date();
 
 
             /*
-            ------------------------------------------------------------------
-            | INSERT
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
+            | INSERT USER
+            |--------------------------------------------------------------------------
             */
 
-            await db.execute(
-                `
-                INSERT INTO users
-                (
-                    user_id,
-                    full_name,
-                    email,
-                    phone,
-                    password_hash,
-                    account_status
-                )
-                VALUES
-                (?, ?, ?, ?, ?, ?)
-                `,
-                [
-                    userId,
-                    fullName,
-                    email,
-                    phone,
-                    passwordHash,
-                    "Active",
-                ]
-            );
+            await users.insertOne({
+                userId,
+
+                fullName,
+
+                email,
+
+                phone,
+
+                passwordHash,
+
+                accountStatus: "Active",
+
+                role: "USER",
+
+                createdAt: now,
+
+                updatedAt: now,
+
+                migratedAt: null,
+            });
 
 
             return res.status(201).json({
                 success: true,
 
-                message:
-                    "Account created successfully.",
+                message: "Account created successfully.",
 
                 data: {
-                    user_id:
-                        userId,
+                    user_id: userId,
                 },
             });
 
         } catch (error) {
 
-            console.error(
-                "[AUTH] Signup error:",
-                error
-            );
+            console.error("[AUTH] Signup error:", error);
 
 
             /*
-            ------------------------------------------------------------------
-            | Duplicate race condition
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
+            | MongoDB duplicate-key race condition
+            |--------------------------------------------------------------------------
             */
 
-            if (
-                error.code ===
-                "ER_DUP_ENTRY"
-            ) {
+            if (error && error.code === 11000) {
                 return res.status(409).json({
                     success: false,
-
                     error: {
-                        code:
-                            "EMAIL_ALREADY_EXISTS",
-
+                        code: "EMAIL_ALREADY_EXISTS",
                         message:
                             "An account with this email already exists.",
                     },
@@ -628,17 +464,13 @@ app.post(
 
             return res.status(500).json({
                 success: false,
-
                 error: {
-                    code:
-                        "INTERNAL_ERROR",
-
-                    message:
-                        "Unable to create account.",
+                    code: "INTERNAL_ERROR",
+                    message: "Unable to create account.",
                 },
             });
         }
-    }
+    },
 );
 
 
@@ -650,34 +482,47 @@ app.post(
 
 app.post(
     "/login",
+
     loginLimiter,
+
+    validateBodyObject({
+        allowEmpty: false,
+
+        allowedFields: [
+            "email",
+            "password",
+        ],
+
+        requiredFields: [
+            "email",
+            "password",
+        ],
+
+        fieldRules: {
+            email: {
+                type: "string",
+                maxLength: 254,
+            },
+
+            password: {
+                type: "string",
+                maxLength: 128,
+            },
+        },
+    }),
+
     async (req, res) => {
-
         try {
+            const email = normalizeEmail(req.body.email);
 
-            const email =
-                normalizeEmail(
-                    req.body.email
-                );
-
-            const password =
-                String(
-                    req.body.password ||
-                    ""
-                );
+            const password = String(req.body.password || "");
 
 
-            if (
-                !email ||
-                !password
-            ) {
+            if (!email || !password) {
                 return res.status(400).json({
                     success: false,
-
                     error: {
-                        code:
-                            "VALIDATION_ERROR",
-
+                        code: "VALIDATION_ERROR",
                         message:
                             "Email and password are required.",
                     },
@@ -685,46 +530,34 @@ app.post(
             }
 
 
-            const [
-                rows,
-            ] =
-                await db.execute(
-                    `
-                    SELECT
-                        user_id,
-                        full_name,
-                        email,
-                        phone,
-                        password_hash,
-                        account_status,
-                        role
-                    FROM users
-                    WHERE email = ?
-                    LIMIT 1
-                    `,
-                    [email]
-                );
+            const users = getUsersCollection();
 
 
             /*
-            ------------------------------------------------------------------
-            | Generic authentication error
-            |
-            | Don't reveal whether the email exists.
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
+            | FIND USER
+            |--------------------------------------------------------------------------
             */
 
-            if (
-                rows.length ===
-                0
-            ) {
+            const user = await users.findOne({
+                email,
+            });
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | GENERIC AUTHENTICATION ERROR
+            |--------------------------------------------------------------------------
+            |
+            | Don't reveal whether the email exists.
+            |--------------------------------------------------------------------------
+            */
+
+            if (!user) {
                 return res.status(401).json({
                     success: false,
-
                     error: {
-                        code:
-                            "INVALID_CREDENTIALS",
-
+                        code: "INVALID_CREDENTIALS",
                         message:
                             "Invalid email or password.",
                     },
@@ -732,31 +565,23 @@ app.post(
             }
 
 
-            const user =
-                rows[0];
-
-
             /*
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             | PASSWORD
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             */
 
-            const matched =
-                await bcrypt.compare(
-                    password,
-                    user.password_hash
-                );
+            const matched = await bcrypt.compare(
+                password,
+                user.passwordHash,
+            );
 
 
             if (!matched) {
                 return res.status(401).json({
                     success: false,
-
                     error: {
-                        code:
-                            "INVALID_CREDENTIALS",
-
+                        code: "INVALID_CREDENTIALS",
                         message:
                             "Invalid email or password.",
                     },
@@ -765,24 +590,19 @@ app.post(
 
 
             /*
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             | ACCOUNT STATUS
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             */
 
             if (
-                String(
-                    user.account_status
-                ).toLowerCase() !==
+                String(user.accountStatus).toLowerCase() !==
                 "active"
             ) {
                 return res.status(403).json({
                     success: false,
-
                     error: {
-                        code:
-                            "ACCOUNT_NOT_ACTIVE",
-
+                        code: "ACCOUNT_NOT_ACTIVE",
                         message:
                             "Your account is not active.",
                     },
@@ -791,19 +611,15 @@ app.post(
 
 
             /*
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             | CREATE JWT
-            ------------------------------------------------------------------
+            |--------------------------------------------------------------------------
             */
 
-            const token =
-                signAccessToken({
-                    userId:
-                        user.user_id,
-
-                    role:
-                        user.role || "USER",
-                });
+            const token = signAccessToken({
+                userId: user.userId,
+                role: user.role || "USER",
+            });
 
 
             return res.json({
@@ -811,31 +627,24 @@ app.post(
 
                 token,
 
-                user:
-                    safeUser(user),
+                user: safeUser(user),
             });
 
         } catch (error) {
 
-            console.error(
-                "[AUTH] Login error:",
-                error
-            );
+            console.error("[AUTH] Login error:", error);
 
 
             return res.status(500).json({
                 success: false,
-
                 error: {
-                    code:
-                        "INTERNAL_ERROR",
-
+                    code: "INTERNAL_ERROR",
                     message:
                         "Unable to complete login.",
                 },
             });
         }
-    }
+    },
 );
 
 
@@ -846,52 +655,33 @@ app.post(
 |
 | GET /me
 |
-| The JWT supplies user_id.
-| We then read the current account from MySQL.
-|
+| The JWT supplies userId.
+| We then read the current account from MongoDB.
 |--------------------------------------------------------------------------
 */
 
 app.get(
     "/me",
+
     authenticateToken,
+
     async (req, res) => {
 
         try {
 
-            const [
-                rows,
-            ] =
-                await db.execute(
-                    `
-                    SELECT
-                        user_id,
-                        full_name,
-                        email,
-                        phone,
-                        account_status,
-                        role
-                    FROM users
-                    WHERE user_id = ?
-                    LIMIT 1
-                    `,
-                    [
-                        req.userId,
-                    ]
-                );
+            const users = getUsersCollection();
 
 
-            if (
-                rows.length ===
-                0
-            ) {
+            const user = await users.findOne({
+                userId: req.userId,
+            });
+
+
+            if (!user) {
                 return res.status(401).json({
                     success: false,
-
                     error: {
-                        code:
-                            "USER_NOT_FOUND",
-
+                        code: "USER_NOT_FOUND",
                         message:
                             "Authentication session is no longer valid.",
                     },
@@ -899,23 +689,14 @@ app.get(
             }
 
 
-            const user =
-                rows[0];
-
-
             if (
-                String(
-                    user.account_status
-                ).toLowerCase() !==
+                String(user.accountStatus).toLowerCase() !==
                 "active"
             ) {
                 return res.status(403).json({
                     success: false,
-
                     error: {
-                        code:
-                            "ACCOUNT_NOT_ACTIVE",
-
+                        code: "ACCOUNT_NOT_ACTIVE",
                         message:
                             "Your account is not active.",
                     },
@@ -926,31 +707,24 @@ app.get(
             return res.json({
                 success: true,
 
-                user:
-                    safeUser(user),
+                user: safeUser(user),
             });
 
         } catch (error) {
 
-            console.error(
-                "[AUTH] /me error:",
-                error
-            );
+            console.error("[AUTH] /me error:", error);
 
 
             return res.status(500).json({
                 success: false,
-
                 error: {
-                    code:
-                        "INTERNAL_ERROR",
-
+                    code: "INTERNAL_ERROR",
                     message:
                         "Unable to validate session.",
                 },
             });
         }
-    }
+    },
 );
 
 
@@ -961,16 +735,14 @@ app.get(
 |
 | JWT is stateless in Phase 1.
 | The frontend clears the token immediately.
-|
-| Server-side token revocation/refresh-token rotation
-| is a later session-hardening phase.
-|
 |--------------------------------------------------------------------------
 */
 
 app.post(
     "/logout",
+
     authenticateToken,
+
     (req, res) => {
 
         return res.json({
@@ -979,7 +751,7 @@ app.post(
             message:
                 "Logout acknowledged. Clear the local session token.",
         });
-    }
+    },
 );
 
 
@@ -989,69 +761,26 @@ app.post(
 |--------------------------------------------------------------------------
 */
 
-app.use(
-    (req, res) => {
-        return res.status(404).json({
-            success: false,
+app.use((req, res) => {
 
-            error: {
-                code:
-                    "ROUTE_NOT_FOUND",
+    return res.status(404).json({
+        success: false,
 
-                message:
-                    "Route not found.",
-            },
-        });
-    }
-);
+        error: {
+            code: "ROUTE_NOT_FOUND",
+            message: "Route not found.",
+        },
+    });
+});
 
 
 /*
 |--------------------------------------------------------------------------
-| ERROR HANDLER
+| GLOBAL ERROR HANDLER
 |--------------------------------------------------------------------------
 */
 
-app.use(
-    (error, req, res, next) => {
-
-        console.error(
-            "[AUTH] Unhandled error:",
-            error
-        );
-
-
-        if (
-            error.message ===
-            "CORS origin not allowed"
-        ) {
-            return res.status(403).json({
-                success: false,
-
-                error: {
-                    code:
-                        "CORS_FORBIDDEN",
-
-                    message:
-                        "Origin is not allowed.",
-                },
-            });
-        }
-
-
-        return res.status(500).json({
-            success: false,
-
-            error: {
-                code:
-                    "INTERNAL_ERROR",
-
-                message:
-                    "Internal server error.",
-            },
-        });
-    }
-);
+app.use(errorHandler);
 
 
 /*
@@ -1060,38 +789,104 @@ app.use(
 |--------------------------------------------------------------------------
 */
 
-const server =
-    app.listen(
-        env.authPort,
-        "127.0.0.1",
-        () => {
+let server = null;
 
-            console.log(
-                `Authentication server running on http://localhost:${env.authPort}`
-            );
 
-            console.log(
-                `Environment: ${env.nodeEnv}`
+async function startServer() {
+
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | CONNECT MONGODB FIRST
+        |--------------------------------------------------------------------------
+        */
+
+        await connectMongoDB();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | START HTTP SERVER
+        |--------------------------------------------------------------------------
+        */
+
+        server = app.listen(
+            env.authPort,
+            "127.0.0.1",
+            () => {
+
+                console.log(
+                    `Authentication server running on http://localhost:${env.authPort}`,
+                );
+
+                console.log(
+                    `Environment: ${env.nodeEnv}`,
+                );
+
+                console.log(
+                    "Database: MongoDB",
+                );
+            },
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SERVER ERROR HANDLER
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT:
+        | server.on() must be called only after app.listen()
+        | has returned the server instance.
+        |--------------------------------------------------------------------------
+        */
+
+        server.on(
+            "error",
+            (error) => {
+
+                console.error(
+                    "[AUTH] HTTP server error:",
+                    error,
+                );
+            },
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "[AUTH] MongoDB startup failed:",
+            error.message,
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Try to close MongoDB if startup partially succeeded
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+
+            await closeMongoDB();
+
+        } catch (closeError) {
+
+            console.error(
+                "[AUTH] MongoDB cleanup error:",
+                closeError.message,
             );
         }
-    );
 
 
-/*
-|--------------------------------------------------------------------------
-| SERVER ERROR
-|--------------------------------------------------------------------------
-*/
-
-server.on(
-    "error",
-    (error) => {
-        console.error(
-            "[AUTH] HTTP server error:",
-            error
-        );
+        process.exit(1);
     }
-);
+}
+
+
+startServer();
 
 
 /*
@@ -1100,63 +895,113 @@ server.on(
 |--------------------------------------------------------------------------
 */
 
-async function shutdown(
-    signal
-) {
+async function shutdown(signal) {
+
     console.log(
-        `[AUTH] Received ${signal}. Shutting down...`
+        `[AUTH] Received ${signal}. Shutting down...`,
     );
 
 
-    server.close(
-        async () => {
+    /*
+    |--------------------------------------------------------------------------
+    | SERVER NOT STARTED
+    |--------------------------------------------------------------------------
+    */
 
-            try {
+    if (!server) {
 
-                await db.end();
+        try {
 
-                console.log(
-                    "[AUTH] MySQL pool closed"
-                );
+            await closeMongoDB();
 
-            } catch (error) {
+        } catch (error) {
 
-                console.error(
-                    "[AUTH] MySQL shutdown error:",
-                    error.message
-                );
-            }
-
-
-            process.exit(0);
+            console.error(
+                "[AUTH] MongoDB shutdown error:",
+                error.message,
+            );
         }
-    );
+
+        process.exit(0);
+    }
 
 
-    setTimeout(
-        () => {
-            process.exit(1);
-        },
-        10000
-    ).unref();
+    /*
+    |--------------------------------------------------------------------------
+    | CLOSE HTTP SERVER
+    |--------------------------------------------------------------------------
+    */
+
+    server.close(async () => {
+
+        console.log(
+            "[AUTH] Authentication server closed",
+        );
+
+
+        try {
+
+            await closeMongoDB();
+
+            console.log(
+                "[AUTH] MongoDB connection closed",
+            );
+
+        } catch (error) {
+
+            console.error(
+                "[AUTH] MongoDB shutdown error:",
+                error.message,
+            );
+        }
+
+
+        process.exit(0);
+    });
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | FORCE EXIT AFTER 10 SECONDS
+    |--------------------------------------------------------------------------
+    */
+
+    setTimeout(() => {
+
+        console.error(
+            "[AUTH] Forced shutdown after timeout.",
+        );
+
+        process.exit(1);
+
+    }, 10000).unref();
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| PROCESS SIGNALS
+|--------------------------------------------------------------------------
+*/
+
 process.once(
     "SIGINT",
-    () =>
-        shutdown("SIGINT")
+    () => shutdown("SIGINT"),
 );
 
 process.once(
     "SIGTERM",
-    () =>
-        shutdown("SIGTERM")
+    () => shutdown("SIGTERM"),
 );
 
 
+/*
+|--------------------------------------------------------------------------
+| EXPORTS
+|--------------------------------------------------------------------------
+*/
+
 module.exports = {
     app,
-    server,
-    db,
+    getServer: () => server,
 };

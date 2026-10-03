@@ -53,13 +53,19 @@ module.exports = {
 
     port: numberValue(process.env.MYSQL_PORT, 3306),
 
-    user: process.env.MYSQL_USER || "root",
+    user: process.env.MYSQL_APP_USER || process.env.MYSQL_USER || "root",
 
-    password: process.env.MYSQL_PASSWORD || "",
+    password: process.env.MYSQL_APP_PASSWORD ?? process.env.MYSQL_PASSWORD ?? "",
 
     database: process.env.MYSQL_DATABASE || "zerodha",
 
     connectionLimit: numberValue(process.env.MYSQL_CONNECTION_LIMIT, 20),
+
+    queueLimit: numberValue(process.env.MYSQL_QUEUE_LIMIT, 0),
+
+    keepAliveInitialDelay: numberValue(process.env.MYSQL_KEEPALIVE_INITIAL_DELAY_MS, 10000),
+
+    connectTimeout: numberValue(process.env.MYSQL_CONNECT_TIMEOUT_MS, 10000),
   },
 
   redisUrl: process.env.REDIS_URL || "redis://127.0.0.1:6379",

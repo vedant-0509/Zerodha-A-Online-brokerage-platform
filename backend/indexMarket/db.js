@@ -1,10 +1,32 @@
-const mysql = require("mysql2/promise");
+// backend/indexMarket/db.js
 
-const pool = mysql.createPool({
-    host: "localhost",
-    user: "root",
-    password: "root",
-    database: "zerodha",
-});
+const {
+    connectMongoDB,
+    getMongoDB,
+} = require("../config/mongodb");
 
-module.exports = pool;
+async function initDb() {
+    await connectMongoDB();
+    return getMongoDB();
+}
+
+function requireDb() {
+    const db = getMongoDB();
+
+    if (!db) {
+        throw new Error("MongoDB has not been initialized");
+    }
+
+    return db;
+}
+
+async function close() {
+    // MongoDB connection is shared globally.
+    // Do not close it from this module.
+}
+
+module.exports = {
+    initDb,
+    requireDb,
+    close,
+};

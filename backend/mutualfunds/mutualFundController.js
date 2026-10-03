@@ -1,20 +1,32 @@
-const pool = require("./db");
-
 const {
-  getSchemeHistory,
-  calculateReturns,
-  parseNavDate,
-} = require("./mfapiService");
+  connectMongoDB,
+  getMongoDB,
+  getMongoClient,
+} = require("../backend/config/mongodb");
 
-const {
-  syncLatestNAV,
-  syncAllReturns
-} = require("./mfSyncService");
+const { syncLatestNAV, syncAllReturns } = require("./mfSyncService");
 
 const { runDailySyncIfNeeded } = require("./mfSyncScheduler");
+
 const { getAllSyncStatuses } = require("./mfSyncStatusService");
 
 const { v4: uuidv4 } = require("uuid");
+
+/*
+|--------------------------------------------------------------------------
+| Mongo helpers
+|--------------------------------------------------------------------------
+*/
+
+async function getDB() {
+  await connectMongoDB();
+  return getMongoDB();
+}
+
+function getClient() {
+  return getMongoClient();
+}
+
 /*
 |--------------------------------------------------------------------------
 | Helpers
@@ -24,12 +36,6 @@ const { v4: uuidv4 } = require("uuid");
 function getFundType(category, name) {
   const value = `${category || ""} ${name || ""}`.toLowerCase();
 
-  /*
-    |--------------------------------------------------------------------------
-    | Commodity
-    |--------------------------------------------------------------------------
-    */
-
   if (
     value.includes("gold") ||
     value.includes("silver") ||
@@ -37,12 +43,6 @@ function getFundType(category, name) {
   ) {
     return "COMMODITY";
   }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Hybrid
-    |--------------------------------------------------------------------------
-    */
 
   if (
     value.includes("hybrid") ||
@@ -54,12 +54,6 @@ function getFundType(category, name) {
   ) {
     return "HYBRID";
   }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Debt
-    |--------------------------------------------------------------------------
-    */
 
   if (
     value.includes("debt") ||
@@ -79,90 +73,38 @@ function getFundType(category, name) {
     return "DEBT";
   }
 
-  /*
-    |--------------------------------------------------------------------------
-    | Default
-    |--------------------------------------------------------------------------
-    */
-
   return "EQUITY";
 }
 
 function getFundSubCategory(category, name) {
   const value = `${category || ""} ${name || ""}`.toLowerCase();
 
-  if (value.includes("flexi")) {
-    return "Flexi Cap";
-  }
-
-  if (value.includes("large & mid")) {
-    return "Large & Mid Cap";
-  }
-
-  if (value.includes("large cap")) {
-    return "Large Cap";
-  }
-
-  if (value.includes("mid cap")) {
-    return "Mid Cap";
-  }
-
-  if (value.includes("small cap")) {
-    return "Small Cap";
-  }
-
-  if (value.includes("index")) {
-    return "Index";
-  }
-
-  if (value.includes("sectoral")) {
-    return "Sectoral";
-  }
-
-  if (value.includes("thematic")) {
-    return "Thematic";
-  }
-
-  if (value.includes("gold")) {
-    return "Gold";
-  }
-
-  if (value.includes("silver")) {
-    return "Silver";
-  }
-
-  if (value.includes("corporate bond")) {
-    return "Corporate Bond";
-  }
-
-  if (value.includes("liquid")) {
-    return "Liquid";
-  }
-
-  if (value.includes("gilt")) {
-    return "Gilt";
-  }
-
+  if (value.includes("flexi")) return "Flexi Cap";
+  if (value.includes("large & mid")) return "Large & Mid Cap";
+  if (value.includes("large cap")) return "Large Cap";
+  if (value.includes("mid cap")) return "Mid Cap";
+  if (value.includes("small cap")) return "Small Cap";
+  if (value.includes("index")) return "Index";
+  if (value.includes("sectoral")) return "Sectoral";
+  if (value.includes("thematic")) return "Thematic";
+  if (value.includes("gold")) return "Gold";
+  if (value.includes("silver")) return "Silver";
+  if (value.includes("corporate bond")) return "Corporate Bond";
+  if (value.includes("liquid")) return "Liquid";
+  if (value.includes("gilt")) return "Gilt";
   if (value.includes("aggressive hybrid")) {
     return "Aggressive Hybrid";
   }
-
   if (value.includes("conservative hybrid")) {
     return "Conservative Hybrid";
   }
-
   if (value.includes("multi asset") || value.includes("multi-asset")) {
     return "Multi Asset";
   }
-
-  if (value.includes("retirement")) {
-    return "Retirement";
-  }
-
+  if (value.includes("retirement")) return "Retirement";
   if (value.includes("children") || value.includes("childrens")) {
     return "Children";
   }
-
   if (value.includes("fund of fund") || value.includes("fof")) {
     return "Fund of Funds";
   }
@@ -170,212 +112,8 @@ function getFundSubCategory(category, name) {
   return category || "Other";
 }
 
-async function getTopReturns(req, res) {
-  try {
-    const requestedLimit = Number(
-      req.query.limit || 12
-    );
-
-    const requestedOffset = Number(
-      req.query.offset || 0
-    );
-
-    const limit = Math.min(
-      Math.max(
-        Number.isFinite(requestedLimit)
-          ? requestedLimit
-          : 12,
-        1
-      ),
-      52
-    );
-
-    const offset = Math.max(
-      Number.isFinite(requestedOffset)
-        ? requestedOffset
-        : 0,
-      0
-    );
-
-    /*
-    ----------------------------------------------------------------------
-    First find the BEST 1D-return MF from EACH fund house.
-
-    ROW_NUMBER() ensures:
-      Motilal Oswal -> only 1 MF
-      Nippon         -> only 1 MF
-      SBI            -> only 1 MF
-      etc.
-
-    Then sort those 52 selected funds by return_1d.
-    ----------------------------------------------------------------------
-    */
-
-    const [rows] = await pool.query(
-      `
-      SELECT
-        schemeId,
-        schemeCode,
-        schemeName,
-        fundHouse,
-        schemeType,
-        schemeCategory,
-        fundSubCategory,
-
-        currentNav,
-        previousNav,
-
-        navDate,
-        previousNavDate,
-
-        dayReturn,
-        dayReturnNavDate,
-
-        return1Y,
-        return3Y,
-        return5Y,
-
-        rating,
-        risk
-
-      FROM (
-        SELECT
-          id AS schemeId,
-          scheme_code AS schemeCode,
-          scheme_name AS schemeName,
-          fund_house AS fundHouse,
-          scheme_type AS schemeType,
-          scheme_category AS schemeCategory,
-          fund_sub_category AS fundSubCategory,
-
-          current_nav AS currentNav,
-          previous_nav AS previousNav,
-
-          nav_date AS navDate,
-          previous_nav_date AS previousNavDate,
-
-          return_1d AS dayReturn,
-          return_1d_nav_date AS dayReturnNavDate,
-
-          return_1y AS return1Y,
-          return_3y AS return3Y,
-          return_5y AS return5Y,
-
-          rating,
-          risk,
-
-          ROW_NUMBER() OVER (
-            PARTITION BY fund_house
-            ORDER BY
-              return_1d DESC,
-              scheme_name ASC,
-              scheme_code ASC
-          ) AS houseRank
-
-        FROM mf_schemes
-
-        WHERE is_active = 1
-
-          AND fund_house IS NOT NULL
-          AND TRIM(fund_house) <> ''
-
-          AND current_nav IS NOT NULL
-          AND current_nav > 0
-
-          AND previous_nav IS NOT NULL
-          AND previous_nav > 0
-
-          AND return_1d IS NOT NULL
-      ) AS ranked
-
-      WHERE houseRank = 1
-
-      ORDER BY
-        dayReturn DESC,
-        fundHouse ASC,
-        schemeName ASC
-
-      LIMIT ? OFFSET ?
-      `,
-      [limit, offset]
-    );
-
-    /*
-    ----------------------------------------------------------------------
-    Total number of fund houses having valid 1D return data.
-    ----------------------------------------------------------------------
-    */
-
-    const [[countResult]] =
-      await pool.query(
-        `
-        SELECT COUNT(*) AS totalHouses
-
-        FROM (
-          SELECT
-            fund_house
-
-          FROM mf_schemes
-
-          WHERE is_active = 1
-
-            AND fund_house IS NOT NULL
-            AND TRIM(fund_house) <> ''
-
-            AND current_nav IS NOT NULL
-            AND current_nav > 0
-
-            AND previous_nav IS NOT NULL
-            AND previous_nav > 0
-
-            AND return_1d IS NOT NULL
-
-          GROUP BY fund_house
-        ) AS houses
-        `
-      );
-
-    const totalHouses = Number(
-      countResult?.totalHouses || 0
-    );
-
-    return res.json({
-      success: true,
-
-      data: rows,
-
-      totalHouses,
-
-      returned: rows.length,
-
-      offset,
-
-      limit,
-
-      hasMore:
-        offset + rows.length <
-        totalHouses,
-    });
-  } catch (error) {
-    console.error(
-      "[MF TOP RETURNS]",
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-
-      message:
-        "Unable to fetch top mutual funds",
-    });
-  }
-}
-
-
 function normalizeRisk(risk) {
-  if (!risk) {
-    return null;
-  }
+  if (!risk) return null;
 
   const value = String(risk).trim().toLowerCase();
 
@@ -406,220 +144,678 @@ function normalizeRisk(risk) {
   return risk;
 }
 
+function normalizeDate(value) {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function round(value, decimals = 2) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) {
+    return null;
+  }
+
+  return Number(n.toFixed(decimals));
+}
+
+/*
+|--------------------------------------------------------------------------
+| GET TOP RETURNS
+|--------------------------------------------------------------------------
+*/
+
+async function getTopReturns(req, res) {
+  try {
+    const db = await getDB();
+
+    const requestedLimit = Number(req.query.limit || 12);
+
+    const requestedOffset = Number(req.query.offset || 0);
+
+    const limit = Math.min(
+      Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 12, 1),
+      52,
+    );
+
+    const offset = Math.max(
+      Number.isFinite(requestedOffset) ? requestedOffset : 0,
+      0,
+    );
+
+    const schemes = db.collection("mfSchemes");
+
+    /*
+     * Get the best 1D-return fund from
+     * each fund house.
+     */
+    const rows = await schemes
+      .aggregate([
+        {
+          $match: {
+            isActive: true,
+            fundHouse: {
+              $exists: true,
+              $nin: ["", null],
+            },
+            currentNav: {
+              $gt: 0,
+            },
+            previousNav: {
+              $gt: 0,
+            },
+            return1d: {
+              $ne: null,
+            },
+          },
+        },
+
+        {
+          $sort: {
+            fundHouse: 1,
+            return1d: -1,
+            schemeName: 1,
+            schemeCode: 1,
+          },
+        },
+
+        {
+          $group: {
+            _id: "$fundHouse",
+            fund: {
+              $first: "$$ROOT",
+            },
+          },
+        },
+
+        {
+          $replaceRoot: {
+            newRoot: "$fund",
+          },
+        },
+
+        {
+          $sort: {
+            return1d: -1,
+            fundHouse: 1,
+            schemeName: 1,
+          },
+        },
+
+        {
+          $skip: offset,
+        },
+
+        {
+          $limit: limit,
+        },
+
+        {
+          $project: {
+            _id: 0,
+            schemeId: {
+              $ifNull: ["$mysqlId", "$_id"],
+            },
+            schemeCode: 1,
+            schemeName: 1,
+            fundHouse: 1,
+            schemeType: 1,
+            schemeCategory: 1,
+            fundSubCategory: 1,
+            currentNav: 1,
+            previousNav: 1,
+            navDate: 1,
+            previousNavDate: 1,
+            dayReturn: "$return1d",
+            dayReturnNavDate: "$return1dNavDate",
+            return1Y: "$return1y",
+            return3Y: "$return3y",
+            return5Y: "$return5y",
+            rating: 1,
+            risk: 1,
+          },
+        },
+      ])
+      .toArray();
+
+    const totalHousesResult = await schemes
+      .aggregate([
+        {
+          $match: {
+            isActive: true,
+            fundHouse: {
+              $exists: true,
+              $nin: ["", null],
+            },
+            currentNav: {
+              $gt: 0,
+            },
+            previousNav: {
+              $gt: 0,
+            },
+            return1d: {
+              $ne: null,
+            },
+          },
+        },
+
+        {
+          $group: {
+            _id: "$fundHouse",
+          },
+        },
+
+        {
+          $count: "totalHouses",
+        },
+      ])
+      .toArray();
+
+    const totalHouses = Number(totalHousesResult[0]?.totalHouses || 0);
+
+    return res.json({
+      success: true,
+      data: rows,
+      totalHouses,
+      returned: rows.length,
+      offset,
+      limit,
+      hasMore: offset + rows.length < totalHouses,
+    });
+  } catch (error) {
+    console.error("[MF TOP RETURNS]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch top mutual funds",
+    });
+  }
+}
+
 /*
 |--------------------------------------------------------------------------
 | GET MUTUAL FUNDS
 |--------------------------------------------------------------------------
-|
-| Frontend sends:
-|
-| page=0
-| limit=50
-| search=hdfc
-| fundType=EQUITY
-| category=Flexi Cap
-| risk=Very High
-| rating=4
-| fundHouse=HDFC Mutual Fund
-| quickFilter=large
-| sortBy=1Y
-| sortDirection=desc
-|
 */
 
 async function getMutualFunds(req, res) {
   try {
+    const db = await getDB();
+
     const page = Math.max(Number(req.query.page) || 1, 1);
+
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 20);
+
     const offset = (page - 1) * limit;
 
-    const search = String(req.query.search || '').trim();
-    const fundType = String(req.query.fundType || req.query.fund_type || '').trim();
-    const category = String(req.query.category || '').trim();
-    const risk = String(req.query.risk || '').trim();
-    const fundHouse = String(req.query.fundHouse || req.query.fund_house || '').trim();
-    const ratingMinRaw = req.query.ratingMin ?? req.query.rating_min;
-    const ratingMin = ratingMinRaw === undefined || ratingMinRaw === '' ? null : Number(ratingMinRaw);
-    const quickFilter = String(req.query.quickFilter || req.query.quick_filter || '').trim().toLowerCase();
-    const indexOnly = String(req.query.indexOnly || req.query.index_only || '').toLowerCase() === 'true';
-    const sortBy = String(req.query.sortBy || req.query.sort_by || 'name').trim().toLowerCase();
-    const sortDirection = String(req.query.sortDirection || req.query.sort_direction || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+    const search = String(req.query.search || "").trim();
 
-    const where = ['s.is_active = 1'];
-    const params = [];
+    const fundType = String(
+      req.query.fundType || req.query.fund_type || "",
+    ).trim();
+
+    const category = String(req.query.category || "").trim();
+
+    const risk = String(req.query.risk || "").trim();
+
+    const fundHouse = String(
+      req.query.fundHouse || req.query.fund_house || "",
+    ).trim();
+
+    const ratingMinRaw = req.query.ratingMin ?? req.query.rating_min;
+
+    const ratingMin =
+      ratingMinRaw === undefined || ratingMinRaw === ""
+        ? null
+        : Number(ratingMinRaw);
+
+    const quickFilter = String(
+      req.query.quickFilter || req.query.quick_filter || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const indexOnly =
+      String(
+        req.query.indexOnly || req.query.index_only || "",
+      ).toLowerCase() === "true";
+
+    const sortBy = String(req.query.sortBy || req.query.sort_by || "name")
+      .trim()
+      .toLowerCase();
+
+    const sortDirection =
+      String(
+        req.query.sortDirection || req.query.sort_direction || "asc",
+      ).toLowerCase() === "desc"
+        ? -1
+        : 1;
+
+    const filter = {
+      isActive: true,
+    };
 
     if (search) {
-      const q = `%${search}%`;
-      where.push(`(s.scheme_name LIKE ? OR s.fund_house LIKE ? OR s.scheme_category LIKE ? OR s.fund_sub_category LIKE ?)`);
-      params.push(q, q, q, q);
+      const regex = new RegExp(
+        search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i",
+      );
+
+      filter.$or = [
+        { schemeName: regex },
+        { fundHouse: regex },
+        { schemeCategory: regex },
+        { fundSubCategory: regex },
+      ];
     }
 
-    const csv = (value) => value.split(',').map(v => v.trim()).filter(Boolean);
+    const csv = (value) =>
+      value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
 
     if (fundType) {
-      const values = csv(fundType);
-      where.push(`s.fund_type IN (${values.map(() => '?').join(',')})`);
-      params.push(...values);
+      filter.fundType = {
+        $in: csv(fundType),
+      };
     }
 
     if (category) {
       const values = csv(category);
-      where.push(`(s.fund_sub_category IN (${values.map(() => '?').join(',')}) OR s.scheme_category IN (${values.map(() => '?').join(',')}))`);
-      params.push(...values, ...values);
+
+      filter.$or = [
+        {
+          fundSubCategory: {
+            $in: values,
+          },
+        },
+        {
+          schemeCategory: {
+            $in: values,
+          },
+        },
+      ];
     }
 
     if (risk) {
-      const values = csv(risk);
-      where.push(`s.risk IN (${values.map(() => '?').join(',')})`);
-      params.push(...values);
+      filter.risk = {
+        $in: csv(risk),
+      };
     }
 
     if (fundHouse) {
-      const values = csv(fundHouse);
-      where.push(`s.fund_house IN (${values.map(() => '?').join(',')})`);
-      params.push(...values);
+      filter.fundHouse = {
+        $in: csv(fundHouse),
+      };
     }
 
     if (Number.isFinite(ratingMin)) {
-      where.push('s.rating >= ?');
-      params.push(ratingMin);
+      filter.rating = {
+        $gte: ratingMin,
+      };
     }
 
     if (indexOnly) {
-      where.push(`(LOWER(s.scheme_name) LIKE '%index%' OR LOWER(s.scheme_category) LIKE '%index%' OR LOWER(s.fund_sub_category) LIKE '%index%')`);
+      filter.$and = filter.$and || [];
+
+      filter.$and.push({
+        $or: [
+          {
+            schemeName: {
+              $regex: "index",
+              $options: "i",
+            },
+          },
+          {
+            schemeCategory: {
+              $regex: "index",
+              $options: "i",
+            },
+          },
+          {
+            fundSubCategory: {
+              $regex: "index",
+              $options: "i",
+            },
+          },
+        ],
+      });
     }
 
-    const addLikeFilter = (parts) => {
-      where.push(`(${parts.map(p => `LOWER(${p}) LIKE ?`).join(' OR ')})`);
-      params.push(...parts.map(() => `%${quickFilter}%`));
-    };
-
+    /*
+     * Quick filters.
+     */
     switch (quickFilter) {
-      case 'index':
-      case 'index_only':
-        where.push(`(LOWER(s.scheme_name) LIKE '%index%' OR LOWER(s.scheme_category) LIKE '%index%' OR LOWER(s.fund_sub_category) LIKE '%index%')`);
+      case "index":
+      case "index_only":
+        filter.$and = filter.$and || [];
+
+        filter.$and.push({
+          $or: [
+            {
+              schemeName: {
+                $regex: "index",
+                $options: "i",
+              },
+            },
+            {
+              schemeCategory: {
+                $regex: "index",
+                $options: "i",
+              },
+            },
+            {
+              fundSubCategory: {
+                $regex: "index",
+                $options: "i",
+              },
+            },
+          ],
+        });
         break;
-      case 'flexi':
-      case 'flexicap':
-        where.push(`(LOWER(s.scheme_name) LIKE '%flexi cap%' OR LOWER(s.scheme_category) LIKE '%flexi cap%' OR LOWER(s.fund_sub_category) LIKE '%flexi cap%')`);
+
+      case "flexi":
+      case "flexicap":
+        filter.$and = filter.$and || [];
+
+        filter.$and.push({
+          $or: [
+            {
+              schemeName: {
+                $regex: "flexi cap",
+                $options: "i",
+              },
+            },
+            {
+              schemeCategory: {
+                $regex: "flexi cap",
+                $options: "i",
+              },
+            },
+            {
+              fundSubCategory: {
+                $regex: "flexi cap",
+                $options: "i",
+              },
+            },
+          ],
+        });
         break;
-      case 'sectoral':
-        where.push(`(LOWER(s.scheme_category) LIKE '%sectoral%' OR LOWER(s.scheme_category) LIKE '%thematic%' OR LOWER(s.fund_sub_category) LIKE '%sectoral%' OR LOWER(s.fund_sub_category) LIKE '%thematic%')`);
+
+      case "sectoral":
+        filter.$and = filter.$and || [];
+
+        filter.$and.push({
+          $or: [
+            {
+              schemeCategory: {
+                $regex: "sectoral|thematic",
+                $options: "i",
+              },
+            },
+            {
+              fundSubCategory: {
+                $regex: "sectoral|thematic",
+                $options: "i",
+              },
+            },
+          ],
+        });
         break;
-      case 'large':
-      case 'largecap':
-        where.push(`(LOWER(s.scheme_category) LIKE '%large cap%' OR LOWER(s.fund_sub_category) LIKE '%large cap%')`);
+
+      case "large":
+      case "largecap":
+        filter.$and = filter.$and || [];
+
+        filter.$and.push({
+          $or: [
+            {
+              schemeCategory: {
+                $regex: "large cap",
+                $options: "i",
+              },
+            },
+            {
+              fundSubCategory: {
+                $regex: "large cap",
+                $options: "i",
+              },
+            },
+          ],
+        });
         break;
-      case '4plus':
-      case 'rating4':
-        where.push('s.rating >= 4');
+
+      case "4plus":
+      case "rating4":
+        filter.rating = {
+          ...(filter.rating || {}),
+          $gte: 4,
+        };
         break;
+
       default:
         break;
     }
 
     const sortMap = {
-      name: 's.scheme_name',
-      schemename: 's.scheme_name',
-      '1y': 's.return_1y',
-      '3y': 's.return_3y',
-      '5y': 's.return_5y',
-      rating: 's.rating',
-      risk: 's.risk',
-      nav: 's.current_nav',
+      name: "schemeName",
+      schemename: "schemeName",
+      "1y": "return1y",
+      "3y": "return3y",
+      "5y": "return5y",
+      rating: "rating",
+      risk: "risk",
+      nav: "currentNav",
     };
-    const orderColumn = sortMap[sortBy] || 's.scheme_name';
-    const nullsLast = ['s.return_1y', 's.return_3y', 's.return_5y', 's.rating', 's.current_nav'].includes(orderColumn)
-      ? `${orderColumn} IS NULL, ${orderColumn} ${sortDirection}`
-      : `${orderColumn} ${sortDirection}`;
-    const whereSQL = `WHERE ${where.join(' AND ')}`;
 
-    const [countRows] = await pool.query(`SELECT COUNT(*) AS total FROM mf_schemes s ${whereSQL}`, params);
-    const total = Number(countRows[0]?.total || 0);
+    const orderColumn = sortMap[sortBy] || "schemeName";
 
-    const [rows] = await pool.query(
-      `SELECT
-        s.id, s.scheme_code, s.scheme_name, s.fund_house, s.scheme_type,
-        s.scheme_category, s.fund_type, s.fund_sub_category,
-        s.isin_growth, s.isin_div_reinvestment, ROUND(s.current_nav, 2) AS current_nav, s.nav_date,
-        s.return_1y, s.return_3y, s.return_5y,
-        s.returns_for_nav_date,
-        s.return_1y_nav_date, s.return_3y_nav_date, s.return_5y_nav_date,
-        s.rating, s.rating_source, s.rating_updated_at,
-        s.risk, s.risk_source, s.risk_updated_at, s.return_updated_at
-       FROM mf_schemes s
-       ${whereSQL}
-       ORDER BY ${nullsLast}, s.id ASC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
-    );
+    const total = await db.collection("mfSchemes").countDocuments(filter);
 
-    res.json({
+    const documents = await db
+      .collection("mfSchemes")
+      .find(filter)
+      .sort({
+        [orderColumn]: sortDirection,
+        mysqlId: 1,
+        schemeCode: 1,
+      })
+      .skip(offset)
+      .limit(limit)
+      .toArray();
+
+    const funds = documents.map((s) => ({
+      id: s.mysqlId ?? s._id?.toString(),
+
+      scheme_code: s.schemeCode,
+
+      scheme_name: s.schemeName,
+
+      fund_house: s.fundHouse,
+
+      scheme_type: s.schemeType,
+
+      scheme_category: s.schemeCategory,
+
+      fund_type: s.fundType,
+
+      fund_sub_category: s.fundSubCategory,
+
+      isin_growth: s.isinGrowth,
+
+      isin_div_reinvestment: s.isinDivReinvestment,
+
+      current_nav: round(s.currentNav),
+
+      nav_date: s.navDate,
+
+      return_1y: s.return1y,
+
+      return_3y: s.return3y,
+
+      return_5y: s.return5y,
+
+      returns_for_nav_date: s.returnsForNavDate,
+
+      return_1y_nav_date: s.return1yNavDate,
+
+      return_3y_nav_date: s.return3yNavDate,
+
+      return_5y_nav_date: s.return5yNavDate,
+
+      rating: s.rating,
+
+      rating_source: s.ratingSource,
+
+      rating_updated_at: s.ratingUpdatedAt,
+
+      risk: normalizeRisk(s.risk),
+
+      risk_source: s.riskSource,
+
+      risk_updated_at: s.riskUpdatedAt,
+
+      return_updated_at: s.returnUpdatedAt,
+    }));
+
+    return res.json({
       success: true,
       data: {
-        funds: rows,
+        funds,
         total,
         page,
         limit,
         offset,
-        hasMore: offset + rows.length < total,
+        hasMore: offset + funds.length < total,
       },
     });
   } catch (error) {
-    console.error('[MF API] getMutualFunds:', error);
-    res.status(500).json({ success: false, message: 'Failed to load mutual funds', error: error.message });
+    console.error("[MF API] getMutualFunds:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load mutual funds",
+    });
   }
 }
 
+/*
+|--------------------------------------------------------------------------
+| GET MUTUAL FUND FILTERS
+|--------------------------------------------------------------------------
+*/
+
 async function getMutualFundFilters(req, res) {
   try {
-    const [houses] = await pool.query(`
-      SELECT DISTINCT fund_house
-      FROM mf_schemes
-      WHERE is_active = 1 AND fund_house IS NOT NULL AND TRIM(fund_house) <> ''
-      ORDER BY fund_house ASC
-    `);
+    const db = await getDB();
 
-    const [categories] = await pool.query(`
-      SELECT DISTINCT fund_type, fund_sub_category
-      FROM mf_schemes
-      WHERE is_active = 1 AND fund_sub_category IS NOT NULL AND TRIM(fund_sub_category) <> ''
-      ORDER BY fund_type ASC, fund_sub_category ASC
-    `);
+    const schemes = db.collection("mfSchemes");
 
-    const [risks] = await pool.query(`
-      SELECT DISTINCT risk
-      FROM mf_schemes
-      WHERE is_active = 1 AND risk IS NOT NULL
-      ORDER BY FIELD(risk, 'Low', 'Low to Moderate', 'Moderate', 'Moderately High', 'High', 'Very High')
-    `);
+    const activeFilter = {
+      isActive: true,
+    };
 
-    const [ratings] = await pool.query(`
-      SELECT DISTINCT rating
-      FROM mf_schemes
-      WHERE is_active = 1 AND rating IS NOT NULL
-      ORDER BY rating DESC
-    `);
+    const houses = await schemes.distinct("fundHouse", {
+      ...activeFilter,
+      fundHouse: {
+        $exists: true,
+        $nin: ["", null],
+      },
+    });
 
-    const grouped = { EQUITY: [], DEBT: [], HYBRID: [], COMMODITY: [] };
-    for (const row of categories) {
-      if (!grouped[row.fund_type]) grouped[row.fund_type] = [];
-      if (!grouped[row.fund_type].includes(row.fund_sub_category)) grouped[row.fund_type].push(row.fund_sub_category);
+    const categoryDocuments = await schemes
+      .find(
+        {
+          ...activeFilter,
+          fundSubCategory: {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+        {
+          projection: {
+            fundType: 1,
+            fundSubCategory: 1,
+          },
+        },
+      )
+      .toArray();
+
+    const risks = await schemes.distinct("risk", {
+      ...activeFilter,
+      risk: {
+        $exists: true,
+        $nin: ["", null],
+      },
+    });
+
+    const ratings = await schemes.distinct("rating", {
+      ...activeFilter,
+      rating: {
+        $exists: true,
+        $ne: null,
+      },
+    });
+
+    const grouped = {
+      EQUITY: [],
+      DEBT: [],
+      HYBRID: [],
+      COMMODITY: [],
+    };
+
+    for (const row of categoryDocuments) {
+      if (!grouped[row.fundType]) {
+        grouped[row.fundType] = [];
+      }
+
+      if (
+        row.fundSubCategory &&
+        !grouped[row.fundType].includes(row.fundSubCategory)
+      ) {
+        grouped[row.fundType].push(row.fundSubCategory);
+      }
     }
 
-    res.json({
+    const categories = [
+      ...new Set(
+        categoryDocuments.map((x) => x.fundSubCategory).filter(Boolean),
+      ),
+    ];
+
+    risks.sort((a, b) => String(a).localeCompare(String(b)));
+
+    ratings.sort((a, b) => Number(b) - Number(a));
+
+    return res.json({
       success: true,
       data: {
-        fundHouses: houses.map(x => x.fund_house),
-        categories: categories.map(x => x.fund_sub_category).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i),
+        fundHouses: houses.filter(Boolean).sort(),
+
+        categories,
+
         categoryGroups: grouped,
-        risks: risks.map(x => x.risk),
-        ratings: ratings.map(x => Number(x.rating)),
+
+        risks,
+
+        ratings: ratings.map(Number),
       },
     });
   } catch (error) {
-    console.error('[MF API] getMutualFundFilters:', error);
-    res.status(500).json({ success: false, message: 'Failed to load mutual fund filters', error: error.message });
+    console.error("[MF API] getMutualFundFilters:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load mutual fund filters",
+    });
   }
 }
 
@@ -633,621 +829,593 @@ async function getMutualFund(req, res) {
   try {
     const { schemeCode } = req.params;
 
-    const [rows] = await pool.query(
-      `
-                SELECT
+    const db = await getDB();
 
-                    id,
+    const numericCode = Number(schemeCode);
 
-                    scheme_code,
+    const query = Number.isFinite(numericCode)
+      ? {
+          schemeCode: numericCode,
+          isActive: true,
+        }
+      : {
+          schemeCode: schemeCode,
+          isActive: true,
+        };
 
-                    scheme_name,
+    const scheme = await db.collection("mfSchemes").findOne(query);
 
-                    fund_house,
-
-                    scheme_type,
-
-                    scheme_category,
-
-                    fund_type,
-
-                    fund_sub_category,
-
-                    isin_growth,
-
-                    isin_div_reinvestment,
-
-                    ROUND(current_nav, 2) AS current_nav,
-
-                    nav_date,
-
-                    return_1y,
-
-                    return_3y,
-
-                    return_5y,
-
-                    rating,
-
-                    risk
-
-                FROM mf_schemes
-
-                WHERE scheme_code = ?
-                    AND is_active = 1
-
-                LIMIT 1
-                `,
-      [schemeCode],
-    );
-
-    if (!rows.length) {
+    if (!scheme) {
       return res.status(404).json({
         success: false,
-
         message: "Mutual fund not found",
       });
     }
 
-    const row = rows[0];
-
-    res.json({
+    return res.json({
       success: true,
-
       data: {
-        id: row.id,
+        id: scheme.mysqlId ?? scheme._id?.toString(),
 
-        schemeCode: row.scheme_code,
+        schemeCode: scheme.schemeCode,
 
-        schemeName: row.scheme_name,
+        schemeName: scheme.schemeName,
 
-        fundHouse: row.fund_house,
+        fundHouse: scheme.fundHouse,
 
-        schemeType: row.scheme_type,
+        schemeType: scheme.schemeType,
 
-        schemeCategory: row.scheme_category,
+        schemeCategory: scheme.schemeCategory,
 
-        fundType: row.fund_type,
+        fundType: scheme.fundType,
 
-        fundSubCategory: row.fund_sub_category,
+        fundSubCategory: scheme.fundSubCategory,
 
-        currentNav: row.current_nav,
+        currentNav: round(scheme.currentNav),
 
-        navDate: row.nav_date,
+        navDate: scheme.navDate,
 
-        return1Y: row.return_1y,
+        return1Y: scheme.return1y,
 
-        return3Y: row.return_3y,
+        return3Y: scheme.return3y,
 
-        return5Y: row.return_5y,
+        return5Y: scheme.return5y,
 
-        rating: row.rating,
+        rating: scheme.rating,
 
-        risk: row.risk,
+        risk: scheme.risk,
       },
     });
   } catch (error) {
     console.error("getMutualFund error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: "Unable to load mutual fund",
-
-      error: error.message,
     });
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| BUY
+| BUY MUTUAL FUND
 |--------------------------------------------------------------------------
 |
-| {
-|     userId: "...",
-|     schemeCode: 119551,
-|     amount: 5000
-| }
+| MongoDB transaction replaces:
+|   MySQL BEGIN
+|   SELECT ... FOR UPDATE
+|   INSERT order
+|   INSERT/UPDATE holding
+|   COMMIT
 |
 */
 
 async function buyMutualFund(req, res) {
-  const connection = await pool.getConnection();
+  const userId = req.userId;
+
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required",
+    });
+  }
+
+  const { schemeCode, units } = req.body;
+
+  if (!schemeCode) {
+    return res.status(400).json({
+      success: false,
+      message: "schemeCode is required",
+    });
+  }
+
+  const buyUnits = Number(units);
+
+  if (!Number.isFinite(buyUnits) || buyUnits <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "units must be greater than 0",
+    });
+  }
 
   try {
-    /*
-      SECURITY:
-      User identity always comes from the verified JWT.
-      Never accept userId from the request body.
-    */
-    const userId = req.userId;
-    const { schemeCode, units } = req.body;
+    await connectMongoDB();
 
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
+    const db = getMongoDB();
+    const client = getClient();
 
-    if (!schemeCode) {
-      return res.status(400).json({
-        success: false,
-        message: "schemeCode is required",
-      });
-    }
+    const session = client.startSession();
 
-    /*
-      User enters UNITS.
-      The backend calculates the actual amount from the locked
-      authoritative NAV stored in mf_schemes.
-    */
-    const buyUnits = Number(units);
+    let responseData = null;
 
-    if (!Number.isFinite(buyUnits) || buyUnits <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "units must be greater than 0",
-      });
-    }
-
-    await connection.beginTransaction();
-
-    const [schemes] = await connection.query(
-      `
-      SELECT
-        id,
-        scheme_code,
-        scheme_name,
-        current_nav,
-        nav_date
-      FROM mf_schemes
-      WHERE scheme_code = ?
-        AND is_active = 1
-      LIMIT 1
-      FOR UPDATE
-      `,
-      [schemeCode],
-    );
-
-    if (!schemes.length) {
-      await connection.rollback();
-
-      return res.status(404).json({
-        success: false,
-        message: "Mutual fund not found",
-      });
-    }
-
-    const scheme = schemes[0];
-    const nav = Number(Number(scheme.current_nav).toFixed(2));
-
-    if (!Number.isFinite(nav) || nav <= 0) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        success: false,
-        message: "Current NAV unavailable",
-      });
-    }
-
-    /*
-      Actual purchase amount = entered units × authoritative NAV.
-      Round monetary value to paise before persisting.
-    */
-    const amount = Number((buyUnits * nav).toFixed(2));
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        success: false,
-        message: "Unable to calculate purchase amount",
-      });
-    }
-
-    const orderId = uuidv4();
-
-    await connection.query(
-      `
-      INSERT INTO mf_orders (
-        order_id,
-        user_id,
-        scheme_id,
-        order_type,
-        units,
-        nav,
-        amount,
-        nav_date,
-        status,
-        completed_at
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        'BUY',
-        ?,
-        ?,
-        ?,
-        ?,
-        'COMPLETED',
-        NOW()
-      )
-      `,
-      [
-        orderId,
-        userId,
-        scheme.id,
-        buyUnits,
-        nav,
-        amount,
-        scheme.nav_date,
-      ],
-    );
-
-    await connection.query(
-      `
-      INSERT INTO mf_holdings (
-        user_id,
-        scheme_id,
-        units,
-        invested_amount
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?
-      )
-      ON DUPLICATE KEY UPDATE
-        units = units + VALUES(units),
-        invested_amount = invested_amount + VALUES(invested_amount)
-      `,
-      [userId, scheme.id, buyUnits, amount],
-    );
-
-    await connection.commit();
-
-    return res.status(201).json({
-      success: true,
-      message: "Mutual fund BUY order completed",
-      data: {
-        orderId,
-        orderType: "BUY",
-        schemeCode: scheme.scheme_code,
-        schemeName: scheme.scheme_name,
-        units: Number(buyUnits.toFixed(8)),
-        nav,
-        amount,
-        navDate: scheme.nav_date,
-        status: "COMPLETED",
-      },
-    });
-  } catch (error) {
     try {
-      await connection.rollback();
-    } catch (_) {}
+      await session.withTransaction(async () => {
+        const schemes = db.collection("mfSchemes");
 
+        const orders = db.collection("mfOrders");
+
+        const holdings = db.collection("mfHoldings");
+
+        const numericCode = Number(schemeCode);
+
+        const schemeQuery = Number.isFinite(numericCode)
+          ? {
+              schemeCode: numericCode,
+              isActive: true,
+            }
+          : {
+              schemeCode: schemeCode,
+              isActive: true,
+            };
+
+        /*
+         * MongoDB transaction provides
+         * the consistency boundary.
+         */
+        const scheme = await schemes.findOne(schemeQuery, {
+          session,
+        });
+
+        if (!scheme) {
+          const error = new Error("Mutual fund not found");
+
+          error.statusCode = 404;
+
+          throw error;
+        }
+
+        const nav = round(scheme.currentNav, 2);
+
+        if (!Number.isFinite(nav) || nav <= 0) {
+          const error = new Error("Current NAV unavailable");
+
+          error.statusCode = 400;
+
+          throw error;
+        }
+
+        const amount = round(buyUnits * nav, 2);
+
+        if (!Number.isFinite(amount) || amount <= 0) {
+          const error = new Error("Unable to calculate purchase amount");
+
+          error.statusCode = 400;
+
+          throw error;
+        }
+
+        const orderId = uuidv4();
+
+        const now = new Date();
+
+        /*
+         * Create MF order.
+         */
+        await orders.insertOne(
+          {
+            mysqlId: null,
+
+            orderId,
+
+            userId: String(userId),
+
+            schemeId: scheme.mysqlId ?? scheme._id,
+
+            schemeCode: scheme.schemeCode,
+
+            schemeName: scheme.schemeName,
+
+            orderType: "BUY",
+
+            units: buyUnits,
+
+            nav,
+
+            amount,
+
+            navDate: scheme.navDate,
+
+            status: "COMPLETED",
+
+            createdAt: now,
+
+            completedAt: now,
+          },
+          {
+            session,
+          },
+        );
+
+        /*
+         * Update existing holding.
+         *
+         * Your migrated data uses userId +
+         * schemeCode for the holding identity.
+         */
+        const existingHolding = await holdings.findOne(
+          {
+            userId: String(userId),
+
+            schemeCode: scheme.schemeCode,
+          },
+          {
+            session,
+          },
+        );
+
+        if (existingHolding) {
+          await holdings.updateOne(
+            {
+              _id: existingHolding._id,
+            },
+            {
+              $inc: {
+                units: buyUnits,
+
+                investedAmount: amount,
+              },
+
+              $set: {
+                updatedAt: now,
+              },
+            },
+            {
+              session,
+            },
+          );
+        } else {
+          await holdings.insertOne(
+            {
+              mysqlId: null,
+
+              userId: String(userId),
+
+              schemeId: scheme.mysqlId ?? scheme._id,
+
+              schemeCode: scheme.schemeCode,
+
+              schemeName: scheme.schemeName,
+
+              units: buyUnits,
+
+              investedAmount: amount,
+
+              createdAt: now,
+
+              updatedAt: now,
+            },
+            {
+              session,
+            },
+          );
+        }
+
+        responseData = {
+          orderId,
+
+          orderType: "BUY",
+
+          schemeCode: scheme.schemeCode,
+
+          schemeName: scheme.schemeName,
+
+          units: Number(buyUnits.toFixed(8)),
+
+          nav,
+
+          amount,
+
+          navDate: scheme.navDate,
+
+          status: "COMPLETED",
+        };
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "Mutual fund BUY order completed",
+        data: responseData,
+      });
+    } catch (error) {
+      console.error("buyMutualFund transaction error:", error);
+
+      const status = Number(error.statusCode) || 500;
+
+      return res.status(status).json({
+        success: false,
+        message: status === 500 ? "Unable to place BUY order" : error.message,
+      });
+    } finally {
+      await session.endSession();
+    }
+  } catch (error) {
     console.error("buyMutualFund error:", error);
 
     return res.status(500).json({
       success: false,
       message: "Unable to place BUY order",
     });
-  } finally {
-    connection.release();
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| SELL
+| SELL MUTUAL FUND
 |--------------------------------------------------------------------------
-|
-| {
-|     userId: "...",
-|     schemeCode: 119551,
-|     units: 10
-| }
-|
 */
 
 async function sellMutualFund(req, res) {
-  const connection = await pool.getConnection();
+  const userId = req.userId;
+
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required",
+    });
+  }
+
+  const { schemeCode, units } = req.body;
+
+  if (!schemeCode) {
+    return res.status(400).json({
+      success: false,
+      message: "schemeCode is required",
+    });
+  }
+
+  const sellUnits = Number(units);
+
+  if (!Number.isFinite(sellUnits) || sellUnits <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "units must be greater than 0",
+    });
+  }
 
   try {
-    const userId = req.userId;
-    const { schemeCode, units } = req.body;
+    await connectMongoDB();
 
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
+    const db = getMongoDB();
+    const client = getClient();
+
+    const session = client.startSession();
+
+    let responseData = null;
+
+    try {
+      await session.withTransaction(async () => {
+        const schemes = db.collection("mfSchemes");
+
+        const orders = db.collection("mfOrders");
+
+        const holdings = db.collection("mfHoldings");
+
+        const numericCode = Number(schemeCode);
+
+        const schemeQuery = Number.isFinite(numericCode)
+          ? {
+              schemeCode: numericCode,
+              isActive: true,
+            }
+          : {
+              schemeCode: schemeCode,
+              isActive: true,
+            };
+
+        const scheme = await schemes.findOne(schemeQuery, {
+          session,
+        });
+
+        if (!scheme) {
+          const error = new Error("Mutual fund not found");
+
+          error.statusCode = 404;
+
+          throw error;
+        }
+
+        const nav = round(scheme.currentNav, 2);
+
+        if (!Number.isFinite(nav) || nav <= 0) {
+          const error = new Error("Current NAV unavailable");
+
+          error.statusCode = 400;
+
+          throw error;
+        }
+
+        /*
+         * Find the user's holding.
+         */
+        const holding = await holdings.findOne(
+          {
+            userId: String(userId),
+
+            schemeCode: scheme.schemeCode,
+          },
+          {
+            session,
+          },
+        );
+
+        if (!holding) {
+          const error = new Error("No mutual fund holding found");
+
+          error.statusCode = 400;
+
+          throw error;
+        }
+
+        const availableUnits = Number(holding.units || 0);
+
+        if (sellUnits > availableUnits + 0.00000001) {
+          const error = new Error("Insufficient mutual fund units");
+
+          error.statusCode = 400;
+
+          error.availableUnits = availableUnits;
+
+          throw error;
+        }
+
+        const amount = round(sellUnits * nav, 2);
+
+        const oldInvested = Number(holding.investedAmount || 0);
+
+        const remainingUnits = availableUnits - sellUnits;
+
+        let remainingInvested = 0;
+
+        if (availableUnits > 0) {
+          remainingInvested = oldInvested * (remainingUnits / availableUnits);
+        }
+
+        const orderId = uuidv4();
+
+        const now = new Date();
+
+        /*
+         * Create SELL order.
+         */
+        await orders.insertOne(
+          {
+            mysqlId: null,
+
+            orderId,
+
+            userId: String(userId),
+
+            schemeId: scheme.mysqlId ?? scheme._id,
+
+            schemeCode: scheme.schemeCode,
+
+            schemeName: scheme.schemeName,
+
+            orderType: "SELL",
+
+            units: sellUnits,
+
+            nav,
+
+            amount,
+
+            navDate: scheme.navDate,
+
+            status: "COMPLETED",
+
+            createdAt: now,
+
+            completedAt: now,
+          },
+          {
+            session,
+          },
+        );
+
+        /*
+         * Remove holding when all units
+         * have been sold.
+         */
+        if (remainingUnits <= 0.00000001) {
+          await holdings.deleteOne(
+            {
+              _id: holding._id,
+            },
+            {
+              session,
+            },
+          );
+        } else {
+          await holdings.updateOne(
+            {
+              _id: holding._id,
+            },
+            {
+              $set: {
+                units: remainingUnits,
+
+                investedAmount: Number(remainingInvested.toFixed(2)),
+
+                updatedAt: now,
+              },
+            },
+            {
+              session,
+            },
+          );
+        }
+
+        responseData = {
+          orderId,
+
+          orderType: "SELL",
+
+          schemeCode: scheme.schemeCode,
+
+          schemeName: scheme.schemeName,
+
+          units: Number(sellUnits.toFixed(8)),
+
+          nav,
+
+          amount,
+
+          navDate: scheme.navDate,
+
+          status: "COMPLETED",
+        };
       });
-    }
 
-    if (!schemeCode) {
-      return res.status(400).json({
-        success: false,
-
-        message: "schemeCode is required",
+      return res.status(201).json({
+        success: true,
+        message: "Mutual fund SELL order completed",
+        data: responseData,
       });
-    }
+    } catch (error) {
+      console.error("sellMutualFund transaction error:", error);
 
-    const sellUnits = Number(units);
+      const status = Number(error.statusCode) || 500;
 
-    if (!Number.isFinite(sellUnits) || sellUnits <= 0) {
-      return res.status(400).json({
+      return res.status(status).json({
         success: false,
+        message: status === 500 ? "Unable to place SELL order" : error.message,
 
-        message: "units must be greater than 0",
+        ...(error.availableUnits !== undefined
+          ? {
+              availableUnits: error.availableUnits,
+            }
+          : {}),
       });
+    } finally {
+      await session.endSession();
     }
-
-    await connection.beginTransaction();
-
-    /*
-        |--------------------------------------------------------------------------
-        | Lock scheme
-        |--------------------------------------------------------------------------
-        */
-
-    const [schemes] = await connection.query(
-      `
-                SELECT
-
-                    id,
-
-                    scheme_code,
-
-                    scheme_name,
-
-                    current_nav,
-
-                    nav_date
-
-                FROM mf_schemes
-
-                WHERE scheme_code = ?
-
-                  AND is_active = 1
-
-                LIMIT 1
-
-                FOR UPDATE
-                `,
-      [schemeCode],
-    );
-
-    if (!schemes.length) {
-      await connection.rollback();
-
-      return res.status(404).json({
-        success: false,
-
-        message: "Mutual fund not found",
-      });
-    }
-
-    const scheme = schemes[0];
-
-    const nav = Number(Number(scheme.current_nav).toFixed(2));
-
-    if (!Number.isFinite(nav) || nav <= 0) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        success: false,
-
-        message: "Current NAV unavailable",
-      });
-    }
-
-    /*
-        |--------------------------------------------------------------------------
-        | Lock holding
-        |--------------------------------------------------------------------------
-        */
-
-    const [holdings] = await connection.query(
-      `
-                SELECT
-
-                    id,
-
-                    units,
-
-                    invested_amount
-
-                FROM mf_holdings
-
-                WHERE user_id = ?
-
-                  AND scheme_id = ?
-
-                LIMIT 1
-
-                FOR UPDATE
-                `,
-      [userId, scheme.id],
-    );
-
-    if (!holdings.length) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        success: false,
-
-        message: "No mutual fund holding found",
-      });
-    }
-
-    const holding = holdings[0];
-
-    const availableUnits = Number(holding.units);
-
-    if (sellUnits > availableUnits + 0.00000001) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        success: false,
-
-        message: "Insufficient mutual fund units",
-
-        availableUnits,
-      });
-    }
-
-    /*
-        |--------------------------------------------------------------------------
-        | SELL amount
-        |--------------------------------------------------------------------------
-        */
-
-    const amount = sellUnits * nav;
-
-    /*
-        |--------------------------------------------------------------------------
-        | Create SELL order
-        |--------------------------------------------------------------------------
-        */
-
-    const orderId = uuidv4();
-
-    await connection.query(
-      `
-            INSERT INTO mf_orders (
-
-                order_id,
-
-                user_id,
-
-                scheme_id,
-
-                order_type,
-
-                units,
-
-                nav,
-
-                amount,
-
-                nav_date,
-
-                status,
-
-                completed_at
-
-            )
-
-            VALUES (
-                ?,
-                ?,
-                ?,
-                'SELL',
-                ?,
-                ?,
-                ?,
-                ?,
-                'COMPLETED',
-                NOW()
-            )
-            `,
-      [orderId, userId, scheme.id, sellUnits, nav, amount, scheme.nav_date],
-    );
-
-    /*
-        |--------------------------------------------------------------------------
-        | Reduce invested amount proportionally
-        |--------------------------------------------------------------------------
-        */
-
-    const oldInvested = Number(holding.invested_amount);
-
-    let remainingInvested = 0;
-
-    if (availableUnits > 0) {
-      remainingInvested =
-        oldInvested * ((availableUnits - sellUnits) / availableUnits);
-    }
-
-    const remainingUnits = availableUnits - sellUnits;
-
-    /*
-        |--------------------------------------------------------------------------
-        | Update holding
-        |--------------------------------------------------------------------------
-        */
-
-    if (remainingUnits <= 0.00000001) {
-      await connection.query(
-        `
-                DELETE FROM mf_holdings
-
-                WHERE id = ?
-                `,
-        [holding.id],
-      );
-    } else {
-      await connection.query(
-        `
-                UPDATE mf_holdings
-
-                SET
-
-                    units = ?,
-
-                    invested_amount = ?
-
-                WHERE id = ?
-                `,
-        [remainingUnits, remainingInvested, holding.id],
-      );
-    }
-
-    await connection.commit();
-
-    res.status(201).json({
-      success: true,
-
-      message: "Mutual fund SELL order completed",
-
-      data: {
-        orderId,
-
-        orderType: "SELL",
-
-        schemeCode: scheme.scheme_code,
-
-        schemeName: scheme.scheme_name,
-
-        units: Number(sellUnits.toFixed(8)),
-
-        nav,
-
-        amount: Number(amount.toFixed(2)),
-
-        navDate: scheme.nav_date,
-
-        status: "COMPLETED",
-      },
-    });
   } catch (error) {
-    await connection.rollback();
-
     console.error("sellMutualFund error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: "Unable to place SELL order",
-
-      error: error.message,
     });
-  } finally {
-    connection.release();
   }
 }
 
@@ -1257,152 +1425,7 @@ async function sellMutualFund(req, res) {
 |--------------------------------------------------------------------------
 */
 
-// async function getMutualFundHoldings(req, res) {
-//   try {
-//     const { userId } = req.params;
-
-//     const [rows] = await pool.query(
-//       `
-//                 SELECT
-
-//                     h.id,
-
-//                     h.user_id,
-
-//                     h.units,
-
-//                     h.invested_amount,
-
-//                     h.created_at,
-
-//                     h.updated_at,
-
-//                     s.id AS scheme_id,
-
-//                     s.scheme_code,
-
-//                     s.scheme_name,
-
-//                     s.fund_house,
-
-//                     s.scheme_category,
-
-//                     s.fund_type,
-
-//                     s.fund_sub_category,
-
-//                     s.current_nav,
-
-//                     s.nav_date,
-
-//                     s.return_1y,
-
-//                     s.return_3y,
-
-//                     s.return_5y,
-
-//                     s.rating,
-
-//                     s.risk,
-
-//                     (
-//                         h.units *
-//                         s.current_nav
-//                     ) AS current_value
-
-//                 FROM mf_holdings h
-
-//                 INNER JOIN mf_schemes s
-//                     ON s.id = h.scheme_id
-
-//                 WHERE h.user_id = ?
-
-//                 ORDER BY
-//                     h.updated_at DESC
-//                 `,
-//       [userId],
-//     );
-
-//     const holdings = rows.map((row) => {
-//       const invested = Number(row.invested_amount);
-
-//       const currentValue = Number(row.current_value);
-
-//       return {
-//         id: row.id,
-
-//         userId: row.user_id,
-
-//         schemeId: row.scheme_id,
-
-//         schemeCode: row.scheme_code,
-
-//         schemeName: row.scheme_name,
-
-//         fundHouse: row.fund_house,
-
-//         schemeCategory: row.scheme_category,
-
-//         fundType: row.fund_type,
-
-//         fundSubCategory: row.fund_sub_category,
-
-//         units: Number(row.units),
-
-//         investedAmount: invested,
-
-//         currentNav: Number(Number(row.current_nav).toFixed(2)),
-
-//         currentValue,
-
-//         navDate: row.nav_date,
-
-//         return1Y: row.return_1y,
-
-//         return3Y: row.return_3y,
-
-//         return5Y: row.return_5y,
-
-//         rating: row.rating,
-
-//         risk: row.risk,
-
-//         profitLoss: Number((currentValue - invested).toFixed(2)),
-
-//         createdAt: row.created_at,
-
-//         updatedAt: row.updated_at,
-//       };
-//     });
-
-//     res.json({
-//       success: true,
-
-//       data: holdings,
-
-//       holdings,
-//     });
-//   } catch (error) {
-//     console.error("getMutualFundHoldings error:", error);
-
-//     res.status(500).json({
-//       success: false,
-
-//       message: "Unable to load mutual fund holdings",
-
-//       error: error.message,
-//     });
-//   }
-// }
-
-
-
-
-
-async function getMutualFundHoldings(
-  req,
-  res
-) {
+async function getMutualFundHoldings(req, res) {
   try {
     const userId = req.userId;
 
@@ -1413,237 +1436,139 @@ async function getMutualFundHoldings(
       });
     }
 
-    const [holdings] =
-      await pool.query(
-        `
-        SELECT
-          h.id,
-          h.user_id,
-          h.scheme_id,
-          h.units,
-          h.invested_amount,
+    const db = await getDB();
 
-          h.created_at,
-          h.updated_at,
+    const holdingsCollection = db.collection("mfHoldings");
 
-          s.scheme_code,
-          s.scheme_name,
-          s.fund_house,
-          s.scheme_type,
-          s.scheme_category,
-          s.fund_sub_category,
+    const schemesCollection = db.collection("mfSchemes");
 
-          s.current_nav,
-          s.nav_date,
+    const holdings = await holdingsCollection
+      .find({
+        userId: String(userId),
 
-          s.previous_nav,
-          s.previous_nav_date,
-
-          s.return_1d,
-          s.return_1d_nav_date,
-
-          s.return_1y,
-          s.return_3y,
-          s.return_5y,
-
-          s.rating,
-          s.risk
-
-        FROM mf_holdings h
-
-        INNER JOIN mf_schemes s
-          ON s.id = h.scheme_id
-
-        WHERE h.user_id = ?
-          AND h.units > 0
-
-        ORDER BY
-          s.scheme_name ASC
-        `,
-        [userId]
-      );
+        units: {
+          $gt: 0,
+        },
+      })
+      .sort({
+        schemeName: 1,
+      })
+      .toArray();
 
     let investedAmount = 0;
     let currentValue = 0;
     let todaysPnL = 0;
     let totalReturn = 0;
 
-    const data = holdings.map(
-      (holding) => {
-        const units =
-          Number(
-            holding.units || 0
-          );
+    const data = [];
 
-        const invested =
-          Number(
-            holding.invested_amount || 0
-          );
+    for (const holding of holdings) {
+      const scheme = await schemesCollection.findOne({
+        schemeCode: holding.schemeCode,
+        isActive: true,
+      });
 
-        const currentNav =
-          Number(
-            holding.current_nav || 0
-          );
-
-        const previousNav =
-          Number(
-            holding.previous_nav || 0
-          );
-
-        const value =
-          units * currentNav;
-
-        /*
-          Today's portfolio value
-          based on previous NAV.
-        */
-        const previousValue =
-          previousNav > 0
-            ? units * previousNav
-            : value;
-
-        const dayPnL =
-          value - previousValue;
-
-        const dayPercent =
-          previousValue > 0
-            ? (dayPnL /
-                previousValue) *
-              100
-            : 0;
-
-        /*
-          Total return
-          = current value - invested amount
-        */
-        const totalPnL =
-          value - invested;
-
-        const totalPercent =
-          invested > 0
-            ? (totalPnL /
-                invested) *
-              100
-            : 0;
-
-        investedAmount +=
-          invested;
-
-        currentValue +=
-          value;
-
-        todaysPnL +=
-          dayPnL;
-
-        totalReturn +=
-          totalPnL;
-
-        return {
-          id: holding.id,
-
-          userId:
-            holding.user_id,
-
-          schemeId:
-            holding.scheme_id,
-
-          schemeCode:
-            holding.scheme_code,
-
-          schemeName:
-            holding.scheme_name,
-
-          fundHouse:
-            holding.fund_house,
-
-          schemeType:
-            holding.scheme_type,
-
-          schemeCategory:
-            holding.scheme_category,
-
-          fundSubCategory:
-            holding.fund_sub_category,
-
-          units,
-
-          investedAmount:
-            invested,
-
-          currentNav,
-
-          navDate:
-            holding.nav_date,
-
-          previousNav,
-
-          previousNavDate:
-            holding.previous_nav_date,
-
-          currentValue:
-            value,
-
-          previousValue,
-
-          todaysPnL:
-            dayPnL,
-
-          todaysReturnPercent:
-            dayPercent,
-
-          totalReturn:
-            totalPnL,
-
-          totalReturnPercent:
-            totalPercent,
-
-          return1D:
-            Number(
-              holding.return_1d ?? 0
-            ),
-
-          return1Y:
-            holding.return_1y,
-
-          return3Y:
-            holding.return_3y,
-
-          return5Y:
-            holding.return_5y,
-
-          rating:
-            holding.rating,
-
-          risk:
-            holding.risk,
-        };
+      if (!scheme) {
+        continue;
       }
-    );
 
-    /*
-      XIRR based on completed orders
-      plus current portfolio value.
-    */
-    const xirr =
-      await calculatePortfolioXirr(
-        pool,
-        userId,
-        currentValue
-      );
+      const units = Number(holding.units || 0);
+
+      const invested = Number(holding.investedAmount || 0);
+
+      const currentNav = Number(scheme.currentNav || 0);
+
+      const previousNav = Number(scheme.previousNav || 0);
+
+      const value = units * currentNav;
+
+      const previousValue = previousNav > 0 ? units * previousNav : value;
+
+      const dayPnL = value - previousValue;
+
+      const dayPercent = previousValue > 0 ? (dayPnL / previousValue) * 100 : 0;
+
+      const totalPnL = value - invested;
+
+      const totalPercent = invested > 0 ? (totalPnL / invested) * 100 : 0;
+
+      investedAmount += invested;
+
+      currentValue += value;
+
+      todaysPnL += dayPnL;
+
+      totalReturn += totalPnL;
+
+      data.push({
+        id: holding.mysqlId ?? holding._id?.toString(),
+
+        userId: holding.userId,
+
+        schemeId: holding.schemeId,
+
+        schemeCode: holding.schemeCode,
+
+        schemeName: scheme.schemeName,
+
+        fundHouse: scheme.fundHouse,
+
+        schemeType: scheme.schemeType,
+
+        schemeCategory: scheme.schemeCategory,
+
+        fundSubCategory: scheme.fundSubCategory,
+
+        units,
+
+        investedAmount: invested,
+
+        currentNav,
+
+        navDate: scheme.navDate,
+
+        previousNav,
+
+        previousNavDate: scheme.previousNavDate,
+
+        currentValue: value,
+
+        previousValue,
+
+        todaysPnL: dayPnL,
+
+        todaysReturnPercent: dayPercent,
+
+        totalReturn: totalPnL,
+
+        totalReturnPercent: totalPercent,
+
+        return1D: Number(scheme.return1d ?? 0),
+
+        return1Y: scheme.return1y,
+
+        return3Y: scheme.return3y,
+
+        return5Y: scheme.return5y,
+
+        rating: scheme.rating,
+
+        risk: scheme.risk,
+
+        createdAt: holding.createdAt,
+
+        updatedAt: holding.updatedAt,
+      });
+    }
+
+    const xirr = await calculatePortfolioXirr(db, userId, currentValue);
 
     const totalReturnPercent =
-      investedAmount > 0
-        ? (totalReturn /
-            investedAmount) *
-          100
-        : 0;
+      investedAmount > 0 ? (totalReturn / investedAmount) * 100 : 0;
 
     const todaysReturnPercent =
       currentValue - todaysPnL > 0
-        ? (todaysPnL /
-            (currentValue -
-              todaysPnL)) *
-          100
+        ? (todaysPnL / (currentValue - todaysPnL)) * 100
         : 0;
 
     return res.json({
@@ -1664,234 +1589,126 @@ async function getMutualFundHoldings(
 
       data,
 
-      /*
-        Keep this for compatibility
-        with existing frontend code.
-      */
       holdings: data,
     });
   } catch (error) {
-    console.error(
-      "[MF HOLDINGS]",
-      error
-    );
+    console.error("[MF HOLDINGS]", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Unable to fetch mutual fund holdings",
+      message: "Unable to fetch mutual fund holdings",
     });
   }
 }
 
+/*
+|--------------------------------------------------------------------------
+| XIRR
+|--------------------------------------------------------------------------
+*/
 
-function calculateXirrFromCashFlows(
-  cashFlows
-) {
-  if (
-    !Array.isArray(cashFlows) ||
-    cashFlows.length < 2
-  ) {
+function calculateXirrFromCashFlows(cashFlows) {
+  if (!Array.isArray(cashFlows) || cashFlows.length < 2) {
     return null;
   }
 
-  const sorted =
-    [...cashFlows].sort(
-      (a, b) =>
-        a.date.getTime() -
-        b.date.getTime()
-    );
+  const sorted = [...cashFlows].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
 
-  const firstDate =
-    sorted[0].date;
+  const firstDate = sorted[0].date;
 
-  const yearFraction = (
-    date
-  ) => {
-    return (
-      (date.getTime() -
-        firstDate.getTime()) /
-      (365 * 24 * 60 * 60 * 1000)
-    );
-  };
+  const yearFraction = (date) =>
+    (date.getTime() - firstDate.getTime()) / (365 * 24 * 60 * 60 * 1000);
 
-  const npv = (rate) => {
-    return sorted.reduce(
-      (sum, flow) => {
-        const years =
-          yearFraction(
-            flow.date
-          );
+  const npv = (rate) =>
+    sorted.reduce((sum, flow) => {
+      const years = yearFraction(flow.date);
 
-        return (
-          sum +
-          flow.amount /
-            Math.pow(
-              1 + rate,
-              years
-            )
-        );
-      },
-      0
-    );
-  };
+      return sum + flow.amount / Math.pow(1 + rate, years);
+    }, 0);
 
   let low = -0.9999;
   let high = 10;
 
-  const lowValue =
-    npv(low);
+  let lowValue = npv(low);
 
-  const highValue =
-    npv(high);
+  let highValue = npv(high);
 
-  /*
-    No root in range.
-  */
-  if (
-    !Number.isFinite(
-      lowValue
-    ) ||
-    !Number.isFinite(
-      highValue
-    )
-  ) {
+  if (!Number.isFinite(lowValue) || !Number.isFinite(highValue)) {
     return null;
   }
 
-  if (
-    lowValue * highValue > 0
-  ) {
+  if (lowValue * highValue > 0) {
     return null;
   }
 
-  /*
-    Bisection method.
-  */
-  for (
-    let i = 0;
-    i < 200;
-    i++
-  ) {
-    const mid =
-      (low + high) / 2;
+  for (let i = 0; i < 200; i++) {
+    const mid = (low + high) / 2;
 
-    const value =
-      npv(mid);
+    const value = npv(mid);
 
-    if (
-      !Number.isFinite(value)
-    ) {
+    if (!Number.isFinite(value)) {
       return null;
     }
 
-    if (
-      Math.abs(value) <
-      0.000001
-    ) {
+    if (Math.abs(value) < 0.000001) {
       return mid * 100;
     }
 
-    if (
-      lowValue * value <=
-      0
-    ) {
+    if (lowValue * value <= 0) {
       high = mid;
+      highValue = value;
     } else {
       low = mid;
+      lowValue = value;
     }
   }
 
-  return (
-    ((low + high) / 2) *
-    100
-  );
+  return ((low + high) / 2) * 100;
 }
 
-async function calculatePortfolioXirr(
-  db,
-  userId,
-  currentValue
-) {
+async function calculatePortfolioXirr(db, userId, currentValue) {
   try {
-    const [orders] =
-      await db.query(
-        `
-        SELECT
-          order_type,
-          amount,
-          created_at,
-          completed_at
+    const orders = await db
+      .collection("mfOrders")
+      .find({
+        userId: String(userId),
 
-        FROM mf_orders
+        status: "COMPLETED",
+      })
+      .sort({
+        createdAt: 1,
+      })
+      .toArray();
 
-        WHERE user_id = ?
-          AND status = 'COMPLETED'
-
-        ORDER BY created_at ASC
-        `,
-        [userId]
-      );
-
-    if (
-      !Array.isArray(orders) ||
-      orders.length === 0
-    ) {
+    if (!orders.length) {
       return null;
     }
 
     const cashFlows = [];
 
-    for (
-      const order of orders
-    ) {
-      const amount =
-        Number(
-          order.amount || 0
-        );
+    for (const order of orders) {
+      const amount = Number(order.amount || 0);
 
-      if (
-        !Number.isFinite(amount) ||
-        amount <= 0
-      ) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         continue;
       }
 
-      const dateValue =
-        order.completed_at ||
-        order.created_at;
+      const date = normalizeDate(order.completedAt || order.createdAt);
 
-      const date =
-        new Date(dateValue);
-
-      if (
-        Number.isNaN(
-          date.getTime()
-        )
-      ) {
+      if (!date) {
         continue;
       }
 
-      if (
-        order.order_type ===
-        "BUY"
-      ) {
-        /*
-          Investment = negative cash flow
-        */
+      if (order.orderType === "BUY") {
         cashFlows.push({
           amount: -amount,
           date,
         });
       }
 
-      if (
-        order.order_type ===
-        "SELL"
-      ) {
-        /*
-          Sale = positive cash flow
-        */
+      if (order.orderType === "SELL") {
         cashFlows.push({
           amount,
           date,
@@ -1899,55 +1716,24 @@ async function calculatePortfolioXirr(
       }
     }
 
-    /*
-      Current portfolio value
-      is treated as a positive cash flow
-      on today's date.
-    */
-    if (
-      Number.isFinite(
-        Number(currentValue)
-      ) &&
-      Number(currentValue) > 0
-    ) {
+    if (Number.isFinite(Number(currentValue)) && Number(currentValue) > 0) {
       cashFlows.push({
-        amount:
-          Number(currentValue),
+        amount: Number(currentValue),
         date: new Date(),
       });
     }
 
-    /*
-      Need at least one investment
-      and one positive cash flow.
-    */
-    const hasNegative =
-      cashFlows.some(
-        (flow) =>
-          flow.amount < 0
-      );
+    const hasNegative = cashFlows.some((flow) => flow.amount < 0);
 
-    const hasPositive =
-      cashFlows.some(
-        (flow) =>
-          flow.amount > 0
-      );
+    const hasPositive = cashFlows.some((flow) => flow.amount > 0);
 
-    if (
-      !hasNegative ||
-      !hasPositive
-    ) {
+    if (!hasNegative || !hasPositive) {
       return null;
     }
 
-    return calculateXirrFromCashFlows(
-      cashFlows
-    );
+    return calculateXirrFromCashFlows(cashFlows);
   } catch (error) {
-    console.error(
-      "[MF XIRR]",
-      error
-    );
+    console.error("[MF XIRR]", error);
 
     return null;
   }
@@ -1970,97 +1756,73 @@ async function getMutualFundOrders(req, res) {
       });
     }
 
-    const [rows] = await pool.query(
-      `
-                SELECT
+    const db = await getDB();
 
-                    o.id,
+    const orders = await db
+      .collection("mfOrders")
+      .find({
+        userId: String(userId),
+      })
+      .sort({
+        createdAt: -1,
+      })
+      .toArray();
 
-                    o.order_id,
+    const schemes = db.collection("mfSchemes");
 
-                    o.user_id,
+    const result = [];
 
-                    o.order_type,
+    for (const order of orders) {
+      let scheme = null;
 
-                    o.units,
+      if (order.schemeCode !== undefined) {
+        scheme = await schemes.findOne({
+          schemeCode: order.schemeCode,
+        });
+      }
 
-                    o.nav,
+      result.push({
+        id: order.mysqlId ?? order._id?.toString(),
 
-                    o.amount,
+        orderId: order.orderId,
 
-                    o.nav_date,
+        userId: order.userId,
 
-                    o.status,
+        orderType: order.orderType,
 
-                    o.created_at,
+        units: Number(order.units),
 
-                    o.completed_at,
+        nav: Number(order.nav),
 
-                    s.scheme_code,
+        amount: Number(order.amount),
 
-                    s.scheme_name,
+        navDate: order.navDate,
 
-                    s.fund_house
+        status: order.status,
 
-                FROM mf_orders o
+        createdAt: order.createdAt,
 
-                INNER JOIN mf_schemes s
-                    ON s.id = o.scheme_id
+        completedAt: order.completedAt,
 
-                WHERE o.user_id = ?
+        schemeCode: order.schemeCode ?? scheme?.schemeCode,
 
-                ORDER BY
-                    o.created_at DESC
-                `,
-      [userId],
-    );
+        schemeName: order.schemeName ?? scheme?.schemeName,
 
-    const orders = rows.map((row) => ({
-      id: row.id,
+        fundHouse: scheme?.fundHouse,
+      });
+    }
 
-      orderId: row.order_id,
-
-      userId: row.user_id,
-
-      orderType: row.order_type,
-
-      units: Number(row.units),
-
-      nav: Number(row.nav),
-
-      amount: Number(row.amount),
-
-      navDate: row.nav_date,
-
-      status: row.status,
-
-      createdAt: row.created_at,
-
-      completedAt: row.completed_at,
-
-      schemeCode: row.scheme_code,
-
-      schemeName: row.scheme_name,
-
-      fundHouse: row.fund_house,
-    }));
-
-    res.json({
+    return res.json({
       success: true,
-
-      data: orders,
-
-      orders,
+      data: result,
+      orders: result,
     });
   } catch (error) {
     console.error("getMutualFundOrders error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: "Unable to load mutual fund orders",
-
-      error: error.message,
     });
   }
 }
@@ -2069,173 +1831,145 @@ async function getMutualFundOrders(req, res) {
 |--------------------------------------------------------------------------
 | SYNC LATEST NAV
 |--------------------------------------------------------------------------
-|
-| POST /api/mutual-funds/sync
-|
-| This gets the latest NAV from MFapi
-| and updates mf_schemes.
-|
 */
 
-async function syncLatestNAVController(
-  req,
-  res
-) {
+async function syncLatestNAVController(req, res) {
   try {
-    const result =
-      await syncLatestNAV();
+    const result = await syncLatestNAV();
 
-    res.json({
+    return res.json({
       success: true,
       data: result,
     });
   } catch (error) {
-    console.error(
-      "[MF CONTROLLER] NAV sync failed:",
-      error
-    );
+    console.error("[MF CONTROLLER] NAV sync failed:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message:
-        "Failed to synchronize latest NAV",
-      error: error.message,
+      message: "Failed to synchronize latest NAV",
     });
   }
-}
-
-async function syncReturnsController(
-  req,
-  res
-) {
-  try {
-    const result =
-      await syncAllReturns();
-
-    res.json({
-      success: true,
-      data: result,
-    });
-  } catch (error) {
-    console.error(
-      "[MF CONTROLLER] Return sync failed:",
-      error
-    );
-
-    res.status(500).json({
-      success: false,
-      message:
-        "Failed to calculate mutual fund returns",
-      error: error.message,
-    });
-  }
-}
-
-
-function formatMySqlDate(value) {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    return value.slice(0, 10);
-  }
-
-  if (value instanceof Date) {
-    const year = value.getFullYear();
-
-    const month = String(
-      value.getMonth() + 1
-    ).padStart(2, "0");
-
-    const day = String(
-      value.getDate()
-    ).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
-
-  return null;
 }
 
 /*
 |--------------------------------------------------------------------------
-| REFRESH RETURNS
+| SYNC RETURNS
 |--------------------------------------------------------------------------
-|
-| POST /api/mutual-funds/sync-returns
-|
-| This uses MFapi historical NAV for each scheme.
-|
-| IMPORTANT:
-| This can take time because MFapi has to be called
-| separately for each scheme.
-|
+*/
+
+async function syncReturnsController(req, res) {
+  try {
+    const result = await syncAllReturns();
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("[MF CONTROLLER] Return sync failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to calculate mutual fund returns",
+    });
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| LEGACY RETURNS SYNC
+|--------------------------------------------------------------------------
 */
 
 async function syncReturns(req, res) {
   try {
     const result = await syncAllReturns();
-    res.json({ success: true, message: "Mutual fund returns refresh completed", data: result });
+
+    return res.json({
+      success: true,
+      message: "Mutual fund returns refresh completed",
+      data: result,
+    });
   } catch (error) {
     console.error("syncReturns error:", error);
-    res.status(500).json({ success: false, message: "Unable to refresh mutual fund returns", error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to refresh mutual fund returns",
+      error: error.message,
+    });
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| SYNC STATUS (read-only)
+| SYNC STATUS
 |--------------------------------------------------------------------------
-|
-| GET /api/mutual-funds/sync-status
-|
-| Reads mf_sync_status only. Never triggers MFapi. Useful to verify that
-| a server restart correctly skipped a sync that already succeeded today.
-|
 */
 
 async function getMFSyncStatus(req, res) {
   try {
     const statuses = await getAllSyncStatuses();
-    res.json({
+
+    return res.json({
       success: true,
+
       data: {
         statuses,
-        daily: statuses.find((item) => item.sync_name === 'mf_daily_sync') || null,
-        nav: statuses.find((item) => item.sync_name === 'mf_nav_sync') || null,
-        returns: statuses.find((item) => item.sync_name === 'mf_returns_sync') || null,
-        rating: statuses.find((item) => item.sync_name === 'mf_rating_sync') || null,
+
+        daily:
+          statuses.find((item) => item.sync_name === "mf_daily_sync") || null,
+
+        nav: statuses.find((item) => item.sync_name === "mf_nav_sync") || null,
+
+        returns:
+          statuses.find((item) => item.sync_name === "mf_returns_sync") || null,
+
+        rating:
+          statuses.find((item) => item.sync_name === "mf_rating_sync") || null,
       },
     });
   } catch (error) {
-    console.error('[MF CONTROLLER] getMFSyncStatus:', error);
-    res.status(500).json({ success: false, message: 'Failed to load sync status', error: error.message });
+    console.error("[MF CONTROLLER] getMFSyncStatus:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load sync status",
+      error: error.message,
+    });
   }
 }
 
 /*
 |--------------------------------------------------------------------------
-| TRIGGER SYNC (manual, safe)
+| MANUAL SYNC
 |--------------------------------------------------------------------------
-|
-| POST /api/mutual-funds/sync-now
-|
-| Runs the SAME checked sync entry point used by startup/cron - it will
-| still skip if today's sync already succeeded, and still uses the
-| advisory lock, so this cannot create a duplicate concurrent sync.
-|
 */
 
 async function triggerSyncNow(req, res) {
   try {
-    const result = await runDailySyncIfNeeded('manual');
-    res.json({ success: true, data: result });
+    const result = await runDailySyncIfNeeded("manual");
+
+    return res.json({
+      success: true,
+      data: result,
+    });
   } catch (error) {
-    console.error('[MF CONTROLLER] triggerSyncNow:', error);
-    res.status(500).json({ success: false, message: 'Failed to run sync', error: error.message });
+    console.error("[MF CONTROLLER] triggerSyncNow:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to run sync",
+      error: error.message,
+    });
   }
 }
+
+/*
+|--------------------------------------------------------------------------
+| EXPORTS
+|--------------------------------------------------------------------------
+*/
 
 module.exports = {
   getMutualFunds,
@@ -2250,5 +1984,5 @@ module.exports = {
   syncReturns,
   getMFSyncStatus,
   triggerSyncNow,
-   getTopReturns,
+  getTopReturns,
 };

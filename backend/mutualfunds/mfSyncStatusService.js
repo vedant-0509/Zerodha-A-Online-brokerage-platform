@@ -1,176 +1,164 @@
-const pool = require('./db');
+const {
+  getSyncStatus: findSyncStatus,
+  getAllSyncStatuses: findAllSyncStatuses,
+  updateSyncStatus,
+} = require("./mfMongoRepository");
 
-async function getSyncStatus(syncName, connection = pool) {
-  const [rows] = await connection.query(
-    `SELECT
-       id,
-       sync_name,
-       last_success_date,
-       last_attempt_date,
-       last_processed_nav_date,
-       last_success_at,
-       status,
-       records_processed,
-       records_updated,
-       records_failed,
-       error_message,
-       created_at,
-       updated_at
-     FROM mf_sync_status
-     WHERE sync_name = ?
-     LIMIT 1`,
-    [syncName]
-  );
+function toDate(value) {
+  if (!value) return null;
 
-  return rows[0] || null;
+  if (value instanceof Date) {
+    return value;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function getAllSyncStatuses(connection = pool) {
-  const [rows] = await connection.query(
-    `SELECT
-       id,
-       sync_name,
-       last_success_date,
-       last_attempt_date,
-       last_processed_nav_date,
-       last_success_at,
-       status,
-       records_processed,
-       records_updated,
-       records_failed,
-       error_message,
-       created_at,
-       updated_at
-     FROM mf_sync_status
-     ORDER BY sync_name ASC`
-  );
+function toDateString(value) {
+  const date = toDate(value);
 
-  return rows;
+  if (!date) return null;
+
+  return date.toISOString().slice(0, 10);
 }
 
-async function hasTodaysSyncSucceeded(syncName, connection = pool) {
-  const [rows] = await connection.query(
-    `SELECT 1
-     FROM mf_sync_status
-     WHERE sync_name = ?
-       AND status = 'SUCCESS'
-       AND last_success_date = CURDATE()
-     LIMIT 1`,
-    [syncName]
-  );
-  return rows.length > 0;
+function normalizeStatus(document) {
+  if (!document) return null;
+
+  return {
+    id: document.mysqlId ?? document._id?.toString() ?? null,
+    sync_name: document.syncName ?? null,
+    last_success_date: toDateString(document.lastSuccessDate),
+    last_attempt_date: toDateString(document.lastAttemptDate),
+    last_processed_nav_date: toDateString(document.lastProcessedNavDate),
+    last_success_at: toDate(document.lastSuccessAt),
+    status: document.status ?? null,
+    records_processed: Number(document.recordsProcessed || 0),
+    records_updated: Number(document.recordsUpdated || 0),
+    records_failed: Number(document.recordsFailed || 0),
+    error_message: document.errorMessage ?? null,
+    created_at: toDate(document.createdAt),
+    updated_at: toDate(document.updatedAt),
+  };
 }
 
-async function hasAttemptedToday(
-  syncName,
-  connection = pool
-) {
-  const [rows] =
-    await connection.query(
-      `
-      SELECT 1
-      FROM mf_sync_status
-      WHERE sync_name = ?
-        AND last_attempt_date = CURDATE()
-        AND status IN ('SUCCESS', 'PENDING')
-      LIMIT 1
-      `,
-      [syncName]
+async function getSyncStatus(syncName) {
+  const document = await findSyncStatus(syncName);
+  return normalizeStatus(document);
+}
+
+async function getAllSyncStatuses() {
+  const documents = await findAllSyncStatuses();
+
+  return documents
+    .map(normalizeStatus)
+    .sort((a, b) =>
+      String(a.sync_name || "").localeCompare(
+        String(b.sync_name || "")
+      )
     );
-
-  return rows.length > 0;
 }
 
-async function markRunning(syncName, connection = pool) {
-  await connection.query(
-    `INSERT INTO mf_sync_status
-      (sync_name, last_attempt_date, status)
-     VALUES (?, CURDATE(), 'RUNNING')
-     ON DUPLICATE KEY UPDATE
-       last_attempt_date = CURDATE(),
-       status = 'RUNNING',
-       error_message = NULL,
-       updated_at = NOW()`,
-    [syncName]
+async function hasTodaysSyncSucceeded(syncName) {
+  const document = await findSyncStatus(syncName);
+
+  if (!document) {
+    return false;
+  }
+
+  if (document.status !== "SUCCESS") {
+    return false;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const successDate = toDateString(document.lastSuccessDate);
+
+  return successDate === today;
+}
+
+async function hasAttemptedToday(syncName) {
+  const document = await findSyncStatus(syncName);
+
+  if (!document) {
+    return false;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const attemptDate = toDateString(document.lastAttemptDate);
+
+  return (
+    attemptDate === today &&
+    ["SUCCESS", "PENDING"].includes(document.status)
   );
 }
 
-async function markPending(syncName, message, processedNavDate = null, counts = {}, connection = pool) {
-  await connection.query(
-    `INSERT INTO mf_sync_status
-      (sync_name, last_attempt_date, last_processed_nav_date, status,
-       records_processed, records_updated, records_failed, error_message)
-     VALUES (?, CURDATE(), ?, 'PENDING', ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       last_attempt_date = CURDATE(),
-       last_processed_nav_date = VALUES(last_processed_nav_date),
-       status = 'PENDING',
-       records_processed = VALUES(records_processed),
-       records_updated = VALUES(records_updated),
-       records_failed = VALUES(records_failed),
-       error_message = VALUES(error_message),
-       updated_at = NOW()`,
-    [
-      syncName,
-      processedNavDate,
-      Number(counts.processed || 0),
-      Number(counts.updated || 0),
-      Number(counts.failed || 0),
-      String(message || 'No new NAV data').slice(0, 4000),
-    ]
-  );
+async function markRunning(syncName) {
+  await updateSyncStatus(syncName, {
+    lastAttemptDate: new Date(),
+    status: "RUNNING",
+    errorMessage: null,
+  });
 }
 
-async function markSuccess(syncName, counts = {}, processedNavDate = null, connection = pool) {
-  await connection.query(
-    `INSERT INTO mf_sync_status
-      (sync_name, last_success_date, last_attempt_date,
-       last_processed_nav_date, last_success_at, status,
-       records_processed, records_updated, records_failed, error_message)
-     VALUES (?, CURDATE(), CURDATE(), ?, NOW(), 'SUCCESS', ?, ?, ?, NULL)
-     ON DUPLICATE KEY UPDATE
-       last_success_date = CURDATE(),
-       last_attempt_date = CURDATE(),
-       last_processed_nav_date = VALUES(last_processed_nav_date),
-       last_success_at = NOW(),
-       status = 'SUCCESS',
-       records_processed = VALUES(records_processed),
-       records_updated = VALUES(records_updated),
-       records_failed = VALUES(records_failed),
-       error_message = NULL,
-       updated_at = NOW()`,
-    [
-      syncName,
-      processedNavDate,
-      Number(counts.processed || 0),
-      Number(counts.updated || 0),
-      Number(counts.failed || 0),
-    ]
-  );
+async function markPending(
+  syncName,
+  message,
+  processedNavDate = null,
+  counts = {}
+) {
+  await updateSyncStatus(syncName, {
+    lastAttemptDate: new Date(),
+    lastProcessedNavDate: processedNavDate
+      ? toDate(processedNavDate)
+      : null,
+    status: "PENDING",
+    recordsProcessed: Number(counts.processed || 0),
+    recordsUpdated: Number(counts.updated || 0),
+    recordsFailed: Number(counts.failed || 0),
+    errorMessage: String(
+      message || "No new NAV data"
+    ).slice(0, 4000),
+  });
 }
 
-async function markFailed(syncName, errorMessage, counts = {}, connection = pool) {
-  await connection.query(
-    `INSERT INTO mf_sync_status
-      (sync_name, last_attempt_date, status,
-       records_processed, records_updated, records_failed, error_message)
-     VALUES (?, CURDATE(), 'FAILED', ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       last_attempt_date = CURDATE(),
-       status = 'FAILED',
-       records_processed = VALUES(records_processed),
-       records_updated = VALUES(records_updated),
-       records_failed = VALUES(records_failed),
-       error_message = VALUES(error_message),
-       updated_at = NOW()`,
-    [
-      syncName,
-      Number(counts.processed || 0),
-      Number(counts.updated || 0),
-      Number(counts.failed || 0),
-      String(errorMessage || 'Unknown error').slice(0, 4000),
-    ]
-  );
+async function markSuccess(
+  syncName,
+  counts = {},
+  processedNavDate = null
+) {
+  const now = new Date();
+
+  await updateSyncStatus(syncName, {
+    lastSuccessDate: now,
+    lastAttemptDate: now,
+    lastProcessedNavDate: processedNavDate
+      ? toDate(processedNavDate)
+      : null,
+    lastSuccessAt: now,
+    status: "SUCCESS",
+    recordsProcessed: Number(counts.processed || 0),
+    recordsUpdated: Number(counts.updated || 0),
+    recordsFailed: Number(counts.failed || 0),
+    errorMessage: null,
+  });
+}
+
+async function markFailed(
+  syncName,
+  errorMessage,
+  counts = {}
+) {
+  await updateSyncStatus(syncName, {
+    lastAttemptDate: new Date(),
+    status: "FAILED",
+    recordsProcessed: Number(counts.processed || 0),
+    recordsUpdated: Number(counts.updated || 0),
+    recordsFailed: Number(counts.failed || 0),
+    errorMessage: String(
+      errorMessage || "Unknown error"
+    ).slice(0, 4000),
+  });
 }
 
 module.exports = {

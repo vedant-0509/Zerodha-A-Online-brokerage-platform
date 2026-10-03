@@ -161,6 +161,30 @@ export function normalizeFinancialRows(source) {
     else if (statement.income_statement) statement = statement.income_statement;
   }
 
+  // Some stocks return only the latest financial summary at the top level.
+  // Preserve that valid data so the Financial Performance section is not
+  // incorrectly shown as empty.
+  const directRevenue = getFinancialNumber(
+    raw?.revenue, raw?.totalRevenue, raw?.total_revenue, raw?.sales, raw?.income,
+  );
+  const directProfit = getFinancialNumber(
+    raw?.netProfit, raw?.net_profit, raw?.profit, raw?.pat,
+    raw?.profitAfterTax, raw?.profit_after_tax, raw?.netIncome, raw?.operatingProfit,
+  );
+  const directPeriod =
+    raw?.revenuePeriod || raw?.revenue_period ||
+    raw?.netProfitPeriod || raw?.net_profit_period ||
+    raw?.period || raw?.quarter || raw?.reportPeriod || raw?.report_period ||
+    raw?.asOf || raw?.as_of || raw?.reportDate || raw?.report_date;
+
+  if ((directRevenue !== null || directProfit !== null) && directPeriod) {
+    return sortFinancialRowsChronologically([{
+      quarter: String(directPeriod),
+      revenue: directRevenue ?? 0,
+      profit: directProfit ?? 0,
+    }]);
+  }
+
   const categoryList = getArray(
     statement?.income_statement,
     statement?.incomeStatement,

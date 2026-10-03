@@ -1,5 +1,10 @@
 const crypto = require("crypto");
-const { requireDb } = require("./db");
+
+const { getMongoDB, getMongoClient } = require("../config/mongodb");
+
+// ============================================================
+// HELPERS
+// ============================================================
 
 function createOrderId() {
   return crypto.randomUUID();
@@ -10,8 +15,10 @@ function normalizeIdempotencyKey(value) {
 
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(key)) {
     const error = new Error("A valid Idempotency-Key header is required.");
+
     error.code = "INVALID_IDEMPOTENCY_KEY";
     error.httpStatus = 400;
+
     throw error;
   }
 
@@ -28,108 +35,124 @@ function createRequestHash({
 }) {
   const payload = JSON.stringify({
     instrumentKey: String(instrumentKey || ""),
+
     transactionType: String(transactionType || "").toUpperCase(),
+
     quantity: Number(quantity),
+
     orderType: String(orderType || "MARKET").toUpperCase(),
+
     product: String(product || "CNC").toUpperCase(),
+
     limitPrice:
-      limitPrice == null || limitPrice === ""
-        ? null
-        : Number(limitPrice),
+      limitPrice == null || limitPrice === "" ? null : Number(limitPrice),
   });
 
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
 function parseStoredResponse(raw) {
+  if (!raw) {
+    return null;
+  }
+
+  if (typeof raw === "object") {
+    return raw;
+  }
+
   try {
-    return raw ? JSON.parse(raw) : null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
 }
 
-async function writeAudit(connection, {
-  orderId,
-  userId,
-  idempotencyKey,
-  eventType,
-  status,
-  details = null,
-}) {
-  await connection.execute(
-    `
-      INSERT INTO order_transaction_audit (
-        order_id,
-        user_id,
-        idempotency_key,
-        event_type,
-        status,
-        details,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, NOW())
-    `,
-    [
+function getCollection(name) {
+  return getMongoDB().collection(name);
+}
+
+// ============================================================
+// AUDIT
+// ============================================================
+
+async function writeAudit(
+  db,
+  {
+    orderId,
+    userId,
+    idempotencyKey,
+    eventType,
+    status,
+    details = null,
+    session = null,
+  },
+) {
+  await db.collection("orderTransactionAudit").insertOne(
+    {
+      auditId: crypto.randomUUID(),
+
       orderId,
+
       userId,
-      idempotencyKey || null,
+
+      idempotencyKey: idempotencyKey || null,
+
       eventType,
+
       status,
-      details ? JSON.stringify(details) : null,
-    ],
+
+      details,
+
+      createdAt: new Date(),
+    },
+    session ? { session } : undefined,
   );
 }
 
-async function writeRollbackAudit({
-  orderId,
-  userId,
-  idempotencyKey,
-  error,
-}) {
-  const db = requireDb();
-  let auditConnection;
+// ============================================================
+// ROLLBACK AUDIT
+// ============================================================
 
+async function writeRollbackAudit({ orderId, userId, idempotencyKey, error }) {
   try {
-    auditConnection = await db.getConnection();
-    await writeAudit(auditConnection, {
+    const db = getMongoDB();
+
+    await writeAudit(db, {
       orderId,
+
       userId,
+
       idempotencyKey,
+
       eventType: "ORDER_ROLLED_BACK",
+
       status: "ROLLED_BACK",
+
       details: {
         errorCode: error?.code || "INTERNAL_ERROR",
+
         message: error?.message || "Order transaction rolled back.",
       },
     });
   } catch {
-    // The original order error is more important than an audit-write error.
-  } finally {
-    auditConnection?.release();
+    // Original order error is more important.
   }
 }
 
-async function getIdempotencyRecord(db, userId, idempotencyKey) {
-  const [rows] = await db.execute(
-    `
-      SELECT
-        user_id,
-        idempotency_key,
-        request_hash,
-        status,
-        order_id,
-        response_json
-      FROM order_idempotency
-      WHERE user_id = ?
-        AND idempotency_key = ?
-      LIMIT 1
-    `,
-    [userId, idempotencyKey],
-  );
+// ============================================================
+// IDEMPOTENCY
+// ============================================================
 
-  return rows[0] || null;
+async function getIdempotencyRecord(db, userId, idempotencyKey) {
+  return db.collection("orderIdempotency").findOne({
+    userId,
+    idempotencyKey,
+  });
 }
+
+// ============================================================
+// BUSINESS FAILURE
+// ============================================================
 
 function createBusinessFailure({
   orderId,
@@ -146,62 +169,108 @@ function createBusinessFailure({
 }) {
   return {
     success: false,
+
     status: "FAILED",
+
     simulated: true,
+
     code,
+
     orderId,
+
     transactionType,
+
     orderType,
+
     product,
+
     instrumentKey,
+
     symbol,
+
     quantity,
+
     price,
+
     investedAmount,
+
     message,
   };
 }
 
+// ============================================================
+// SIMULATE ORDER
+// ============================================================
+
 async function simulateOrder({
   userId,
+
   instrumentKey,
+
   transactionType,
+
   quantity,
+
   orderType = "MARKET",
+
   product = "CNC",
+
   limitPrice = null,
+
   idempotencyKey,
 }) {
-  const db = requireDb();
+  const db = getMongoDB();
+
+  const client = getMongoClient();
+
+  // ========================================================
+  // NORMALIZATION
+  // ========================================================
 
   const normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+
   const normalizedTransactionType = String(transactionType || "").toUpperCase();
+
   const normalizedOrderType = String(orderType || "MARKET").toUpperCase();
+
   const normalizedProduct = String(product || "CNC").toUpperCase();
+
   const qty = Number(quantity);
+
   const normalizedLimitPrice =
-    limitPrice == null || limitPrice === ""
-      ? null
-      : Number(limitPrice);
+    limitPrice == null || limitPrice === "" ? null : Number(limitPrice);
+
+  // ========================================================
+  // VALIDATION
+  // ========================================================
 
   if (!Number.isInteger(qty) || qty <= 0) {
     const error = new Error("Quantity must be a positive integer.");
+
     error.code = "INVALID_QUANTITY";
+
     error.httpStatus = 400;
+
     throw error;
   }
 
-  if (!['BUY', 'SELL'].includes(normalizedTransactionType)) {
+  if (!["BUY", "SELL"].includes(normalizedTransactionType)) {
     const error = new Error("transactionType must be BUY or SELL.");
+
     error.code = "INVALID_TRANSACTION_TYPE";
+
     error.httpStatus = 400;
+
     throw error;
   }
 
-  if (!['MARKET', 'LIMIT'].includes(normalizedOrderType)) {
+  if (!["MARKET", "LIMIT"].includes(normalizedOrderType)) {
     const error = new Error("Invalid orderType.");
+
     error.code = "INVALID_ORDER_TYPE";
+
     error.httpStatus = 400;
+
     throw error;
   }
 
@@ -209,147 +278,221 @@ async function simulateOrder({
     normalizedOrderType === "LIMIT" &&
     (!Number.isFinite(normalizedLimitPrice) || normalizedLimitPrice <= 0)
   ) {
-    const error = new Error("A positive limitPrice is required for LIMIT orders.");
+    const error = new Error(
+      "A positive limitPrice is required for LIMIT orders.",
+    );
+
     error.code = "INVALID_LIMIT_PRICE";
+
     error.httpStatus = 400;
+
     throw error;
   }
 
+  // ========================================================
+  // REQUEST HASH
+  // ========================================================
+
   const requestHash = createRequestHash({
     instrumentKey,
+
     transactionType: normalizedTransactionType,
+
     quantity: qty,
+
     orderType: normalizedOrderType,
+
     product: normalizedProduct,
+
     limitPrice: normalizedLimitPrice,
   });
 
-  const connection = await db.getConnection();
   const orderId = createOrderId();
+
+  const session = client.startSession();
+
   let transactionStarted = false;
 
   try {
-    await connection.beginTransaction();
+    // ====================================================
+    // START TRANSACTION
+    // ====================================================
+
+    session.startTransaction();
+
     transactionStarted = true;
 
-    // The unique DB constraint serializes the same user + idempotency key.
-    // A duplicate means another request already owns this key.
+    // ====================================================
+    // IDEMPOTENCY INSERT
+    // ====================================================
+
     try {
-      await connection.execute(
-        `
-          INSERT INTO order_idempotency (
-            user_id,
-            idempotency_key,
-            request_hash,
-            status,
-            order_id,
-            response_json,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, 'PROCESSING', ?, NULL, NOW(), NOW())
-        `,
-        [userId, normalizedKey, requestHash, orderId],
+      await getCollection("orderIdempotency").insertOne(
+        {
+          userId,
+
+          idempotencyKey: normalizedKey,
+
+          requestHash,
+
+          status: "PROCESSING",
+
+          orderId,
+
+          responseJson: null,
+
+          createdAt: new Date(),
+
+          updatedAt: new Date(),
+        },
+
+        { session },
       );
     } catch (error) {
-      if (error?.code !== "ER_DUP_ENTRY") throw error;
+      // Mongo duplicate-key error
+      if (error?.code !== 11000) {
+        throw error;
+      }
 
-      await connection.rollback();
+      // Another request owns this
+      // idempotency key.
+
+      await session.abortTransaction();
+
       transactionStarted = false;
 
-      const existing = await getIdempotencyRecord(
-        db,
-        userId,
-        normalizedKey,
-      );
+      const existing = await getIdempotencyRecord(db, userId, normalizedKey);
 
       if (!existing) {
-        const retryError = new Error("Unable to resolve idempotent order request.");
+        const retryError = new Error(
+          "Unable to resolve idempotent order request.",
+        );
+
         retryError.code = "IDEMPOTENCY_RETRY_REQUIRED";
+
         retryError.httpStatus = 409;
+
         throw retryError;
       }
 
-      if (existing.request_hash !== requestHash) {
+      if (existing.requestHash !== requestHash) {
         const conflict = new Error(
           "The Idempotency-Key was already used with a different order request.",
         );
+
         conflict.code = "IDEMPOTENCY_KEY_REUSED";
+
         conflict.httpStatus = 409;
+
         throw conflict;
       }
 
-      if (existing.status === "COMPLETED" && existing.response_json) {
-        return parseStoredResponse(existing.response_json) || {
-          success: false,
-          status: "FAILED",
-          code: "IDEMPOTENCY_RESPONSE_UNAVAILABLE",
-          message: "The previous order response could not be read.",
-        };
+      if (existing.status === "COMPLETED" && existing.responseJson) {
+        return (
+          parseStoredResponse(existing.responseJson) || {
+            success: false,
+
+            status: "FAILED",
+
+            code: "IDEMPOTENCY_RESPONSE_UNAVAILABLE",
+
+            message: "The previous order response could not be read.",
+          }
+        );
       }
 
       const processing = new Error(
         "This order request is already being processed. Please retry with the same Idempotency-Key.",
       );
+
       processing.code = "ORDER_PROCESSING";
+
       processing.httpStatus = 409;
+
       throw processing;
     }
 
-    await writeAudit(connection, {
-      orderId,
-      userId,
-      idempotencyKey: normalizedKey,
-      eventType: "ORDER_STARTED",
-      status: "PROCESSING",
-      details: {
-        instrumentKey,
-        transactionType: normalizedTransactionType,
-        quantity: qty,
-        orderType: normalizedOrderType,
-        product: normalizedProduct,
-      },
-    });
+    // ====================================================
+    // ORDER START AUDIT
+    // ====================================================
 
-    // ---------------------------------------------------------
-    // Lock the stock row and read the execution price from DB.
-    // Client-supplied values can never become the execution price.
-    // ---------------------------------------------------------
-    const [stockRows] = await connection.execute(
-      `
-        SELECT
-          id,
-          symbol,
-          name,
-          price,
-          instrument_key
-        FROM market_stocks_data
-        WHERE instrument_key = ?
-        LIMIT 1
-        FOR UPDATE
-      `,
-      [instrumentKey],
+    await writeAudit(
+      db,
+      {
+        orderId,
+
+        userId,
+
+        idempotencyKey: normalizedKey,
+
+        eventType: "ORDER_STARTED",
+
+        status: "PROCESSING",
+
+        details: {
+          instrumentKey,
+
+          transactionType: normalizedTransactionType,
+
+          quantity: qty,
+
+          orderType: normalizedOrderType,
+
+          product: normalizedProduct,
+        },
+      },
+      session,
     );
 
-    if (!stockRows.length) {
+    // ====================================================
+    // SERVER-AUTHORITATIVE STOCK PRICE
+    // ====================================================
+
+    const stock = await getCollection("marketStocks").findOne(
+      {
+        instrumentKey,
+      },
+      {
+        session,
+        projection: {
+          instrumentKey: 1,
+          symbol: 1,
+          name: 1,
+          price: 1,
+        },
+      },
+    );
+
+    if (!stock) {
       const error = new Error("Stock not found.");
+
       error.code = "STOCK_NOT_FOUND";
+
       error.httpStatus = 404;
+
       throw error;
     }
 
-    const stock = stockRows[0];
+    // IMPORTANT:
+    // Client price is NEVER used
+    // as execution price.
+
     const executionPrice = Number(stock.price);
 
     if (!Number.isFinite(executionPrice) || executionPrice <= 0) {
       const error = new Error("Invalid server execution price.");
+
       error.code = "INVALID_EXECUTION_PRICE";
+
       error.httpStatus = 409;
+
       throw error;
     }
 
-    // A LIMIT price is only a server-side condition. It is never stored as
-    // the execution price. MARKET orders ignore any client price entirely.
+    // ====================================================
+    // LIMIT ORDER CHECK
+    // ====================================================
+
     if (normalizedOrderType === "LIMIT") {
       const limitSatisfied =
         normalizedTransactionType === "BUY"
@@ -358,99 +501,149 @@ async function simulateOrder({
 
       if (!limitSatisfied) {
         const exchangeSegment = String(instrumentKey).split("|")[0] || "";
+
         const exchange =
           exchangeSegment === "NSE_EQ"
             ? "NSE"
             : exchangeSegment === "BSE_EQ"
               ? "BSE"
               : exchangeSegment.replace("_EQ", "");
+
         const investedAmount = executionPrice * qty;
 
         const result = createBusinessFailure({
           orderId,
+
           transactionType: normalizedTransactionType,
+
           orderType: normalizedOrderType,
+
           product: normalizedProduct,
+
           instrumentKey,
+
           symbol: stock.symbol,
+
           quantity: qty,
+
           price: executionPrice,
+
           investedAmount,
+
           code: "LIMIT_NOT_MARKETABLE",
+
           message:
             normalizedTransactionType === "BUY"
               ? `Current market price ₹${executionPrice.toFixed(2)} is above your limit price ₹${normalizedLimitPrice.toFixed(2)}.`
               : `Current market price ₹${executionPrice.toFixed(2)} is below your limit price ₹${normalizedLimitPrice.toFixed(2)}.`,
         });
 
-        await connection.execute(
-          `
-            INSERT INTO orders (
-              order_id,
-              user_id,
-              instrument_key,
-              symbol,
-              instrument_name,
-              exchange,
-              order_type,
-              product,
-              quantity,
-              price,
-              invested_amount,
-              order_status,
-              failure_reason,
-              placed_at,
-              executed_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FAILED', ?, NOW(), NULL)
-          `,
-          [
+        // FAILED ORDER
+
+        await getCollection("orders").insertOne(
+          {
             orderId,
+
             userId,
+
             instrumentKey,
-            stock.symbol,
-            stock.name,
+
+            symbol: stock.symbol,
+
+            instrumentName: stock.name,
+
             exchange,
-            normalizedTransactionType,
-            normalizedProduct,
-            qty,
-            executionPrice,
+
+            orderType: normalizedTransactionType,
+
+            product: normalizedProduct,
+
+            quantity: qty,
+
+            price: executionPrice,
+
             investedAmount,
-            result.message,
-          ],
-        );
 
-        await writeAudit(connection, {
-          orderId,
-          userId,
-          idempotencyKey: normalizedKey,
-          eventType: "ORDER_REJECTED",
-          status: "FAILED",
-          details: {
-            code: result.code,
-            executionPrice,
-            limitPrice: normalizedLimitPrice,
+            orderStatus: "FAILED",
+
+            failureReason: result.message,
+
+            placedAt: new Date(),
+
+            executedAt: null,
+
+            createdAt: new Date(),
+
+            updatedAt: new Date(),
           },
-        });
 
-        await connection.execute(
-          `
-            UPDATE order_idempotency
-            SET status = 'COMPLETED', response_json = ?, updated_at = NOW()
-            WHERE user_id = ? AND idempotency_key = ?
-          `,
-          [JSON.stringify(result), userId, normalizedKey],
+          { session },
         );
 
-        await connection.commit();
+        await writeAudit(
+          db,
+          {
+            orderId,
+
+            userId,
+
+            idempotencyKey: normalizedKey,
+
+            eventType: "ORDER_REJECTED",
+
+            status: "FAILED",
+
+            details: {
+              code: result.code,
+
+              executionPrice,
+
+              limitPrice: normalizedLimitPrice,
+            },
+          },
+          session,
+        );
+
+        await getCollection("orderIdempotency").updateOne(
+          {
+            userId,
+
+            idempotencyKey: normalizedKey,
+          },
+
+          {
+            $set: {
+              status: "COMPLETED",
+
+              responseJson: result,
+
+              updatedAt: new Date(),
+            },
+          },
+
+          { session },
+        );
+
+        await session.commitTransaction();
+
         transactionStarted = false;
+
         return result;
       }
     }
 
+    // ====================================================
+    // INVESTED AMOUNT
+    // ====================================================
+
     const investedAmount = executionPrice * qty;
 
+    // ====================================================
+    // EXCHANGE
+    // ====================================================
+
     const exchangeSegment = String(instrumentKey).split("|")[0] || "";
+
     const exchange =
       exchangeSegment === "NSE_EQ"
         ? "NSE"
@@ -458,322 +651,538 @@ async function simulateOrder({
           ? "BSE"
           : exchangeSegment.replace("_EQ", "");
 
-    // =========================================================
+    // ====================================================
     // BUY
-    // =========================================================
+    // ====================================================
+
     if (normalizedTransactionType === "BUY") {
-      const [holdingRows] = await connection.execute(
-        `
-          SELECT
-            holding_id,
-            quantity,
-            invested_value
-          FROM holdings
-          WHERE user_id = ?
-            AND instrument_key = ?
-          LIMIT 1
-          FOR UPDATE
-        `,
-        [userId, instrumentKey],
+      const holdingsCollection = getCollection("holdings");
+
+      const holding = await holdingsCollection.findOne(
+        {
+          userId,
+
+          instrumentKey,
+        },
+        {
+          session,
+        },
       );
 
-      if (holdingRows.length > 0) {
-        const holding = holdingRows[0];
-        const currentQuantity = Number(holding.quantity);
-        const currentInvested = Number(holding.invested_value);
+      if (holding) {
+        const currentQuantity = Number(holding.quantity || 0);
+
+        const currentInvested = Number(holding.investedValue || 0);
+
         const newQuantity = currentQuantity + qty;
+
         const newInvestedValue = currentInvested + investedAmount;
 
-        await connection.execute(
-          `
-            UPDATE holdings
-            SET quantity = ?, invested_value = ?, updated_at = NOW()
-            WHERE holding_id = ?
-          `,
-          [newQuantity, newInvestedValue, holding.holding_id],
+        await holdingsCollection.updateOne(
+          {
+            _id: holding._id,
+          },
+
+          {
+            $set: {
+              quantity: newQuantity,
+
+              investedValue: newInvestedValue,
+
+              updatedAt: new Date(),
+            },
+          },
+
+          { session },
         );
       } else {
-        await connection.execute(
-          `
-            INSERT INTO holdings (
-              holding_id,
-              user_id,
-              instrument_key,
-              quantity,
-              invested_value,
-              purchase_date,
-              created_at,
-              updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, CURDATE(), NOW(), NOW())
-          `,
-          [createOrderId(), userId, instrumentKey, qty, investedAmount],
+        await holdingsCollection.insertOne(
+          {
+            holdingId: createOrderId(),
+
+            userId,
+
+            instrumentKey,
+
+            quantity: qty,
+
+            investedValue: investedAmount,
+
+            purchaseDate: new Date(),
+
+            createdAt: new Date(),
+
+            updatedAt: new Date(),
+          },
+
+          { session },
         );
       }
     }
 
-    // =========================================================
+    // ====================================================
     // SELL
-    // =========================================================
+    // ====================================================
+
     if (normalizedTransactionType === "SELL") {
-      const [holdingRows] = await connection.execute(
-        `
-          SELECT
-            holding_id,
-            quantity,
-            invested_value
-          FROM holdings
-          WHERE user_id = ?
-            AND instrument_key = ?
-          LIMIT 1
-          FOR UPDATE
-        `,
-        [userId, instrumentKey],
+      const holdingsCollection = getCollection("holdings");
+
+      const holding = await holdingsCollection.findOne(
+        {
+          userId,
+
+          instrumentKey,
+        },
+        {
+          session,
+        },
       );
 
-      if (!holdingRows.length) {
+      if (!holding) {
         const result = createBusinessFailure({
           orderId,
+
           transactionType: normalizedTransactionType,
+
           orderType: normalizedOrderType,
+
           product: normalizedProduct,
+
           instrumentKey,
+
           symbol: stock.symbol,
+
           quantity: qty,
+
           price: executionPrice,
+
           investedAmount,
+
           message: "You do not own this stock.",
         });
 
-        await connection.execute(
-          `
-            INSERT INTO orders (
-              order_id, user_id, instrument_key, symbol, instrument_name,
-              exchange, order_type, product, quantity, price, invested_amount,
-              order_status, failure_reason, placed_at, executed_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FAILED', ?, NOW(), NULL)
-          `,
-          [
+        await getCollection("orders").insertOne(
+          {
             orderId,
+
             userId,
+
             instrumentKey,
-            stock.symbol,
-            stock.name,
+
+            symbol: stock.symbol,
+
+            instrumentName: stock.name,
+
             exchange,
-            normalizedTransactionType,
-            normalizedProduct,
-            qty,
-            executionPrice,
+
+            orderType: normalizedTransactionType,
+
+            product: normalizedProduct,
+
+            quantity: qty,
+
+            price: executionPrice,
+
             investedAmount,
-            result.message,
-          ],
+
+            orderStatus: "FAILED",
+
+            failureReason: result.message,
+
+            placedAt: new Date(),
+
+            executedAt: null,
+
+            createdAt: new Date(),
+
+            updatedAt: new Date(),
+          },
+
+          { session },
         );
 
-        await writeAudit(connection, {
-          orderId,
-          userId,
-          idempotencyKey: normalizedKey,
-          eventType: "ORDER_REJECTED",
-          status: "FAILED",
-          details: { code: result.code, reason: result.message },
-        });
+        await writeAudit(
+          db,
+          {
+            orderId,
 
-        await connection.execute(
-          `
-            UPDATE order_idempotency
-            SET status = 'COMPLETED', response_json = ?, updated_at = NOW()
-            WHERE user_id = ? AND idempotency_key = ?
-          `,
-          [JSON.stringify(result), userId, normalizedKey],
+            userId,
+
+            idempotencyKey: normalizedKey,
+
+            eventType: "ORDER_REJECTED",
+
+            status: "FAILED",
+
+            details: {
+              code: result.code,
+
+              reason: result.message,
+            },
+          },
+          session,
         );
 
-        await connection.commit();
+        await getCollection("orderIdempotency").updateOne(
+          {
+            userId,
+
+            idempotencyKey: normalizedKey,
+          },
+
+          {
+            $set: {
+              status: "COMPLETED",
+
+              responseJson: result,
+
+              updatedAt: new Date(),
+            },
+          },
+
+          { session },
+        );
+
+        await session.commitTransaction();
+
         transactionStarted = false;
+
         return result;
       }
 
-      const holding = holdingRows[0];
-      const currentQuantity = Number(holding.quantity);
-      const currentInvested = Number(holding.invested_value);
+      const currentQuantity = Number(holding.quantity || 0);
+
+      const currentInvested = Number(holding.investedValue || 0);
 
       if (currentQuantity < qty) {
         const result = createBusinessFailure({
           orderId,
+
           transactionType: normalizedTransactionType,
+
           orderType: normalizedOrderType,
+
           product: normalizedProduct,
+
           instrumentKey,
+
           symbol: stock.symbol,
+
           quantity: qty,
+
           price: executionPrice,
+
           investedAmount,
+
           message: `Insufficient quantity. Available: ${currentQuantity}`,
         });
 
-        await connection.execute(
-          `
-            INSERT INTO orders (
-              order_id, user_id, instrument_key, symbol, instrument_name,
-              exchange, order_type, product, quantity, price, invested_amount,
-              order_status, failure_reason, placed_at, executed_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FAILED', ?, NOW(), NULL)
-          `,
-          [
+        await getCollection("orders").insertOne(
+          {
             orderId,
+
             userId,
+
             instrumentKey,
-            stock.symbol,
-            stock.name,
+
+            symbol: stock.symbol,
+
+            instrumentName: stock.name,
+
             exchange,
-            normalizedTransactionType,
-            normalizedProduct,
-            qty,
-            executionPrice,
+
+            orderType: normalizedTransactionType,
+
+            product: normalizedProduct,
+
+            quantity: qty,
+
+            price: executionPrice,
+
             investedAmount,
-            result.message,
-          ],
+
+            orderStatus: "FAILED",
+
+            failureReason: result.message,
+
+            placedAt: new Date(),
+
+            executedAt: null,
+
+            createdAt: new Date(),
+
+            updatedAt: new Date(),
+          },
+
+          { session },
         );
 
-        await writeAudit(connection, {
-          orderId,
-          userId,
-          idempotencyKey: normalizedKey,
-          eventType: "ORDER_REJECTED",
-          status: "FAILED",
-          details: { code: result.code, reason: result.message },
-        });
+        await writeAudit(
+          db,
+          {
+            orderId,
 
-        await connection.execute(
-          `
-            UPDATE order_idempotency
-            SET status = 'COMPLETED', response_json = ?, updated_at = NOW()
-            WHERE user_id = ? AND idempotency_key = ?
-          `,
-          [JSON.stringify(result), userId, normalizedKey],
+            userId,
+
+            idempotencyKey: normalizedKey,
+
+            eventType: "ORDER_REJECTED",
+
+            status: "FAILED",
+
+            details: {
+              code: result.code,
+
+              reason: result.message,
+            },
+          },
+          session,
         );
 
-        await connection.commit();
+        await getCollection("orderIdempotency").updateOne(
+          {
+            userId,
+
+            idempotencyKey: normalizedKey,
+          },
+
+          {
+            $set: {
+              status: "COMPLETED",
+
+              responseJson: result,
+
+              updatedAt: new Date(),
+            },
+          },
+
+          { session },
+        );
+
+        await session.commitTransaction();
+
         transactionStarted = false;
+
         return result;
       }
 
+      // Average cost calculation
+
       const averageCost =
         currentQuantity > 0 ? currentInvested / currentQuantity : 0;
+
       const costRemoved = averageCost * qty;
+
       const remainingQuantity = currentQuantity - qty;
+
       const remainingInvested = Math.max(0, currentInvested - costRemoved);
 
       if (remainingQuantity === 0) {
-        await connection.execute(
-          `DELETE FROM holdings WHERE holding_id = ?`,
-          [holding.holding_id],
-        );
+        await holdingsCollectionDelete(holding, session);
       } else {
-        await connection.execute(
-          `
-            UPDATE holdings
-            SET quantity = ?, invested_value = ?, updated_at = NOW()
-            WHERE holding_id = ?
-          `,
-          [remainingQuantity, remainingInvested, holding.holding_id],
+        await holdingsCollection.updateOne(
+          {
+            _id: holding._id,
+          },
+
+          {
+            $set: {
+              quantity: remainingQuantity,
+
+              investedValue: remainingInvested,
+
+              updatedAt: new Date(),
+            },
+          },
+
+          { session },
         );
       }
     }
 
-    // =========================================================
-    // COMPLETED SIMULATED ORDER
-    // =========================================================
-    await connection.execute(
-      `
-        INSERT INTO orders (
-          order_id, user_id, instrument_key, symbol, instrument_name,
-          exchange, order_type, product, quantity, price, invested_amount,
-          order_status, failure_reason, placed_at, executed_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', NULL, NOW(), NOW())
-      `,
-      [
+    // ====================================================
+    // COMPLETED ORDER
+    // ====================================================
+
+    await getCollection("orders").insertOne(
+      {
         orderId,
+
         userId,
+
         instrumentKey,
-        stock.symbol,
-        stock.name,
+
+        symbol: stock.symbol,
+
+        instrumentName: stock.name,
+
         exchange,
-        normalizedTransactionType,
-        normalizedProduct,
-        qty,
-        executionPrice,
+
+        orderType: normalizedTransactionType,
+
+        product: normalizedProduct,
+
+        quantity: qty,
+
+        price: executionPrice,
+
         investedAmount,
-      ],
+
+        orderStatus: "COMPLETED",
+
+        failureReason: null,
+
+        placedAt: new Date(),
+
+        executedAt: new Date(),
+
+        createdAt: new Date(),
+
+        updatedAt: new Date(),
+      },
+
+      { session },
     );
 
     const result = {
       success: true,
+
       status: "COMPLETED",
+
       simulated: true,
+
       orderId,
+
       transactionType: normalizedTransactionType,
+
       orderType: normalizedOrderType,
+
       product: normalizedProduct,
+
       instrumentKey,
+
       symbol: stock.symbol,
+
       quantity: qty,
+
       price: executionPrice,
+
       investedAmount,
     };
 
-    await writeAudit(connection, {
-      orderId,
-      userId,
-      idempotencyKey: normalizedKey,
-      eventType: "ORDER_COMPLETED",
-      status: "COMPLETED",
-      details: {
-        executionPrice,
-        quantity: qty,
-        investedAmount,
-      },
-    });
+    // ====================================================
+    // COMPLETION AUDIT
+    // ====================================================
 
-    await connection.execute(
-      `
-        UPDATE order_idempotency
-        SET status = 'COMPLETED', response_json = ?, updated_at = NOW()
-        WHERE user_id = ? AND idempotency_key = ?
-      `,
-      [JSON.stringify(result), userId, normalizedKey],
+    await writeAudit(
+      db,
+      {
+        orderId,
+
+        userId,
+
+        idempotencyKey: normalizedKey,
+
+        eventType: "ORDER_COMPLETED",
+
+        status: "COMPLETED",
+
+        details: {
+          executionPrice,
+
+          quantity: qty,
+
+          investedAmount,
+        },
+      },
+      session,
     );
 
-    await connection.commit();
+    // ====================================================
+    // SAVE IDEMPOTENCY RESPONSE
+    // ====================================================
+
+    await getCollection("orderIdempotency").updateOne(
+      {
+        userId,
+
+        idempotencyKey: normalizedKey,
+      },
+
+      {
+        $set: {
+          status: "COMPLETED",
+
+          responseJson: result,
+
+          updatedAt: new Date(),
+        },
+      },
+
+      { session },
+    );
+
+    // ====================================================
+    // COMMIT
+    // ====================================================
+
+    await session.commitTransaction();
+
     transactionStarted = false;
 
     return result;
   } catch (error) {
+    // ====================================================
+    // ROLLBACK
+    // ====================================================
+
     if (transactionStarted) {
       try {
-        await connection.rollback();
+        await session.abortTransaction();
       } catch {
-        // Ignore rollback errors and preserve the original error.
+        // Preserve original error.
       }
     }
 
     await writeRollbackAudit({
       orderId,
+
       userId,
+
       idempotencyKey: normalizedKey,
+
       error,
     });
 
     throw error;
   } finally {
-    connection.release();
+    await session.endSession();
   }
 }
 
+// ============================================================
+// DELETE HOLDING HELPER
+// ============================================================
+
+async function holdingsCollectionDelete(holding, session) {
+  await getCollection("holdings").deleteOne(
+    {
+      _id: holding._id,
+    },
+    {
+      session,
+    },
+  );
+}
+
+// ============================================================
+// EXPORTS
+// ============================================================
+
 module.exports = {
   simulateOrder,
+
   createRequestHash,
+
   normalizeIdempotencyKey,
 };
