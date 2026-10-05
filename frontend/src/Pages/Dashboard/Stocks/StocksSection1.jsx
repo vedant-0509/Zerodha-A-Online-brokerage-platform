@@ -13,19 +13,16 @@ export default function StocksSection1() {
       return;
     }
 
-    navigate(
-      `/dashboard/stocks/explore/${encodeURIComponent(stock.symbol)}`,
-      {
-        state: {
-          instrumentKey: stock.instrument_key,
-          symbol: stock.symbol,
-          companyName: stock.name,
-          exchange:
-            stock.exchange ||
-            stock.instrument_key?.split("|")[0]?.replace("_EQ", ""),
-        },
-      }
-    );
+    navigate(`/dashboard/stocks/explore/${encodeURIComponent(stock.symbol)}`, {
+      state: {
+        instrumentKey: stock.instrument_key,
+        symbol: stock.symbol,
+        companyName: stock.name,
+        exchange:
+          stock.exchange ||
+          stock.instrument_key?.split("|")[0]?.replace("_EQ", ""),
+      },
+    });
 
     setOpenSearch(false);
   }
@@ -95,10 +92,7 @@ export default function StocksSection1() {
           />
         </div>
 
-        <div
-          className="searchbar"
-          onClick={() => setOpenSearch(true)}
-        >
+        <div className="searchbar" onClick={() => setOpenSearch(true)}>
           <div
             style={{
               border: "1px solid #ddd",
@@ -112,7 +106,7 @@ export default function StocksSection1() {
               className="fa-solid fa-magnifying-glass"
               style={{
                 marginRight: "10px",
-                marginTop: ".2rem",
+                marginTop: ".2rem", color:"#616161"
               }}
             />
             Search Groww...

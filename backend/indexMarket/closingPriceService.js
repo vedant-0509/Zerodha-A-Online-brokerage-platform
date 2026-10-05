@@ -23,9 +23,7 @@ async function updateClosingPricesFromUpstox(io = null) {
                 const candle = await getDailyClose(instrumentKey);
 
                 if (!candle) {
-                    console.log(
-                        `⚠ Skipping ${instrumentKey}: No candle found.`
-                    );
+                    console.log(`⚠ Skipping ${instrumentKey}: No candle found.`);
                     continue;
                 }
 
@@ -45,12 +43,10 @@ async function updateClosingPricesFromUpstox(io = null) {
                         sort: {
                             tradingDate: -1,
                         },
-                    }
+                    },
                 );
 
-                const previousClose = previousRecord
-                    ? Number(previousRecord.closePrice)
-                    : Number(candle.close);
+                const previousClose = previousRecord ? Number(previousRecord.closePrice) : Number(candle.previousClose ?? candle.close);
 
                 // ------------------------------------------
                 // Prepare latest object for Redis
@@ -94,7 +90,7 @@ async function updateClosingPricesFromUpstox(io = null) {
                     },
                     {
                         upsert: true,
-                    }
+                    },
                 );
 
                 // ------------------------------------------
@@ -134,18 +130,15 @@ async function updateClosingPricesFromUpstox(io = null) {
                         "market_snapshot",
                         instrumentKey,
                         JSON.stringify(latest),
-                        (err) => (err ? reject(err) : resolve())
+                        (err) => (err ? reject(err) : resolve()),
                     );
                 });
 
                 console.log(
-                    `✅ ${instrumentKey} | Today: ${candle.close} | Previous: ${previousClose}`
+                    `✅ ${instrumentKey} | Today: ${candle.close} | Previous: ${previousClose}`,
                 );
             } catch (err) {
-                console.error(
-                    `❌ ${instrumentKey}:`,
-                    err.message
-                );
+                console.error(`❌ ${instrumentKey}:`, err.message);
             }
         }
 
@@ -157,11 +150,8 @@ async function updateClosingPricesFromUpstox(io = null) {
         });
 
         await new Promise((resolve, reject) => {
-            redis.hset(
-                "market_meta",
-                "lastUpstoxUpdate",
-                today,
-                (err) => (err ? reject(err) : resolve())
+            redis.hset("market_meta", "lastUpstoxUpdate", today, (err) =>
+                err ? reject(err) : resolve(),
             );
         });
 
@@ -175,9 +165,7 @@ async function updateClosingPricesFromUpstox(io = null) {
             console.log("📡 Snapshot broadcasted.");
         }
 
-        console.log(
-            "🎉 Official closing prices updated successfully."
-        );
+        console.log("🎉 Official closing prices updated successfully.");
     } catch (err) {
         console.error("❌ Closing price update failed.");
         console.error(err);

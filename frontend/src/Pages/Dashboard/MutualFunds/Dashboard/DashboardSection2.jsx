@@ -137,9 +137,7 @@ function unique(values) {
 // }
 
 function displayName(value) {
-  return String(
-    value || "Unnamed Mutual Fund"
-  )
+  return String(value || "Unnamed Mutual Fund")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -157,7 +155,7 @@ function getPlanOption(name) {
   const value = String(name || "");
 
   const match = value.match(
-    /-\s*(Direct Plan|Regular Plan)\s*-\s*(Growth|IDCW)\s*$/i
+    /-\s*(Direct Plan|Regular Plan)\s*-\s*(Growth|IDCW)\s*$/i,
   );
 
   if (!match) {
@@ -548,7 +546,6 @@ export default function DashboardSection2() {
     setTradeSuccess("");
   };
 
-
   const submitTrade = async () => {
     if (!tradeFund || !tradeType) {
       return;
@@ -617,9 +614,7 @@ export default function DashboardSection2() {
         */
 
       if (tradeType === "SELL") {
-        const holdingResponse = await api.get(
-          `${MF_API_PATH}/holdings`,
-        );
+        const holdingResponse = await api.get(`${MF_API_PATH}/holdings`);
 
         const holdingData = holdingResponse?.data || {};
 
@@ -1083,9 +1078,7 @@ export default function DashboardSection2() {
     });
 
     setSearchInput("");
-
     setOpenMenu(null);
-
     setCategoryType(null);
   };
 
@@ -1209,12 +1202,7 @@ export default function DashboardSection2() {
   */
 
   return (
-    <div
-      className="home"
-      style={{
-        paddingTop: "0rem",
-      }}
-    >
+    <div className="home" style={{ paddingTop: "0rem", }}>
       <section className="mf2-page">
         {/* Heading */}
 
@@ -1225,14 +1213,7 @@ export default function DashboardSection2() {
 
           <div className="mf2-search-box">
             <span>
-              <i
-                className="fa-solid fa-magnifying-glass"
-                style={{
-                  scale: ".55",
-                  color: "black",
-                  paddingBottom: "13px",
-                }}
-              />
+              <i className="fa-solid fa-magnifying-glass" style={{ scale: ".55", color: "#616161", paddingBottom: "13px", }} />
             </span>
 
             <input
@@ -1242,20 +1223,8 @@ export default function DashboardSection2() {
             />
 
             {searchInput && (
-              <button
-                type="button"
-                onClick={() => setSearchInput("")}
-                style={{
-                  paddingRight: "10px",
-                }}
-              >
-                <i
-                  className="fa-solid fa-xmark"
-                  style={{
-                    fontSize: ".95rem",
-                    color: "black",
-                  }}
-                ></i>
+              <button type="button" onClick={() => setSearchInput("")} style={{ paddingRight: "10px", }}>
+                <i className="fa-solid fa-xmark" style={{ fontSize: ".95rem", color: "black", }}></i>
               </button>
             )}
           </div>
@@ -1351,7 +1320,7 @@ export default function DashboardSection2() {
             Large Cap
           </button>
 
-          <button type="button" className="mf2-clear-top" onClick={clearAll}>
+          <button type="button" className="mf2-clear-top chip" onClick={clearAll}>
             Clear All
           </button>
 
@@ -1606,32 +1575,19 @@ export default function DashboardSection2() {
               <thead>
                 <tr>
                   <th className="name-col">
-                    <p
-                      style={{
-                        marginLeft: "8rem",
-                      }}
-                    >
+                    <p style={{ marginLeft: "8rem", }}>
                       Fund Name
                     </p>
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        marginLeft: "2.5rem",
-                      }}
-                    >
+                    <p style={{ marginLeft: "2.5rem", }}>
                       Category
                     </p>
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        textAlign: "end",
-                        margin: "0",
-                      }}
-                    >
+                    <p style={{ textAlign: "end", margin: "0", }}>
                       <SortButton
                         label="1Y"
                         column="1y"
@@ -1642,12 +1598,7 @@ export default function DashboardSection2() {
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        textAlign: "end",
-                        margin: "0",
-                      }}
-                    >
+                    <p style={{ textAlign: "end", margin: "0", }}>
                       <SortButton
                         label="3Y"
                         column="3y"
@@ -1658,12 +1609,7 @@ export default function DashboardSection2() {
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        textAlign: "end",
-                        margin: "0",
-                      }}
-                    >
+                    <p style={{ textAlign: "end", margin: "0", }}>
                       <SortButton
                         label="5Y"
                         column="5y"
@@ -1674,12 +1620,7 @@ export default function DashboardSection2() {
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        textAlign: "end",
-                        margin: "0",
-                      }}
-                    >
+                    <p style={{ textAlign: "end", margin: "0", }}>
                       <SortButton
                         label="Rating"
                         column="rating"
@@ -1690,21 +1631,13 @@ export default function DashboardSection2() {
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        marginLeft: "1rem",
-                      }}
-                    >
+                    <p style={{ marginLeft: "1rem", }}>
                       Risk
                     </p>
                   </th>
 
                   <th>
-                    <p
-                      style={{
-                        marginLeft: ".25rem",
-                      }}
-                    >
+                    <p style={{ marginLeft: ".25rem", }}>
                       NAV
                     </p>
                   </th>
@@ -1761,47 +1694,17 @@ export default function DashboardSection2() {
           FIXED CATEGORY CELL WITH ACTION BUTTON OVERLAY 
          ================================================== */}
                       <td style={{ padding: 0, position: "relative" }}>
-                        <div
-                          style={{
-                            position: "relative",
-                            width: "100%",
-                            height: "100%",
-                            minHeight: "48px",
-                            display: "flex",
-                            alignItems: "center",
-                            padding: "0 12px",
-                          }}
-                        >
+                        <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "48px", display: "flex", alignItems: "center", padding: "0 12px", }}>
                           {/* Default Category Label */}
                           {!isHovered && (
-                            <span
-                              style={{
-                                display: "block",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                width: "100%",
-                              }}
-                            >
-                              {displayCategory(fund)}
+                            <span style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", }}>
+                              <p style={{textAlign:"center"}}>{displayCategory(fund)}</p>
                             </span>
                           )}
 
                           {/* Action Buttons Overlay */}
                           {isHovered && (
-                            <div
-                              style={{
-                                position: "absolute",
-                                inset: 0,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: "8px",
-                                backgroundColor: "#f5f5f5", // Match row hover background
-                                zIndex: 2,
-                                padding: "0 12px",
-                              }}
-                            >
+                            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", backgroundColor: "#f5f5f5", zIndex: 2, padding: "0 12px", }}>
                               <button
                                 type="button"
                                 onClick={(event) => {
@@ -1812,7 +1715,7 @@ export default function DashboardSection2() {
                                   border: "none",
                                   borderRadius: "6px",
                                   padding: "8px 0",
-                                  background: "#00a878",
+                                  background: "#00B386",
                                   color: "#fff",
                                   fontSize: "12px",
                                   fontWeight: 600,
@@ -1854,12 +1757,7 @@ export default function DashboardSection2() {
 
                       {/* 1Y */}
 
-                      <td
-                        className={returnClass(fund.return_1y)}
-                        title={`Reference NAV date: ${formatDate(
-                          fund.return_1y_nav_date,
-                        )}`}
-                      >
+                      <td className={returnClass(fund.return_1y)} title={`Reference NAV date: ${formatDate(fund.return_1y_nav_date,)}`}>
                         <p style={{ textAlign: "end" }}>
                           {formatReturn(fund.return_1y)}
                         </p>

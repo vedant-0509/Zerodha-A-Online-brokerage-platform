@@ -1,0 +1,12 @@
+node_modules
+build
+dist
+.git
+.gitignore
+coverage
+*.log
+*.sql
+*.zip
+.env
+.env.*
+!.env.example

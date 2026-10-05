@@ -123,7 +123,7 @@ export default function DashboardSection2() {
 
                                     <p style={{ opacity: .95}}>₹{" "}{item.price.toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
 
-                                    <div style={{marginRight: ".5rem", color: item.change >= 0 ? "green" : "red"}}>
+                                    <div style={{marginRight: ".5rem", color: item.change >= 0 ? "#00B386" : "#EF4444"}}>
                                         <p style={{fontWeight:"500"}}>
                                             {item.change.toFixed(2)}
                                             {" ("}

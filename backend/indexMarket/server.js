@@ -8,13 +8,17 @@ const { Server } = require("socket.io");
 
 const { connectRedis, redis } = require("./redisClient");
 
-const { initializeUpstoxFeed, getLatestCache, loadCache } = require("./indexMarketService");
+const {
+    initializeUpstoxFeed,
+    getLatestCache,
+    loadCache,
+} = require("./indexMarketService");
 
 const { isMarketOpen } = require("./isMarketOpen");
 const { startClosingPriceScheduler } = require("./scheduler");
 const { updateClosingPricesFromUpstox } = require("./closingPriceService");
 
-const cron = require('node-cron');
+const cron = require("node-cron");
 
 const requestContext = require("../middleware/requestContext");
 const createCorsOptions = require("../middleware/corsOptions");
@@ -70,10 +74,41 @@ async function bootstrap() {
             });
         });
 
-        if (lastUpstoxUpdate === today) {
+
+        const currentCache = getLatestCache();
+
+        const hasSnapshot =
+            currentCache &&
+            typeof currentCache === "object" &&
+            Object.keys(currentCache).length > 0;
+
+        if (hasSnapshot) {
+            console.log(
+                "📦 Market closed. Existing last-trading-day snapshot available."
+            );
+
+            console.log(
+                "🛑 No market data fetch required."
+            );
+
+            return;
+        }
+
+        console.log(
+            "⚠️ Market snapshot missing. Fetching latest trading-day values..."
+        );
+
+        if (lastUpstoxUpdate === today && hasSnapshot) {
             console.log("✅ Upstox closing prices already fetched today.");
             console.log("📦 Serving cached Redis snapshot.");
             return;
+        }
+
+        if (lastUpstoxUpdate === today && !hasSnapshot) {
+            console.log(
+                "⚠️ Today's update flag exists, but market snapshot is missing.",
+            );
+            console.log("🔄 Refetching official Upstox closing prices...");
         }
 
         console.log("📥 Fetching today's official closing prices...");
@@ -83,9 +118,14 @@ async function bootstrap() {
         // }, {
         //     timezone: "Asia/Kolkata",
         // });                                   this is for produnction level
-        updateClosingPricesFromUpstox();       //this is for devlopment level
+        await updateClosingPricesFromUpstox();
 
         console.log("✅ Redis updated with today's official closing prices.");
+
+        // Reload the freshly updated Redis snapshot into RAM
+        await loadCache();
+
+        console.log("✅ Market cache refreshed with latest closing prices.");
     } catch (err) {
         console.error("❌ Bootstrap Error");
         console.error(err);

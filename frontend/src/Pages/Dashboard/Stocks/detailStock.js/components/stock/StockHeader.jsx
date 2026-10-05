@@ -28,7 +28,7 @@ export function StockHeader({ symbol, exchange, companyName, ltp, isPositive, di
 
       <div className="stock-actions">
         <button className={isWatchlisted ? "watchlisted" : ""} onClick={onToggleWatchlist}>
-          {isWatchlisted ? "★" : "☆"}
+          <i style={{paddingTop:".15rem", scale:"1.15"}} className={isWatchlisted ? "fa-solid fa-bookmark" : "fa-regular fa-bookmark"}></i>
         </button>
       </div>
     </div>

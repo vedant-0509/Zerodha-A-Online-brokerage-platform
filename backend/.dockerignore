@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log*
+.git
+.gitignore
+coverage
+test-results
+tmp
+temp
+*.log
+.env
+.env.*
+!.env.example
+*.sql
+*.zip

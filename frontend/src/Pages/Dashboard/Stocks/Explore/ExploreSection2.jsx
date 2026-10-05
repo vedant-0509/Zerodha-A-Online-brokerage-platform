@@ -91,14 +91,14 @@ export default function ExploreSection2() {
                                                 </div>
 
                                                 <div style={{ display: "flex", height: "3px", borderRadius: "20px", overflow: "hidden" }}>
-                                                    <div style={{ width: `${gainPercent}%`, background: "#00c087" }} />
-                                                    <div style={{ width: `${100 - gainPercent}%`, background: "#f15b3d" }} />
+                                                    <div style={{ width: `${gainPercent}%`, background: "#00B386" }} />
+                                                    <div style={{ width: `${100 - gainPercent}%`, background: "#EF4444" }} />
                                                 </div>
                                             </div>
                                         </td>
 
                                         {/* Change */}
-                                        <td style={{ padding: ".75rem", textAlign: "center", fontWeight: 500, color: sector.avg_change >= 0 ? "#00c087" : "#f15b3d" }}>
+                                        <td style={{ padding: ".75rem", textAlign: "center", fontWeight: 500, color: sector.avg_change >= 0 ? "#00B386" : "#EF4444" }}>
                                             <p style={{ margin: "0", fontSize: "1.1rem" }}>
                                                 {sector.avg_change > 0 ? "+" : ""}
                                                 {Number(sector.avg_change).toFixed(2)}%

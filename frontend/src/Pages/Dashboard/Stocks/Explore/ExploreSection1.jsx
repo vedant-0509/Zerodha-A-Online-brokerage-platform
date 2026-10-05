@@ -110,7 +110,7 @@ export default function ExploreSection1() {
                                 </th>
 
                                 <th style={{ width: "6rem", }}>
-                                    <div>
+                                    <div style={{whiteSpace:"nowrap"}}>
                                         <p>Change %</p>
                                     </div>
                                 </th>
@@ -170,7 +170,7 @@ export default function ExploreSection1() {
                                                 </div>
                                             </td>
 
-                                            <td style={{ width: "6rem", color: changePercent >= 0 ? "green" : "red", }}>
+                                            <td style={{ width: "6rem", color: changePercent >= 0 ? "#00B386" : "#EF4444", }}>
                                                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1.5px", }}>
                                                     <p style={{ paddingLeft: ".5rem", }}>
                                                         {changePercent >= 0 ? "+" : ""}

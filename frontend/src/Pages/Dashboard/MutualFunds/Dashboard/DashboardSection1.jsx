@@ -526,8 +526,6 @@ const DashboardSection1 = () => {
                   {formatMoney(summary.currentValue)}
                 </h1>
               </div>
-
-              <button className="analyse-btn">Analyse</button>
             </div>
 
             <div className="summary-grid">
@@ -610,7 +608,7 @@ const DashboardSection1 = () => {
 
           <div className="table-card">
             {holdings.length === 0 ? (
-              <div style={{ padding: "3rem", textAlign: "center", }}>
+              <div style={{ padding: "3rem", textAlign: "center" }}>
                 <h3>No holdings yet</h3>
 
                 <p>Your purchased mutual funds will appear here.</p>
@@ -620,38 +618,26 @@ const DashboardSection1 = () => {
                 <thead>
                   <tr>
                     <th>
-                      <p style={{ margin: "0", }}>
-                        Fund
-                      </p>
+                      <p style={{ margin: "0" }}>Fund</p>
                     </th>
 
                     <th>
-                      <p style={{ margin: "0", textAlign: "end", }}>
-                        NAV
-                      </p>
+                      <p style={{ margin: "0", textAlign: "end" }}>NAV</p>
                     </th>
 
                     <th>
-                      <p style={{ margin: "0", textAlign: "end", }}>
-                        1D Return
-                      </p>
+                      <p style={{ margin: "0", textAlign: "end" }}>1D Return</p>
                     </th>
 
                     <th>
-                      <p style={{ margin: "0", textAlign: "end", }}>
+                      <p style={{ margin: "0", textAlign: "end" }}>
                         Total Return
                       </p>
                     </th>
 
                     <th>
-                      <p style={{ margin: "0", textAlign: "end", }}>
+                      <p style={{ margin: "0", textAlign: "end" }}>
                         Current Value
-                      </p>
-                    </th>
-
-                    <th>
-                      <p style={{ margin: "0", textAlign: "center", }}>
-                        Action
                       </p>
                     </th>
                   </tr>
@@ -664,7 +650,11 @@ const DashboardSection1 = () => {
                     const totalReturn = Number(fund.totalReturn ?? 0);
 
                     return (
-                      <tr key={fund.id ?? fund.schemeId} onClick={() => setSelectedHolding(fund)} style={{ cursor: "pointer", }}>
+                      <tr
+                        key={fund.id ?? fund.schemeId}
+                        onClick={() => setSelectedHolding(fund)}
+                        style={{ cursor: "pointer" }}
+                      >
                         {/* FUND */}
 
                         <td>
@@ -678,7 +668,7 @@ const DashboardSection1 = () => {
                         {/* NAV */}
 
                         <td>
-                          <p style={{ margin: "0", textAlign: "end", }}>
+                          <p style={{ margin: "0", textAlign: "end" }}>
                             ₹{formatNumber(fund.currentNav)}
                           </p>
                         </td>
@@ -687,7 +677,7 @@ const DashboardSection1 = () => {
 
                         <td>
                           <div className={todaysPnL >= 0 ? "profit" : "loss"}>
-                            <p style={{ margin: "0", textAlign: "end", }}>
+                            <p style={{ margin: "0", textAlign: "end" }}>
                               {formatMoney(todaysPnL)}
                             </p>
                           </div>
@@ -699,7 +689,7 @@ const DashboardSection1 = () => {
                                 : "loss"
                             }
                           >
-                            <p style={{ margin: "0", textAlign: "end", }}>
+                            <p style={{ margin: "0", textAlign: "end" }}>
                               {formatPercent(fund.todaysReturnPercent)}
                             </p>
                           </small>
@@ -709,13 +699,19 @@ const DashboardSection1 = () => {
 
                         <td>
                           <div className={totalReturn >= 0 ? "profit" : "loss"}>
-                            <p style={{ margin: "0", textAlign: "end", }}>
+                            <p style={{ margin: "0", textAlign: "end" }}>
                               {formatMoney(totalReturn)}
                             </p>
                           </div>
 
-                          <small className={Number(fund.totalReturnPercent) >= 0 ? "profit" : "loss"}>
-                            <p style={{ margin: "0", textAlign: "end", }}>
+                          <small
+                            className={
+                              Number(fund.totalReturnPercent) >= 0
+                                ? "profit"
+                                : "loss"
+                            }
+                          >
+                            <p style={{ margin: "0", textAlign: "end" }}>
                               {formatPercent(fund.totalReturnPercent)}
                             </p>
                           </small>
@@ -724,38 +720,9 @@ const DashboardSection1 = () => {
                         {/* CURRENT VALUE */}
 
                         <td>
-                          <p style={{ margin: "0", textAlign: "end", }}>
+                          <p style={{ margin: "0", textAlign: "end" }}>
                             {formatMoney(fund.currentValue)}
                           </p>
-                        </td>
-
-                        {/* SELL */}
-
-                        <td>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => openSell(fund)}
-                              style={{
-                                border: "none",
-                                borderRadius: "7px",
-                                padding: "8px 18px",
-                                background: "#e7f8f2",
-                                color: "#00a878",
-                                fontSize: "14px",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                              }}
-                            >
-                              Sell
-                            </button>
-                          </div>
                         </td>
                       </tr>
                     );
@@ -853,12 +820,6 @@ const DashboardSection1 = () => {
                 >
                   {formatPercent(selectedHolding.totalReturnPercent)}
                 </strong>
-              </div>
-
-              <div className="sidebar-row">
-                <span>NAV Date</span>
-
-                <strong>{selectedHolding.navDate || "-"}</strong>
               </div>
 
               {/* SELL FROM SIDEBAR TOO */}
