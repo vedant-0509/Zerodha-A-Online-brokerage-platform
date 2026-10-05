@@ -433,7 +433,7 @@ io.on("connection", (client) => {
   bridgeDetailSocket(client);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Central API running on http://localhost:${PORT}`);
   console.log("Public API: /api/*");
   console.log("Public WebSockets: /socket.io");
