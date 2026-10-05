@@ -1,3 +1,30 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
 .env
-.env.example
+.env.*
+!.env.example
+
+# Frontend build
+frontend/build/
+frontend/dist/
+
+# Database backups
+*.sql
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test / temporary files
+coverage/
+test-results/
+tmp/
+temp/
+
+# Git
+.git/
+
+# Archives / backups
+*.zip
