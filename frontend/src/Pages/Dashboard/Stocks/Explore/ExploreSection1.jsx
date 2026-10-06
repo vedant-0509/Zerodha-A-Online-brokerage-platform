@@ -1,24 +1,152 @@
+// import React, { useEffect, useState } from "react";
+// import { useNavigate } from "react-router-dom";
+// import axios from "axios";
+
+// const API = "/api/stocks";
+
+// export default function ExploreSection1() {
+//     const [stocks, setStocks] = useState([]);
+//     const [activeTab, setActiveTab] = useState("gainers");
+//     const [loading, setLoading] = useState(false);
+
+//     const navigate = useNavigate();
+
+//     useEffect(() => {
+//         fetchData("gainers");
+//     }, []);
+
+//     async function fetchData(type) {
+//         try {
+//             setLoading(true);
+
+//             let url = "";
+
+//             if (type === "gainers") {
+//                 url = `${API}/top-gainers`;
+//             } else if (type === "losers") {
+//                 url = `${API}/top-losers`;
+//             } else {
+//                 url = `${API}/volume-shockers`;
+//             }
+
+//             const response = await axios.get(url);
+
+//             setStocks(Array.isArray(response.data) ? response.data : []);
+
+//             setActiveTab(type);
+//         } catch (err) {
+//             console.error("Failed to load Explore Section 1:", err);
+
+//             setStocks([]);
+//         } finally {
+//             setLoading(false);
+//         }
+//     }
+
+//     function openStock(stock) {
+//         if (!stock?.symbol) {
+//             console.error("Cannot open stock because symbol is missing", stock);
+
+//             return;
+//         }
+
+//         navigate(`/dashboard/stocks/explore/${encodeURIComponent(stock.symbol)}`, {
+//             state: {
+//                 instrumentKey: stock.instrument_key,
+//                 symbol: stock.symbol,
+//                 companyName: stock.name,
+//                 exchange: stock.exchange,
+//             },
+//         });
+//     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import {
+    getPageCache,
+    setPageCache,
+} from "../../../../utils/pageCache";
 
 const API = "/api/stocks";
 
 export default function ExploreSection1() {
-    const [stocks, setStocks] = useState([]);
-    const [activeTab, setActiveTab] = useState("gainers");
-    const [loading, setLoading] = useState(false);
-
     const navigate = useNavigate();
 
+    const initialCache = getPageCache(
+        "explore-section1:gainers"
+    );
+
+    const [stocks, setStocks] = useState(
+        initialCache?.data || []
+    );
+
+    const [activeTab, setActiveTab] = useState("gainers");
+
+    const [loading, setLoading] = useState(
+        !initialCache?.data
+    );
+
     useEffect(() => {
-        fetchData("gainers");
+        loadData("gainers");
     }, []);
 
-    async function fetchData(type) {
-        try {
-            setLoading(true);
+    async function loadData(type, force = false) {
+        const cacheKey =
+            `explore-section1:${type}`;
 
+        const cached =
+            getPageCache(cacheKey);
+
+        /*
+         * CACHE HIT
+         *
+         * Show cached data immediately.
+         * Do NOT show Loading again.
+         */
+        if (cached?.data && !force) {
+            setStocks(cached.data);
+            setActiveTab(type);
+            setLoading(false);
+
+            /*
+             * Background refresh
+             */
+            refreshData(type, cacheKey);
+
+            return;
+        }
+
+        /*
+         * First load only
+         */
+        if (stocks.length === 0) {
+            setLoading(true);
+        }
+
+        await refreshData(type, cacheKey);
+
+        setActiveTab(type);
+    }
+
+    async function refreshData(type, cacheKey) {
+        try {
             let url = "";
 
             if (type === "gainers") {
@@ -29,36 +157,59 @@ export default function ExploreSection1() {
                 url = `${API}/volume-shockers`;
             }
 
-            const response = await axios.get(url);
+            const response =
+                await axios.get(url);
 
-            setStocks(Array.isArray(response.data) ? response.data : []);
+            const data =
+                Array.isArray(response.data)
+                    ? response.data
+                    : [];
 
-            setActiveTab(type);
+            setStocks(data);
+
+            setPageCache(
+                cacheKey,
+                data
+            );
         } catch (err) {
-            console.error("Failed to load Explore Section 1:", err);
-
-            setStocks([]);
+            console.error(
+                "Failed to load Explore Section 1:",
+                err
+            );
         } finally {
             setLoading(false);
         }
     }
 
+    function fetchData(type) {
+        loadData(type);
+    }
+
     function openStock(stock) {
         if (!stock?.symbol) {
-            console.error("Cannot open stock because symbol is missing", stock);
-
             return;
         }
 
-        navigate(`/dashboard/stocks/explore/${encodeURIComponent(stock.symbol)}`, {
-            state: {
-                instrumentKey: stock.instrument_key,
-                symbol: stock.symbol,
-                companyName: stock.name,
-                exchange: stock.exchange,
-            },
-        });
+        navigate(
+            `/dashboard/stocks/explore/${encodeURIComponent(
+                stock.symbol
+            )}`,
+            {
+                state: {
+                    instrumentKey:
+                        stock.instrument_key,
+                    symbol:
+                        stock.symbol,
+                    companyName:
+                        stock.name,
+                    exchange:
+                        stock.exchange,
+                },
+            }
+        );
     }
+
+    // existing JSX continues here...
 
     return (
         <>
@@ -110,7 +261,7 @@ export default function ExploreSection1() {
                                 </th>
 
                                 <th style={{ width: "6rem", }}>
-                                    <div style={{whiteSpace:"nowrap"}}>
+                                    <div style={{ whiteSpace: "nowrap" }}>
                                         <p>Change %</p>
                                     </div>
                                 </th>
