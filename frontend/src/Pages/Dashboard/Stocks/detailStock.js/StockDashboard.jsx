@@ -1759,25 +1759,28 @@ export default function StockDashboard({
 
       const idempotencyKey = orderIdempotencyKeyRef.current;
 
-      const payload = {
-        symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
-        instrumentKey,
-        transactionType: orderType,
-        quantity: normalizedQuantity,
-        ...(normalizedOrderType === "LIMIT"
-          ? { limitPrice: normalizedLimitPrice }
-          : {}),
-        orderType: normalizedOrderType,
-        product: "CNC",
-      };
+     const isLimitOrder = numberValue(priceLimit, 0) > 0;
 
-      const response = await axios.post(ENDPOINTS.order(), payload, {
-        timeout: 10000,
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          "Idempotency-Key": idempotencyKey,
-        },
-      });
+const payload = {
+  symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
+  instrumentKey,
+  transactionType: String(orderType).toUpperCase(),
+  quantity: numberValue(quantity),
+  orderType: isLimitOrder ? "LIMIT" : "MARKET",
+  product: "CNC",
+};
+
+if (isLimitOrder) {
+  payload.limitPrice = numberValue(priceLimit);
+}
+
+const response = await axios.post(ENDPOINTS.order(), payload, {
+  timeout: 10000,
+  headers: {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    "Idempotency-Key": crypto.randomUUID(),
+  },
+});
 
       if (response.data?.success) {
         const result = response.data?.data || {};
