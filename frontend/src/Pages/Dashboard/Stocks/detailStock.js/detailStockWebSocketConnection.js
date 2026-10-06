@@ -1,9 +1,8 @@
 import { io } from "socket.io-client";
 
-// Detail Stock WebSocket must connect through the public central API gateway.
-// In local development this is port 3000; in production set REACT_APP_API_ORIGIN.
 const API_ORIGIN =
-  process.env.REACT_APP_API_ORIGIN || "http://localhost:3000";
+  process.env.REACT_APP_API_ORIGIN ||
+  window.location.origin;
 
 const detailStockSocket = io(API_ORIGIN, {
   transports: ["websocket", "polling"],
