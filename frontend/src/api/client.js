@@ -1,130 +1,82 @@
 import axios from "axios";
 
-const API_URL = String(
-  process.env.REACT_APP_API_URL || ""
+const API_URL = (
+    process.env.REACT_APP_API_URL || "/api"
 ).replace(/\/$/, "");
 
-if (!API_URL) {
-  throw new Error("REACT_APP_API_URL is not configured");
-}
-
 const api = axios.create({
-  baseURL: API_URL,
+    baseURL: API_URL,
 
-  timeout: Number(
-    process.env.REACT_APP_REQUEST_TIMEOUT_MS || 15000
-  ),
+    timeout: Number(
+        process.env.REACT_APP_REQUEST_TIMEOUT_MS || 15000
+    ),
 
-  headers: {
-    "Content-Type": "application/json",
-  },
+    headers: {
+        "Content-Type": "application/json",
+    },
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| REQUEST INTERCEPTOR
-|--------------------------------------------------------------------------
-*/
-
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem("token");
+    (config) => {
+        const token = localStorage.getItem("token");
 
-    if (token) {
-      config.headers = config.headers || {};
+        if (token) {
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${token}`;
+        }
 
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    return config;
-  },
-
-  (error) => Promise.reject(error)
+        return config;
+    },
+    (error) => Promise.reject(error)
 );
-
-
-/*
-|--------------------------------------------------------------------------
-| RESPONSE INTERCEPTOR
-|--------------------------------------------------------------------------
-*/
 
 api.interceptors.response.use(
-  (response) => response,
+    (response) => response,
+    (error) => {
+        const status = error.response?.status;
 
-  (error) => {
-    const status = error.response?.status;
+        const url = String(
+            error.config?.url || ""
+        );
 
-    const url = String(
-      error.config?.url || ""
-    );
+        const isAuthAttempt =
+            url.endsWith("/login") ||
+            url.endsWith("/signup");
 
-    const isAuthAttempt =
-      url.endsWith("/login") ||
-      url.endsWith("/signup");
+        if (status === 401 && !isAuthAttempt) {
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
 
-    /*
-    |--------------------------------------------------------------------------
-    | 401
-    |--------------------------------------------------------------------------
-    */
+            window.dispatchEvent(
+                new Event("auth-expired")
+            );
+        }
 
-    if (
-      status === 401 &&
-      !isAuthAttempt
-    ) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+        if (status === 403) {
+            window.dispatchEvent(
+                new CustomEvent(
+                    "api-forbidden",
+                    {
+                        detail: error.response?.data,
+                    }
+                )
+            );
+        }
 
-      window.dispatchEvent(
-        new Event("auth-expired")
-      );
+        if (status === 429) {
+            window.dispatchEvent(
+                new CustomEvent(
+                    "api-rate-limited",
+                    {
+                        detail: error.response?.data,
+                    }
+                )
+            );
+        }
+
+        return Promise.reject(error);
     }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | 403
-    |--------------------------------------------------------------------------
-    */
-
-    if (status === 403) {
-      window.dispatchEvent(
-        new CustomEvent(
-          "api-forbidden",
-          {
-            detail:
-              error.response?.data,
-          }
-        )
-      );
-    }
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | 429
-    |--------------------------------------------------------------------------
-    */
-
-    if (status === 429) {
-      window.dispatchEvent(
-        new CustomEvent(
-          "api-rate-limited",
-          {
-            detail:
-              error.response?.data,
-          }
-        )
-      );
-    }
-
-    return Promise.reject(error);
-  }
 );
 
-
 export default api;
-
 export { api };
