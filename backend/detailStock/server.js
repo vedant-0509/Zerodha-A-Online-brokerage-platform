@@ -119,6 +119,7 @@
 // const SNAP_PREFIX = "detailstock:snapshot:";
 // const HISTORY_PREFIX = "detailstock:history:v4:";
 // const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
+// const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
 // const fundamentalsByIsin = new Map();
 // const fundamentalsInflight = new Map();
@@ -153,6 +154,10 @@
 
 // function finalized1DKey(instrumentKey, tradingDate) {
 //   return `${FINAL_1D_PREFIX}${instrumentKey}:${tradingDate}`;
+// }
+
+// function week52Key(instrumentKey, asOfDate) {
+//   return `${WEEK52_PREFIX}${instrumentKey}:${asOfDate}`;
 // }
 
 // function shiftIndiaDate(dateString, days) {
@@ -410,6 +415,179 @@
 
 //     segment: master?.segment || marketRow?.master_segment || null,
 //   };
+// }
+
+// /* =========================================================
+//    52-WEEK HIGH / LOW
+// ========================================================= */
+
+// async function get52WeekHighLow(instrumentKey, force = false) {
+//   if (!validKey(instrumentKey)) {
+//     throw new Error("Invalid instrumentKey");
+//   }
+
+//   const asOfDate = indiaDate();
+//   const cacheKey = week52Key(instrumentKey, asOfDate);
+
+//   if (env.redisEnabled && !force) {
+//     try {
+//       const cached = await redis.get(cacheKey);
+//       if (cached) {
+//         const parsed = JSON.parse(cached);
+//         if (
+//           parsed &&
+//           Number.isFinite(Number(parsed.high)) &&
+//           Number.isFinite(Number(parsed.low))
+//         ) {
+//           return {
+//             ...parsed,
+//             source: "redis-upstox",
+//             cached: true,
+//           };
+//         }
+//       }
+//     } catch (err) {
+//       logger.warn("52-week cache read failed", {
+//         instrumentKey,
+//         error: errorMessage(err),
+//       });
+//     }
+//   }
+
+//   /*
+//    * 52 weeks = 364 calendar days. We fetch daily candles from Upstox and
+//    * calculate the range from the actual daily HIGH/LOW values, not closes.
+//    * Upstox may omit weekends/holidays, so the returned candles themselves
+//    * define the available trading sessions.
+//    */
+//   const toDate = asOfDate;
+//   const fromDate = shiftIndiaDate(toDate, -364);
+
+//   try {
+//     const candles = await upstox.fetchHistory(
+//       instrumentKey,
+//       "days",
+//       "1",
+//       toDate,
+//       fromDate,
+//     );
+
+//     const validCandles = (Array.isArray(candles) ? candles : []).filter(
+//       (candle) => {
+//         const high = Number(candle?.high);
+//         const low = Number(candle?.low);
+//         const timestamp = Date.parse(candle?.timestamp);
+
+//         return (
+//           Number.isFinite(timestamp) &&
+//           Number.isFinite(high) &&
+//           high > 0 &&
+//           Number.isFinite(low) &&
+//           low > 0
+//         );
+//       },
+//     );
+
+//     if (!validCandles.length) {
+//       throw new Error(`No daily candles returned for ${instrumentKey}`);
+//     }
+
+//     const highCandle = validCandles.reduce((best, candle) =>
+//       Number(candle.high) > Number(best.high) ? candle : best,
+//     );
+//     const lowCandle = validCandles.reduce((best, candle) =>
+//       Number(candle.low) < Number(best.low) ? candle : best,
+//     );
+
+//     const result = {
+//       instrumentKey,
+//       high: Number(highCandle.high),
+//       low: Number(lowCandle.low),
+//       highDate: indiaDate(new Date(highCandle.timestamp)),
+//       lowDate: indiaDate(new Date(lowCandle.timestamp)),
+//       fromDate,
+//       toDate,
+//       tradingSessions: validCandles.length,
+//       source: "upstox",
+//       cached: false,
+//       updatedAt: new Date().toISOString(),
+//     };
+
+//     if (env.redisEnabled) {
+//       try {
+//         await redis.set(cacheKey, JSON.stringify(result), {
+//           EX: env.week52CacheSeconds,
+//         });
+//       } catch (err) {
+//         logger.warn("52-week cache write failed", {
+//           instrumentKey,
+//           error: errorMessage(err),
+//         });
+//       }
+//     }
+
+//     return result;
+//   } catch (err) {
+//     logger.warn("Upstox 52-week lookup failed; trying database fallback", {
+//       instrumentKey,
+//       error: errorMessage(err),
+//     });
+
+//     /*
+//      * MongoDB is only a fallback. The normal/source-of-truth path above is
+//      * always Upstox daily history.
+//      */
+//     try {
+//       const dbData = await getDbHistory(
+//         instrumentKey,
+//         fromDate,
+//         toDate,
+//       );
+
+//       const validDbCandles = (Array.isArray(dbData) ? dbData : []).filter(
+//         (candle) => {
+//           const high = Number(candle?.high);
+//           const low = Number(candle?.low);
+//           return (
+//             Number.isFinite(high) &&
+//             high > 0 &&
+//             Number.isFinite(low) &&
+//             low > 0
+//           );
+//         },
+//       );
+
+//       if (validDbCandles.length) {
+//         const highCandle = validDbCandles.reduce((best, candle) =>
+//           Number(candle.high) > Number(best.high) ? candle : best,
+//         );
+//         const lowCandle = validDbCandles.reduce((best, candle) =>
+//           Number(candle.low) < Number(best.low) ? candle : best,
+//         );
+
+//         return {
+//           instrumentKey,
+//           high: Number(highCandle.high),
+//           low: Number(lowCandle.low),
+//           highDate: indiaDate(new Date(highCandle.timestamp)),
+//           lowDate: indiaDate(new Date(lowCandle.timestamp)),
+//           fromDate,
+//           toDate,
+//           tradingSessions: validDbCandles.length,
+//           source: "database-fallback",
+//           cached: false,
+//           updatedAt: new Date().toISOString(),
+//         };
+//       }
+//     } catch (dbErr) {
+//       logger.warn("Database 52-week fallback failed", {
+//         instrumentKey,
+//         error: errorMessage(dbErr),
+//       });
+//     }
+
+//     throw err;
+//   }
 // }
 
 // /* =========================================================
@@ -2321,6 +2499,41 @@
 //   }
 // });
 
+// app.get("/api/detail-stock/52-week/:instrumentKey", async (req, res) => {
+//   const key = req.params.instrumentKey;
+//   const forceRefresh = String(req.query.refresh || "") === "1";
+
+//   if (!validKey(key)) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "Invalid instrumentKey",
+//     });
+//   }
+
+//   try {
+//     const data = await get52WeekHighLow(key, forceRefresh);
+
+//     return res.json({
+//       success: true,
+//       instrumentKey: key,
+//       marketOpen: isMarketOpen(),
+//       refreshed: forceRefresh,
+//       data,
+//     });
+//   } catch (err) {
+//     logger.error("52-week high/low request failed", {
+//       instrumentKey: key,
+//       forceRefresh,
+//       error: errorMessage(err),
+//     });
+
+//     return res.status(502).json({
+//       success: false,
+//       message: errorMessage(err),
+//     });
+//   }
+// });
+
 // app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 //   const key = req.params.instrumentKey;
 
@@ -3364,26 +3577,6 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
@@ -3987,16 +4180,65 @@ async function primeSnapshot(instrumentKey) {
 
   const marketOpen = isMarketOpen();
 
-  const existing = await getSnapshot(instrumentKey);
+  let existing = await getSnapshot(instrumentKey);
+
+  const finalizedSources = new Set([
+    "upstox-close-reconciliation",
+    "upstox-finalized-intraday",
+    "upstox-finalized-history",
+  ]);
 
   const existingIsFresh =
     existing?.marketDate === today &&
     (marketOpen
       ? existing?.marketStatus !== "CLOSED"
       : existing?.marketStatus === "CLOSED" &&
-        existing?.source === "upstox-close-reconciliation");
+        finalizedSources.has(existing?.source));
 
   if (existing && existingIsFresh) {
+    // Circuit limits are available in Upstox Full Market Quote and in the
+    // Full Market Data WebSocket. A finalized close snapshot created from
+    // candles does not contain these fields, so repair them on demand.
+    const hasUpper = Number.isFinite(Number(existing.upperCircuit));
+    const hasLower = Number.isFinite(Number(existing.lowerCircuit));
+
+    if (!hasUpper || !hasLower) {
+      try {
+        const quote = await upstox.fetchOhlc(instrumentKey);
+
+        existing = {
+          ...existing,
+          upperCircuit:
+            quote?.upperCircuit ??
+            quote?.upperCircuitLimit ??
+            existing.upperCircuit ??
+            null,
+          lowerCircuit:
+            quote?.lowerCircuit ??
+            quote?.lowerCircuitLimit ??
+            existing.lowerCircuit ??
+            null,
+          upperCircuitLimit:
+            quote?.upperCircuitLimit ??
+            quote?.upperCircuit ??
+            existing.upperCircuitLimit ??
+            null,
+          lowerCircuitLimit:
+            quote?.lowerCircuitLimit ??
+            quote?.lowerCircuit ??
+            existing.lowerCircuitLimit ??
+            null,
+        };
+
+        await cacheSnapshot(existing);
+      } catch (error) {
+        logger.warn("Circuit limit refresh failed", {
+          instrumentKey,
+          error: errorMessage(error),
+        });
+      }
+    }
+
     return existing;
   }
 
@@ -5232,7 +5474,7 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
   );
 }
 
-function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate) {
+function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
   const first = candles[0];
   const last = candles[candles.length - 1];
   const close = Number(last.close);
@@ -5284,6 +5526,34 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate) {
     high: highs.length ? Math.max(...highs) : Number(first.high),
     low: lows.length ? Math.min(...lows) : Number(first.low),
     volume,
+    upperCircuit: Number(
+      priorSnapshot?.upperCircuit ??
+      priorSnapshot?.upperCircuitLimit ??
+      row?.upperCircuit ??
+      row?.upperCircuitLimit ??
+      NaN,
+    ),
+    lowerCircuit: Number(
+      priorSnapshot?.lowerCircuit ??
+      priorSnapshot?.lowerCircuitLimit ??
+      row?.lowerCircuit ??
+      row?.lowerCircuitLimit ??
+      NaN,
+    ),
+    upperCircuitLimit: Number(
+      priorSnapshot?.upperCircuitLimit ??
+      priorSnapshot?.upperCircuit ??
+      row?.upperCircuitLimit ??
+      row?.upperCircuit ??
+      NaN,
+    ),
+    lowerCircuitLimit: Number(
+      priorSnapshot?.lowerCircuitLimit ??
+      priorSnapshot?.lowerCircuit ??
+      row?.lowerCircuitLimit ??
+      row?.lowerCircuit ??
+      NaN,
+    ),
     lastTradeTime: Date.parse(last.timestamp) || null,
     timestamp: Date.now(),
     marketDate: tradingDate,
@@ -5350,11 +5620,14 @@ async function reconcileAllMarketStocks(
             targetTradingDate,
           );
 
+          const priorSnapshot = snapshots.get(key) || null;
+
           const snapshot = buildOfficialCloseSnapshot(
             row,
             candles,
             previousClose,
             targetTradingDate,
+            priorSnapshot,
           );
 
           await saveDailyClose(snapshot, targetTradingDate);

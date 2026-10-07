@@ -5984,3 +5984,180 @@ tbody tr:hover {
     min-width: 140px;
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* =========================================================
+   MUTUAL FUND - LOAD MORE + TABLE FIX
+   Paste this at the END of index.css
+   ========================================================= */
+
+.mf2-table-card {
+  position: relative;
+  width: 100%;
+  border: 1px solid #e4e5e9;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.mf2-table-scroll {
+  width: 100%;
+  max-height: 635px;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mf2-table-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mf2-table {
+  width: 100%;
+  min-width: 1040px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+/* Sticky table header */
+.mf2-table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #f5f5f5;
+}
+
+/* Load More wrapper */
+.mf2-load-more-wrap {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 16px 18px;
+  border-top: 1px solid #e8e9ed;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+/* Load More button */
+.mf2-load-more {
+  min-width: 130px;
+  height: 38px;
+  padding: 0 18px;
+  border: 1.5px solid #e2e4e9;
+  border-radius: 20px;
+  background: #fff;
+  color: #4e5569;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.mf2-load-more:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #d5d8df;
+}
+
+.mf2-load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Infinite-scroll sentinel */
+.mf2-sentinel {
+  height: 38px !important;
+  padding: 0 !important;
+  text-align: center !important;
+  color: #9aa0aa !important;
+  font-size: 12px !important;
+}
+
+/* Empty/loading/error table state */
+.mf2-state {
+  height: 170px !important;
+  padding: 20px !important;
+  text-align: center !important;
+  color: #999 !important;
+}
+
+/* Positive / negative returns */
+.mf2-positive {
+  color: #1e7654 !important;
+}
+
+.mf2-negative {
+  color: #bd4b48 !important;
+}
+
+/* NAV formatting */
+.mf2-nav {
+  font-variant-numeric: tabular-nums;
+  color: #50586b;
+}
+
+/* Mobile */
+@media (max-width: 900px) {
+  .mf2-table-scroll {
+    overflow-x: auto;
+    overflow-y: auto;
+  }
+
+  .mf2-table {
+    min-width: 1040px;
+  }
+
+  .mf2-load-more-wrap {
+    padding: 12px 12px 16px;
+  }
+}
+
+/* Top Returns - Load More */
+.all-funds-link:disabled {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
+
+.all-funds-link:disabled:hover {
+  color: #00b386;
+}
+
+.all-funds-link:disabled .all-funds-arrow {
+  transform: none;
+}
