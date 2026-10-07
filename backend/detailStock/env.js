@@ -70,12 +70,19 @@
 
 //   historyCacheSeconds: numberValue(process.env.HISTORY_CACHE_SECONDS, 3600),
 
+//   week52CacheSeconds: numberValue(process.env.WEEK52_CACHE_SECONDS, 86400),
+
 //   closeQuoteBatchSize: numberValue(process.env.CLOSE_QUOTE_BATCH_SIZE, 100),
 
 //   closeBatchSize: numberValue(process.env.CLOSING_BATCH_SIZE, 5),
 
 //   closeBatchDelayMs: numberValue(process.env.CLOSE_BATCH_DELAY_MS, 150),
 // };
+
+
+
+
+
 
 
 
@@ -153,6 +160,9 @@ module.exports = {
   marketOpen: process.env.MARKET_OPEN || "09:15",
 
   marketClose: process.env.MARKET_CLOSE || "15:30",
+
+  // Official same-day EOD values are accepted after the 15-minute settlement window.
+  marketSettlement: process.env.MARKET_SETTLEMENT || "15:45",
 
   marketHolidays: listValue(process.env.MARKET_HOLIDAYS),
 

@@ -2725,7 +2725,6 @@
 
 
 
-
 import React, {
   useCallback,
   useEffect,
@@ -2826,6 +2825,9 @@ export default function StockDashboard({
 
   const [marketOpen, setMarketOpen] = useState(null);
 
+  // Official same-day EOD history becomes authoritative only after settlement.
+  const [officialSettlementReady, setOfficialSettlementReady] = useState(false);
+
   const [marketLoading, setMarketLoading] = useState(true);
 
   const [marketError, setMarketError] = useState("");
@@ -2866,6 +2868,7 @@ export default function StockDashboard({
 
   const marketOpenRef = useRef(marketOpen);
 
+  const officialSettlementReadyRef = useRef(false);
   const marketStatusKnownRef = useRef(false);
 
   const liveDayHistoryRef = useRef([]);
@@ -2875,6 +2878,10 @@ export default function StockDashboard({
   // (or temporarily fill a minute that REST has not published yet).
   const historicalDayHistoryRef = useRef([]);
   const provisionalLiveMinutesRef = useRef(new Map());
+  // Date of the trading session whose live ticks are currently driving 1D.
+  // This prevents yesterday's finalized candles from being mixed with the
+  // first live tick of the next trading session.
+  const liveSessionDateRef = useRef("");
   const hasLiveTickRef = useRef(false);
 
   const finalHistoryLoadedRef = useRef(false);
@@ -2963,6 +2970,7 @@ export default function StockDashboard({
     liveDayHistoryRef.current = [];
     historicalDayHistoryRef.current = [];
     provisionalLiveMinutesRef.current = new Map();
+    liveSessionDateRef.current = "";
     hasLiveTickRef.current = false;
     finalHistoryLoadedRef.current = false;
 
@@ -2973,6 +2981,9 @@ export default function StockDashboard({
     historyRequestGenerationRef.current += 1;
 
     marketStatusKnownRef.current = false;
+
+    officialSettlementReadyRef.current = false;
+    setOfficialSettlementReady(false);
 
     marketOpenRef.current = false;
 
@@ -2985,7 +2996,7 @@ export default function StockDashboard({
 
       liveTickFlushTimerRef.current = null;
     }
-  }, [location.key]);
+  }, [location.key, symbol]);
 
   /* LOAD STOCK IDENTIFIER */
 
@@ -3261,7 +3272,12 @@ export default function StockDashboard({
       let initialSnapshot = null;
 
       if (statusResult.status === "fulfilled") {
-        isOpen = normalizeMarketStatus(statusResult.value.data);
+        const statusPayload = unwrapResponse(statusResult.value.data) || {};
+        isOpen = normalizeMarketStatus(statusPayload);
+
+        const settlementReady = Boolean(statusPayload.officialSettlementReady);
+        officialSettlementReadyRef.current = settlementReady;
+        setOfficialSettlementReady(settlementReady);
 
         marketStatusKnownRef.current = true;
 
@@ -3270,6 +3286,11 @@ export default function StockDashboard({
 
       if (snapshotResult.status === "fulfilled") {
         initialSnapshot = unwrapResponse(snapshotResult.value.data);
+
+        if (typeof initialSnapshot?.officialSettlementReady === "boolean") {
+          officialSettlementReadyRef.current = initialSnapshot.officialSettlementReady;
+          setOfficialSettlementReady(initialSnapshot.officialSettlementReady);
+        }
 
         if (typeof initialSnapshot?.marketOpen === "boolean") {
           isOpen = initialSnapshot.marketOpen;
@@ -3303,6 +3324,10 @@ export default function StockDashboard({
         "Unable to load market data.",
       );
 
+      marketOpenRef.current = false;
+      marketStatusKnownRef.current = true;
+      officialSettlementReadyRef.current = false;
+      setOfficialSettlementReady(false);
       setMarketOpen(false);
     } finally {
       if (!signal.aborted) setMarketLoading(false);
@@ -3577,6 +3602,31 @@ export default function StockDashboard({
         // OHLC history while the current minute remains live.
         historicalDayHistoryRef.current = officialPoints;
 
+        if (!openNow && officialSettlementReadyRef.current && officialPoints.length) {
+          const lastPoint = officialPoints[officialPoints.length - 1];
+          const officialClose = Array.isArray(lastPoint)
+            ? nullableNumber(lastPoint[4], lastPoint[1])
+            : nullableNumber(
+                lastPoint?.close,
+                lastPoint?.c,
+                lastPoint?.price,
+                lastPoint?.ltp,
+              );
+
+          if (officialClose !== null) {
+            setSnapshot((previous) => ({
+              ...(previous || {}),
+              ltp: officialClose,
+              price: officialClose,
+              dayClose: officialClose,
+              marketOpen: false,
+              marketStatus: "CLOSED",
+              source: "upstox-finalized-intraday",
+              officialSettlementReady: true,
+            }));
+          }
+        }
+
         if (openNow) {
           const merged = mergeOfficialWithLive(officialPoints);
           liveDayHistoryRef.current = merged;
@@ -3700,64 +3750,60 @@ export default function StockDashboard({
   useEffect(() => {
     if (!instrumentKey) return;
 
-    /*
+    if (chartRange === "1D") {
+      if (!marketStatusKnownRef.current) return;
 
-     * Wait until real market status is known.
-
-     * Once known, ALWAYS load 1D history.
-
-     *
-
-     * During market hours:
-
-     *   historical 1-minute candles
-
-     *   +
-
-     *   WebSocket live ticks
-
-     *
-
-     * After market close:
-
-     *   finalized official 1D history
-
-     */
-
-    if (chartRange === "1D" && !marketStatusKnownRef.current) {
-      return;
+      // Keep the just-finished live/provisional chart visible from 15:30
+      // through 15:45. Official history takes over only after settlement.
+      if (!marketOpen && !officialSettlementReadyRef.current) return;
     }
 
     const controller = new AbortController();
 
-    loadHistory(instrumentKey, chartRange, controller.signal);
+    // First 1D load after Search -> Stock bypasses Redis once, preventing a
+    // stale intraday cache from producing the old flat/stale chart.
+    const forceFreshOpen1D =
+      chartRange === "1D" &&
+      Boolean(marketOpen) &&
+      historicalDayHistoryRef.current.length === 0;
 
-    return () => {
-      controller.abort();
-    };
-  }, [instrumentKey, chartRange, marketOpen, loadHistory]);
+    loadHistory(instrumentKey, chartRange, controller.signal, {
+      force: forceFreshOpen1D,
+    });
+
+    return () => controller.abort();
+  }, [
+    instrumentKey,
+    chartRange,
+    marketOpen,
+    officialSettlementReady,
+    loadHistory,
+  ]);
 
   const wasMarketOpenRef = useRef(marketOpen);
 
   useEffect(() => {
     const wasOpen = wasMarketOpenRef.current;
-
     wasMarketOpenRef.current = marketOpen;
 
     if (chartRange !== "1D" || !instrumentKey) return;
 
-    // OPEN -> CLOSED: replace temporary live chart with official 1D history.
-
-    if (wasOpen && !marketOpen) {
+    // 15:30 only changes market state. Keep the live/provisional chart.
+    // At 15:45, officialSettlementReady becomes true and the main history
+    // effect replaces it with finalized official candles.
+    if (wasOpen && !marketOpen && officialSettlementReadyRef.current) {
       const controller = new AbortController();
-
       finalHistoryLoadedRef.current = false;
-
       loadHistory(instrumentKey, "1D", controller.signal, { force: true });
-
       return () => controller.abort();
     }
-  }, [marketOpen, chartRange, instrumentKey, loadHistory]);
+  }, [
+    marketOpen,
+    officialSettlementReady,
+    chartRange,
+    instrumentKey,
+    loadHistory,
+  ]);
 
   /*
 
@@ -3780,16 +3826,21 @@ export default function StockDashboard({
 
         if (!alive) return;
 
-        const isOpen = normalizeMarketStatus(response.data);
+        const statusPayload = unwrapResponse(response.data) || {};
+        const isOpen = normalizeMarketStatus(statusPayload);
+        const settlementReady = Boolean(statusPayload.officialSettlementReady);
 
         marketStatusKnownRef.current = true;
-
         marketOpenRef.current = Boolean(isOpen);
 
         if (isOpen) {
           finalHistoryLoadedRef.current = false;
+          officialSettlementReadyRef.current = false;
+        } else {
+          officialSettlementReadyRef.current = settlementReady;
         }
 
+        setOfficialSettlementReady(Boolean(settlementReady));
         setMarketOpen(Boolean(isOpen));
       } catch (error) {
         if (!alive || axios.isCancel(error) || error?.code === "ERR_CANCELED") {
@@ -3860,10 +3911,12 @@ export default function StockDashboard({
 
       pendingLiveTickRef.current = null;
 
+      // Keep the finalized previous-session chart visible until the first
+      // valid live tick of the new session arrives. That matches the desired
+      // "persist until next tick" behavior.
       liveDayHistoryRef.current = [];
-      historicalDayHistoryRef.current = [];
       provisionalLiveMinutesRef.current = new Map();
-
+      liveSessionDateRef.current = "";
       hasLiveTickRef.current = false;
 
       finalHistoryLoadedRef.current = false;
@@ -3898,6 +3951,8 @@ export default function StockDashboard({
     let alive = true;
 
     let subscribed = false;
+    let subscribeRetryTimer = null;
+    let subscribeRetryAttempts = 0;
 
     const generation = ++wsGenerationRef.current;
 
@@ -3946,6 +4001,40 @@ export default function StockDashboard({
         !isISTTradingTimestamp(timestamp)
       ) {
         return;
+      }
+
+      // The first tick of a new trading day starts a new 1D session.
+      // Do not mix yesterday's finalized candles with today's live stream.
+      if (liveSessionDateRef.current !== today) {
+        liveSessionDateRef.current = today;
+        lastLiveTickRef.current = 0;
+        pendingLiveTickRef.current = null;
+        provisionalLiveMinutesRef.current = new Map();
+        hasLiveTickRef.current = false;
+
+        const officialPoints = Array.isArray(historicalDayHistoryRef.current)
+          ? historicalDayHistoryRef.current
+          : [];
+        const hasTodayHistory = officialPoints.some((point) => {
+          const ts = parseHistoryTimestamp(
+            Array.isArray(point)
+              ? point[0]
+              : point?.timestamp ?? point?.time ?? point?.date,
+          );
+          return Number.isFinite(ts) && indiaDateFromTimestamp(ts) === today;
+        });
+
+        if (!hasTodayHistory) {
+          historicalDayHistoryRef.current = [];
+          liveDayHistoryRef.current = [];
+          setHistory([]);
+
+          // Fetch today's official 1-minute candles once, then merge the
+          // current live tick on top of them.
+          const controller = new AbortController();
+          loadHistory(instrumentKey, "1D", controller.signal, { force: true });
+          window.setTimeout(() => controller.abort(), 25000);
+        }
       }
 
       const minuteTimestamp =
@@ -4137,6 +4226,8 @@ export default function StockDashboard({
 
       if (isOpen) {
         finalHistoryLoadedRef.current = false;
+        officialSettlementReadyRef.current = false;
+        setOfficialSettlementReady(false);
       }
 
       setMarketOpen(isOpen);
@@ -4151,8 +4242,25 @@ export default function StockDashboard({
       }));
     };
 
+    const scheduleSubscribeRetry = () => {
+      if (isStale() || subscribed || subscribeRetryTimer) return;
+
+      const delay = Math.min(5000, 500 * Math.max(1, subscribeRetryAttempts + 1));
+      subscribeRetryTimer = window.setTimeout(() => {
+        subscribeRetryTimer = null;
+        subscribe();
+      }, delay);
+    };
+
     const subscribe = () => {
-      if (isStale() || subscribed || !detailStockSocket?.connected) return;
+      if (isStale() || subscribed) return;
+
+      if (!detailStockSocket?.connected) {
+        scheduleSubscribeRetry();
+        return;
+      }
+
+      subscribeRetryAttempts += 1;
 
       detailStockSocket.emit(
         "detailStock:subscribe",
@@ -4172,14 +4280,17 @@ export default function StockDashboard({
           if (!ack?.success) {
             subscribed = false;
 
-            setMarketError(
-              ack?.message || "Unable to subscribe to live market data.",
-            );
-
+            // The Render central gateway can connect to Detail Stock a moment
+            // after the browser socket. Retry the subscription instead of
+            // leaving the 1D chart stuck on its initial state until a tab
+            // switch/re-render happens.
+            scheduleSubscribeRetry();
             return;
           }
 
+          subscribeRetryAttempts = 0;
           subscribed = true;
+          setMarketError("");
 
           if (ack.snapshot) applyLiveData(ack.snapshot);
 
@@ -4188,7 +4299,11 @@ export default function StockDashboard({
 
             marketOpenRef.current = ack.marketOpen;
 
-            if (ack.marketOpen) finalHistoryLoadedRef.current = false;
+            if (ack.marketOpen) {
+              finalHistoryLoadedRef.current = false;
+              officialSettlementReadyRef.current = false;
+              setOfficialSettlementReady(false);
+            }
 
             setMarketOpen(ack.marketOpen);
           }
@@ -4238,6 +4353,11 @@ export default function StockDashboard({
 
     return () => {
       alive = false;
+
+      if (subscribeRetryTimer) {
+        window.clearTimeout(subscribeRetryTimer);
+        subscribeRetryTimer = null;
+      }
 
       if (liveTickFlushTimerRef.current)
         window.clearInterval(liveTickFlushTimerRef.current);

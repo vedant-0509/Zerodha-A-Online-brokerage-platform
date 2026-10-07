@@ -3576,7 +3576,6 @@
 
 
 
-
 require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
@@ -3626,6 +3625,7 @@ const {
   isAfterMarketClose,
   indiaDate,
   marketStatus,
+  isOfficialSettlementReady,
 } = require("./market");
 
 const app = express();
@@ -4177,8 +4177,8 @@ async function primeSnapshot(instrumentKey) {
   const context = await getInstrumentContext(instrumentKey);
 
   const today = indiaDate();
-
   const marketOpen = isMarketOpen();
+  const settlementReady = isOfficialSettlementReady();
 
   let existing = await getSnapshot(instrumentKey);
 
@@ -4188,17 +4188,76 @@ async function primeSnapshot(instrumentKey) {
     "upstox-finalized-history",
   ]);
 
-  const existingIsFresh =
+  const existingIsFinalized =
+    !marketOpen &&
     existing?.marketDate === today &&
-    (marketOpen
-      ? existing?.marketStatus !== "CLOSED"
-      : existing?.marketStatus === "CLOSED" &&
-        finalizedSources.has(existing?.source));
+    existing?.marketStatus === "CLOSED" &&
+    finalizedSources.has(existing?.source);
 
-  if (existing && existingIsFresh) {
-    // Circuit limits are available in Upstox Full Market Quote and in the
-    // Full Market Data WebSocket. A finalized close snapshot created from
-    // candles does not contain these fields, so repair them on demand.
+  // After the 15-minute settlement window, an official 1D candle pull is
+  // authoritative even when the background all-stocks settlement job has not
+  // reached this stock yet. This makes a user clicking a stock immediately
+  // after 15:45 see the official close, not a provisional quote.
+  if (!marketOpen && settlementReady && !existingIsFinalized) {
+    try {
+      const tradingDate = latestCompletedTradingDate();
+      const candles = await fetchOfficialIntradaySession(
+        instrumentKey,
+        tradingDate,
+      );
+      const previousClose = await resolvePreviousClose(
+        instrumentKey,
+        tradingDate,
+      );
+
+      const row = {
+        instrument_key: instrumentKey,
+        symbol: context?.symbol || context?.marketRow?.symbol || null,
+        name: context?.name || context?.marketRow?.name || null,
+        master_exchange:
+          context?.exchange || context?.marketRow?.master_exchange || null,
+        master_segment:
+          context?.segment || context?.marketRow?.master_segment || null,
+        exchange: context?.exchange || null,
+        segment: context?.segment || null,
+        sector: context?.marketRow?.sector || null,
+      };
+
+      const official = buildOfficialCloseSnapshot(
+        row,
+        candles,
+        previousClose,
+        tradingDate,
+        existing,
+      );
+
+      official.finalizedAt = new Date().toISOString();
+      official.officialSettlementReady = true;
+
+      await cacheSnapshot(official);
+
+      await cacheFinalized1D(instrumentKey, tradingDate, {
+        tradingDate,
+        candles,
+        closePrice: Number(official.dayClose || official.close || official.price),
+        baselineClose: previousClose?.close ?? null,
+        baselineDate: previousClose?.tradingDate ?? null,
+        source: "upstox-finalized-intraday",
+        finalizedAt: official.finalizedAt,
+      });
+
+      return official;
+    } catch (error) {
+      logger.warn("Per-stock official settlement fetch failed", {
+        instrumentKey,
+        error: errorMessage(error),
+      });
+      // Fall through to a fresh quote so the detail page still has a usable
+      // snapshot while the scheduled reconciliation retries the official pull.
+    }
+  }
+
+  if (existingIsFinalized) {
     const hasUpper = Number.isFinite(Number(existing.upperCircuit));
     const hasLower = Number.isFinite(Number(existing.lowerCircuit));
 
@@ -4239,33 +4298,35 @@ async function primeSnapshot(instrumentKey) {
       }
     }
 
+    existing.officialSettlementReady = settlementReady;
     return existing;
   }
 
+  // OPEN market (or a non-finalized post-close window): never reuse a stale
+  // same-day cache. Fetch a fresh Upstox quote, then let WebSocket ticks own
+  // the live price.
   const snapshot = await upstox.fetchOhlc(instrumentKey);
 
   if (context) {
     snapshot.symbol = context.symbol;
-
     snapshot.name = context.name;
-
     snapshot.exchange = context.exchange;
-
     snapshot.segment = context.segment;
-
     snapshot.isin = context.isin;
-
     snapshot.sector = context.marketRow?.sector || null;
   }
 
   snapshot.marketDate = today;
-
   snapshot.marketOpen = marketOpen;
-
   snapshot.marketStatus = marketOpen ? "OPEN" : "CLOSED";
+  snapshot.officialSettlementReady = settlementReady;
+
+  // A closed-but-not-yet-finalized snapshot is explicitly provisional.
+  if (!marketOpen && !settlementReady) {
+    snapshot.source = "upstox-provisional-close";
+  }
 
   await enrichWithStoredPreviousClose(snapshot);
-
   await cacheSnapshot(snapshot);
 
   return snapshot;
