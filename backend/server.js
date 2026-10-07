@@ -244,7 +244,7 @@ function proxyRequest(req, res, route) {
 
   console.log(
     `[Central API] ${req.method} ${req.url} -> ` +
-      `${INTERNAL_HOST}:${route.target}${targetPath}`,
+    `${INTERNAL_HOST}:${route.target}${targetPath}`,
   );
 
   const headers = {
@@ -364,39 +364,94 @@ const io = new Server(server, {
 
 function bridgeIndexSocket(client) {
   const port = Number(process.env.INDEX_MARKET_PORT || 3020);
-
   const upstream = createClient(`http://${INTERNAL_HOST}:${port}`, {
     transports: ["websocket", "polling"],
     reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 10000,
+  });
+
+  let lastConnectionState = "disconnected";
+
+  upstream.on("connect", () => {
+    lastConnectionState = "connected";
+    console.log(
+      `[Central API] Index Market bridge connected (${client.id} -> ${upstream.id})`,
+    );
+    upstream.emit("get_snapshot");
+  });
+
+  upstream.on("disconnect", (reason) => {
+    lastConnectionState = "disconnected";
+    console.warn(
+      `[Central API] Index Market bridge disconnected (${reason}). Reconnecting...`,
+    );
   });
 
   upstream.on("connect_error", (error) => {
-    console.error("[Central API] Index Market socket error:", error.message);
+    // During a clean startup the internal service can take a few seconds to bind.
+    // Socket.IO will keep retrying, so avoid flooding the console with stack traces.
+    if (lastConnectionState !== "connecting") {
+      console.warn(
+        `[Central API] Index Market bridge waiting for service: ${error.message}`,
+      );
+    }
+    lastConnectionState = "connecting";
   });
 
-  upstream.on("market_snapshot", (payload) =>
-    client.emit("market_snapshot", payload),
-  );
+  upstream.on("market_snapshot", (payload) => {
+    client.emit("market_snapshot", payload);
+  });
 
-  upstream.on("market_update", (payload) =>
-    client.emit("market_update", payload),
-  );
+  upstream.on("market_update", (payload) => {
+    client.emit("market_update", payload);
+  });
 
-  client.on("get_snapshot", () => upstream.emit("get_snapshot"));
+  client.on("get_snapshot", () => {
+    if (upstream.connected) {
+      upstream.emit("get_snapshot");
+    }
+  });
 
   client.on("disconnect", () => upstream.close());
 }
 
 function bridgeDetailSocket(client) {
   const port = Number(process.env.DETAIL_STOCK_PORT || 3021);
-
   const upstream = createClient(`http://${INTERNAL_HOST}:${port}`, {
     transports: ["websocket", "polling"],
     reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 10000,
+  });
+
+  let lastConnectionState = "disconnected";
+
+  upstream.on("connect", () => {
+    lastConnectionState = "connected";
+    console.log(
+      `[Central API] Detail Stock bridge connected (${client.id} -> ${upstream.id})`,
+    );
+  });
+
+  upstream.on("disconnect", (reason) => {
+    lastConnectionState = "disconnected";
+    console.warn(
+      `[Central API] Detail Stock bridge disconnected (${reason}). Reconnecting...`,
+    );
   });
 
   upstream.on("connect_error", (error) => {
-    console.error("[Central API] Detail Stock socket error:", error.message);
+    if (lastConnectionState !== "connecting") {
+      console.warn(
+        `[Central API] Detail Stock bridge waiting for service: ${error.message}`,
+      );
+    }
+    lastConnectionState = "connecting";
   });
 
   for (const event of [
@@ -408,19 +463,30 @@ function bridgeDetailSocket(client) {
   }
 
   client.on("detailStock:subscribe", (payload, ack) => {
-    upstream.emit("detailStock:subscribe", payload, (response) => {
-      if (typeof ack === "function") {
-        ack(response);
-      }
-    });
+    const send = () => {
+      upstream.emit("detailStock:subscribe", payload, (response) => {
+        if (typeof ack === "function") ack(response);
+      });
+    };
+
+    if (upstream.connected) {
+      send();
+    } else if (typeof ack === "function") {
+      ack({
+        success: false,
+        message: "Detail Stock service is starting. Please retry.",
+      });
+    }
   });
 
   client.on("detailStock:unsubscribe", (payload, ack) => {
-    upstream.emit("detailStock:unsubscribe", payload, (response) => {
-      if (typeof ack === "function") {
-        ack(response);
-      }
-    });
+    if (upstream.connected) {
+      upstream.emit("detailStock:unsubscribe", payload, (response) => {
+        if (typeof ack === "function") ack(response);
+      });
+    } else if (typeof ack === "function") {
+      ack({ success: false, message: "Detail Stock service is unavailable." });
+    }
   });
 
   client.on("disconnect", () => upstream.close());
@@ -433,7 +499,7 @@ io.on("connection", (client) => {
   bridgeDetailSocket(client);
 });
 
-server.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, () => {
   console.log(`Central API running on http://localhost:${PORT}`);
   console.log("Public API: /api/*");
   console.log("Public WebSockets: /socket.io");
