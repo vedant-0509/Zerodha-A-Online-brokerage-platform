@@ -5,10 +5,13 @@ import React, {
   useRef,
   useState,
 } from "react";
+
 import { useLocation, useParams } from "react-router-dom";
+
 import axios from "axios";
 
 import detailStockSocket from "./detailStockWebSocketConnection";
+
 import {
   ENDPOINTS,
   CHART_WIDTH,
@@ -17,12 +20,14 @@ import {
   CHART_PADDING_Y,
   LIVE_TICK_THROTTLE_MS,
 } from "./config/stockConfig";
+
 import {
   numberValue,
   nullableNumber,
   firstDefined,
   getFinancialNumber,
 } from "./utils/formatters";
+
 import {
   getIndiaDate,
   getHistoryParams,
@@ -32,6 +37,7 @@ import {
   getMarketTimestamp,
   getISTMarketProgress,
 } from "./utils/dateHelpers";
+
 import {
   unwrapResponse,
   normalizeStock,
@@ -45,76 +51,138 @@ import {
 } from "./utils/normalizers";
 
 /* UI Components */
+
 import { StockHeader } from "./components/stock/StockHeader";
+
 import { StockChart } from "./components/stock/StockChart";
+
 import { PerformanceSection } from "./components/stock/PerformanceSection";
+
 import { FundamentalsSection } from "./components/stock/FundamentalsSection";
+
 import { ShareholdingSection } from "./components/stock/ShareholdingSection";
+
 import { FinancialsSection } from "./components/stock/FinancialsSection";
+
 import { AboutSection } from "./components/stock/AboutSection";
+
 import { MutualFundsSection } from "./components/stock/MutualFundsSection";
+
 import { TradingPanel } from "./components/stock/TradingPanel";
 
 export default function StockDashboard({
   instrumentKey: propInstrumentKey,
+
   isin: propIsin,
 }) {
   const { symbol: routeSymbol } = useParams();
+
   const location = useLocation();
+
   const initialStock = location.state || null;
+
   const symbol =
     routeSymbol || initialStock?.symbol || initialStock?.tradingSymbol || "";
+
   // TEST MODE: allow simulated BUY/SELL even when the real market is closed.
+
   // This changes only the simulator availability; market-data UI still uses real marketOpen.
+
   const simulationMarketOpen = true;
 
   /* STATE */
+
   const [stockInfo, setStockInfo] = useState(initialStock);
+
   const [snapshot, setSnapshot] = useState(null);
+
   const [marketOpen, setMarketOpen] = useState(null);
+
   const [marketLoading, setMarketLoading] = useState(true);
+
   const [marketError, setMarketError] = useState("");
+
   const [stockLoading, setStockLoading] = useState(true);
+
   const [stockError, setStockError] = useState("");
+
   const [history, setHistory] = useState([]);
+
   const [chartRange, setChartRange] = useState("1D");
+
   // Backend supplies the real prior-trading-day close for the selected range.
+
   const [rangeBaseline, setRangeBaseline] = useState(null);
 
   const chartSessionDateRef = useRef(getIndiaDate());
+
   const lastLiveTickRef = useRef(0);
+
   const pendingLiveTickRef = useRef(null);
+
   const liveTickFlushTimerRef = useRef(null);
+
   const wsGenerationRef = useRef(0);
+
+  // Prevent stale history responses from overwriting newer chart state.
+  const historyRequestGenerationRef = useRef(0);
+
+  // Tracks whether the socket has already connected once for this stock.
+  const socketHasConnectedRef = useRef(false);
+
   const [week52Data, setWeek52Data] = useState(null);
 
   /* 1D LIVE CHART STATE */
+
   const chartRangeRef = useRef(chartRange);
+
   const marketOpenRef = useRef(marketOpen);
+
   const marketStatusKnownRef = useRef(false);
+
   const liveDayHistoryRef = useRef([]);
+
   const hasLiveTickRef = useRef(false);
+
   const finalHistoryLoadedRef = useRef(false);
 
   const [historyLoading, setHistoryLoading] = useState(false);
+
   const [fundamentalData, setFundamentalData] = useState(null);
+
   const [shareholdingData, setShareholdingData] = useState([]);
+
   const [mutualFundData, setMutualFundData] = useState([]);
+
   const [financialData, setFinancialData] = useState(null);
+
   const [profileData, setProfileData] = useState(null);
+
   const [fundamentalsLoading, setFundamentalsLoading] = useState(true);
+
   const [fundamentalsError, setFundamentalsError] = useState("");
+
   const [selectedShareholdingPeriod, setSelectedShareholdingPeriod] =
     useState("");
+
   const [hoverData, setHoverData] = useState(null);
+
   const [isAboutExpanded, setIsAboutExpanded] = useState(false);
+
   const [orderType, setOrderType] = useState("BUY");
+
   const [quantity, setQuantity] = useState("1");
+
   const [priceLimit, setPriceLimit] = useState("");
+
   const [isWatchlisted, setIsWatchlisted] = useState(false);
+
   const [orderSubmitting, setOrderSubmitting] = useState(false);
+
   const [orderMessage, setOrderMessage] = useState("");
+
   const orderIdempotencyKeyRef = useRef(null);
+
   const orderFingerprintRef = useRef("");
 
   useEffect(() => {
@@ -122,21 +190,36 @@ export default function StockDashboard({
   }, [chartRange]);
 
   /* SYNC SEARCH-BAR STOCK SELECTION */
+
   // React Router may reuse this component when the search bar selects
+
   // another stock. Sync the new location state and clear old-stock data.
+
   useEffect(() => {
     setStockInfo(initialStock || null);
+
     setSnapshot(null);
+
     setHistory([]);
+
     setRangeBaseline(null);
+
     setHoverData(null);
+
     setMarketError("");
+
     setStockError("");
+
     setFundamentalData(null);
+
     setShareholdingData([]);
+
     setMutualFundData([]);
+
     setFinancialData(null);
+
     setProfileData(null);
+
     setIsWatchlisted(false);
 
     chartSessionDateRef.current = getIndiaDate();
@@ -148,37 +231,55 @@ export default function StockDashboard({
     hasLiveTickRef.current = false;
     finalHistoryLoadedRef.current = false;
 
+    socketHasConnectedRef.current = false;
+    historyRequestGenerationRef.current += 1;
+
     marketStatusKnownRef.current = false;
+
     marketOpenRef.current = false;
 
     // Market state is unknown until the new stock's status request completes.
+
     setMarketOpen(null);
+
     if (liveTickFlushTimerRef.current) {
       window.clearInterval(liveTickFlushTimerRef.current);
+
       liveTickFlushTimerRef.current = null;
     }
   }, [location.key]);
 
   /* LOAD STOCK IDENTIFIER */
+
   useEffect(() => {
     const controller = new AbortController();
+
     async function loadStock() {
       if (!symbol) {
         setStockLoading(false);
+
         setStockError("Stock symbol is missing from the URL.");
+
         return;
       }
+
       setStockLoading(true);
+
       setStockError("");
+
       try {
         const response = await axios.get(ENDPOINTS.stock(symbol), {
           timeout: 15000,
+
           signal: controller.signal,
         });
+
         const stock = normalizeStock(response.data, symbol);
+
         setStockInfo((previous) => ({ ...(previous || {}), ...stock }));
       } catch (error) {
         if (axios.isCancel(error) || error?.code === "ERR_CANCELED") return;
+
         setStockError(
           error?.response?.data?.message ||
           error?.message ||
@@ -188,7 +289,9 @@ export default function StockDashboard({
         if (!controller.signal.aborted) setStockLoading(false);
       }
     }
+
     loadStock();
+
     return () => controller.abort();
   }, [symbol]);
 
@@ -199,6 +302,7 @@ export default function StockDashboard({
     stockInfo?.instrumentKey ||
     stockInfo?.instrument_key ||
     "";
+
   const isin =
     propIsin ||
     stockInfo?.isin ||
@@ -239,6 +343,7 @@ export default function StockDashboard({
   useEffect(() => {
     if (!instrumentKey) {
       setIsWatchlisted(false);
+
       return;
     }
 
@@ -251,19 +356,23 @@ export default function StockDashboard({
         if (!cancelled) {
           setIsWatchlisted(false);
         }
+
         return;
       }
 
       try {
         const response = await axios.get("/api/watchlist", {
           timeout: 10000,
+
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
         // Watchlist service returns:
+
         // { success: true, count, stocks: [...] }
+
         const stocks =
           response.data?.stocks ||
           response.data?.watchlist ||
@@ -292,8 +401,10 @@ export default function StockDashboard({
         if (!cancelled) {
           console.error(
             "Failed to load watchlist status:",
+
             error?.response?.data || error,
           );
+
           setIsWatchlisted(false);
         }
       }
@@ -309,6 +420,7 @@ export default function StockDashboard({
   const handleToggleWatchlist = async () => {
     if (!instrumentKey) {
       console.error("Instrument key is missing");
+
       return;
     }
 
@@ -316,7 +428,9 @@ export default function StockDashboard({
 
     if (!token) {
       console.error("User is not authenticated");
+
       alert("Please login first.");
+
       return;
     }
 
@@ -327,10 +441,13 @@ export default function StockDashboard({
     try {
       if (isWatchlisted) {
         // REMOVE
+
         await axios.delete(
           `/api/watchlist/${encodeURIComponent(instrumentKey)}`,
+
           {
             timeout: 10000,
+
             headers: {
               Authorization: `Bearer ${token}`,
             },
@@ -342,13 +459,17 @@ export default function StockDashboard({
         console.log("Removed from watchlist:", instrumentKey);
       } else {
         // ADD
+
         await axios.post(
           "/api/watchlist",
+
           {
             instrumentKey,
           },
+
           {
             timeout: 10000,
+
             headers: {
               Authorization: `Bearer ${token}`,
             },
@@ -367,46 +488,68 @@ export default function StockDashboard({
   };
 
   // Financials can use either an ISIN or the trading symbol.
+
   // The backend resolves SYMBOL -> ISIN from instruments_master.
+
   const financialIdentifier = String(isin || symbol || "")
     .trim()
+
     .toUpperCase();
 
   /* LOAD MARKET STATUS & SNAPSHOT */
+
   const loadMarketData = useCallback(async (key, signal) => {
     if (!key) {
       setMarketLoading(false);
+
       return;
     }
+
     setMarketLoading(true);
+
     setMarketError("");
+
     try {
       const [statusResult, snapshotResult] = await Promise.allSettled([
         axios.get(ENDPOINTS.marketStatus(), { timeout: 8000, signal }),
+
         axios.get(ENDPOINTS.snapshot(key), { timeout: 10000, signal }),
       ]);
+
       if (signal.aborted) return;
+
       let isOpen = null;
+
       let initialSnapshot = null;
 
       if (statusResult.status === "fulfilled") {
         isOpen = normalizeMarketStatus(statusResult.value.data);
+
         marketStatusKnownRef.current = true;
+
         marketOpenRef.current = Boolean(isOpen);
       }
+
       if (snapshotResult.status === "fulfilled") {
         initialSnapshot = unwrapResponse(snapshotResult.value.data);
+
         if (typeof initialSnapshot?.marketOpen === "boolean") {
           isOpen = initialSnapshot.marketOpen;
+
           marketStatusKnownRef.current = true;
+
           marketOpenRef.current = initialSnapshot.marketOpen;
         }
       }
 
       if (isOpen === null) isOpen = normalizeMarketStatus({});
+
       marketStatusKnownRef.current = true;
+
       marketOpenRef.current = Boolean(isOpen);
+
       setMarketOpen(Boolean(isOpen));
+
       if (initialSnapshot) setSnapshot(initialSnapshot);
     } catch (error) {
       if (
@@ -415,11 +558,13 @@ export default function StockDashboard({
         signal.aborted
       )
         return;
+
       setMarketError(
         error?.response?.data?.message ||
         error?.message ||
         "Unable to load market data.",
       );
+
       setMarketOpen(false);
     } finally {
       if (!signal.aborted) setMarketLoading(false);
@@ -429,23 +574,31 @@ export default function StockDashboard({
   useEffect(() => {
     if (!instrumentKey) {
       setMarketLoading(false);
+
       return;
     }
+
     const controller = new AbortController();
+
     loadMarketData(instrumentKey, controller.signal);
+
     return () => controller.abort();
   }, [instrumentKey, loadMarketData]);
 
   /* LOAD STATIC DATA */
+
   useEffect(() => {
     const controller = new AbortController();
+
     let timeoutId = null;
 
     async function requestJson(url) {
       const response = await axios.get(url, {
         timeout: 15000,
+
         signal: controller.signal,
       });
+
       return response.data;
     }
 
@@ -454,11 +607,14 @@ export default function StockDashboard({
 
       if (!identifier) {
         setFundamentalsLoading(false);
+
         setFundamentalsError("Stock identifier is missing.");
+
         return;
       }
 
       setFundamentalsLoading(true);
+
       setFundamentalsError("");
 
       try {
@@ -472,6 +628,7 @@ export default function StockDashboard({
             : Promise.reject(new Error("ISIN unavailable")),
 
           // IMPORTANT: financial endpoint accepts ISIN OR SYMBOL.
+
           requestJson(ENDPOINTS.financials(identifier)),
 
           isin
@@ -487,14 +644,17 @@ export default function StockDashboard({
 
         if (results[0].status === "fulfilled") {
           const data = normalizeFundamentals(results[0].value);
+
           setFundamentalData(data);
 
           const combinedShareholding = normalizeShareholding(results[0].value);
+
           const combinedMF = normalizeMutualFunds(results[0].value);
 
           if (combinedShareholding.length) {
             setShareholdingData(combinedShareholding);
           }
+
           if (combinedMF.length) {
             setMutualFundData(combinedMF);
           }
@@ -502,6 +662,7 @@ export default function StockDashboard({
 
         if (results[1].status === "fulfilled") {
           const data = normalizeShareholding(results[1].value);
+
           if (data.length) setShareholdingData(data);
         }
 
@@ -511,15 +672,18 @@ export default function StockDashboard({
 
         if (results[3].status === "fulfilled") {
           const data = normalizeMutualFunds(results[3].value);
+
           if (data.length) setMutualFundData(data);
         }
 
         if (results[4].status === "fulfilled") {
           const data = unwrapResponse(results[4].value);
+
           setProfileData(data?.profile || data);
         }
 
         const financialFailed = results[2].status === "rejected";
+
         const fundamentalsFailed = results[0].status === "rejected";
 
         if (financialFailed && fundamentalsFailed) {
@@ -533,6 +697,7 @@ export default function StockDashboard({
         } else if (financialFailed) {
           console.error(
             "Financials failed:",
+
             results[2].reason?.response?.data ||
             results[2].reason?.message ||
             results[2].reason,
@@ -541,6 +706,7 @@ export default function StockDashboard({
       } finally {
         if (!controller.signal.aborted) {
           setFundamentalsLoading(false);
+
           timeoutId = setTimeout(loadAllStaticData, 15 * 60 * 1000);
         }
       }
@@ -550,15 +716,18 @@ export default function StockDashboard({
 
     return () => {
       controller.abort();
+
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [isin, financialIdentifier]);
 
   /* LOAD CHART HISTORY */
+
   const loadHistory = useCallback(async (key, range, signal, options = {}) => {
     if (!key || signal?.aborted) return;
 
     const { force = false } = options;
+    const requestGeneration = ++historyRequestGenerationRef.current;
 
     setHistoryLoading(true);
 
@@ -573,16 +742,30 @@ export default function StockDashboard({
       params.refresh = true;
     }
 
+    const minuteBucket = (timestamp) => {
+      if (!Number.isFinite(timestamp)) return NaN;
+      return Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
+    };
+
+    const getPointTimestamp = (point) =>
+      parseHistoryTimestamp(
+        Array.isArray(point) ? point[0] : (point?.timestamp ?? point?.time),
+      );
+
     try {
       const response = await axios.get(ENDPOINTS.history(key, params), {
         timeout: 20000,
         signal,
       });
 
-      if (signal?.aborted) return;
+      if (
+        signal?.aborted ||
+        requestGeneration !== historyRequestGenerationRef.current
+      ) {
+        return;
+      }
 
       const payload = unwrapResponse(response.data) || {};
-
       const baseline = nullableNumber(
         payload.baselineClose,
         payload.baseline,
@@ -597,127 +780,57 @@ export default function StockDashboard({
 
       const normalized = normalizeHistory(response.data, range);
 
-      /* =====================================================
-           1D MARKET-OPEN FIX
-  
-           Use official intraday history as the starting chart
-           and then let WebSocket ticks continue from it.
-        ===================================================== */
-
       if (range === "1D") {
         const historicalPoints = Array.isArray(normalized) ? normalized : [];
 
-        /*
-         * Preserve live points that may have arrived while the
-         * historical API request was running.
-         */
-        const existingLivePoints = Array.isArray(liveDayHistoryRef.current)
-          ? liveDayHistoryRef.current
-          : [];
-
         if (marketOpenRef.current && !force) {
+          const existingLivePoints = Array.isArray(liveDayHistoryRef.current)
+            ? liveDayHistoryRef.current
+            : [];
+
           const merged = [...historicalPoints];
 
-          /*
-           * Merge any WebSocket points that arrived while
-           * the history request was in progress.
-           */
           for (const livePoint of existingLivePoints) {
-            const liveTimestamp = parseHistoryTimestamp(
-              Array.isArray(livePoint)
-                ? livePoint[0]
-                : (livePoint?.timestamp ?? livePoint?.time),
-            );
+            const liveTimestamp = getPointTimestamp(livePoint);
+            if (!Number.isFinite(liveTimestamp)) continue;
 
-            if (!Number.isFinite(liveTimestamp)) {
-              continue;
-            }
+            const liveBucket = minuteBucket(liveTimestamp);
+            let existingIndex = -1;
 
-            let replaced = false;
+            for (let i = 0; i < merged.length; i += 1) {
+              const historyTimestamp = getPointTimestamp(merged[i]);
 
-            /*
-             * Replace the historical candle when the live
-             * tick belongs to the same ~1-minute window.
-             */
-            for (let i = merged.length - 1; i >= 0; i--) {
-              const historyPoint = merged[i];
-
-              const historyTimestamp = parseHistoryTimestamp(
-                Array.isArray(historyPoint)
-                  ? historyPoint[0]
-                  : (historyPoint?.timestamp ?? historyPoint?.time),
-              );
-
-              if (!Number.isFinite(historyTimestamp)) {
-                continue;
-              }
-
-              if (Math.abs(historyTimestamp - liveTimestamp) < 60 * 1000) {
-                merged[i] = livePoint;
-                replaced = true;
-                break;
-              }
-
-              /*
-               * No reason to keep searching once history
-               * is clearly older than this live point.
-               */
-              if (historyTimestamp < liveTimestamp - 60 * 1000) {
+              if (
+                Number.isFinite(historyTimestamp) &&
+                minuteBucket(historyTimestamp) === liveBucket
+              ) {
+                existingIndex = i;
                 break;
               }
             }
 
-            /*
-             * Live point is newer than the historical dataset.
-             */
-            if (!replaced) {
+            if (existingIndex !== -1) {
+              merged[existingIndex] = livePoint;
+            } else {
               merged.push(livePoint);
             }
           }
 
-          merged.sort((a, b) => {
-            const timestampA = parseHistoryTimestamp(
-              Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
-            );
-
-            const timestampB = parseHistoryTimestamp(
-              Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
-            );
-
-            return timestampA - timestampB;
-          });
+          merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
 
           liveDayHistoryRef.current = merged;
-
           hasLiveTickRef.current = merged.length > 0;
-
-          /*
-           * Keep this FALSE while market is open.
-           * WebSocket ticks continue updating the chart.
-           */
           finalHistoryLoadedRef.current = false;
-
-          setHistory(merged);
+          setHistory([...merged]);
         } else {
-          /*
-           * Market closed:
-           * finalized official history owns the chart.
-           */
           finalHistoryLoadedRef.current = true;
-
           liveDayHistoryRef.current = historicalPoints;
-
           hasLiveTickRef.current = false;
-
           setHistory(historicalPoints);
         }
 
         return;
       }
-
-      /* =====================================================
-           NON-1D
-        ===================================================== */
 
       setHistory(Array.isArray(normalized) ? normalized : []);
     } catch (error) {
@@ -729,48 +842,85 @@ export default function StockDashboard({
         return;
       }
 
+      if (requestGeneration !== historyRequestGenerationRef.current) {
+        return;
+      }
+
       console.error("History failed:", error);
     } finally {
-      if (!signal?.aborted) {
+      if (
+        !signal?.aborted &&
+        requestGeneration === historyRequestGenerationRef.current
+      ) {
         setHistoryLoading(false);
       }
     }
   }, []);
 
   /*
+
    * Non-1D ranges always use the historical API.
+
    * For 1D:
+
    * - wait until the real market status is known;
+
    * - when OPEN, live WebSocket ticks own the chart;
+
    * - when CLOSED, load the official historical 1D data.
+
    */
+
   /*
+
    * LOAD CHART HISTORY
+
    *
+
    * Important:
+
    * - Non-1D ranges always load historical API data.
+
    * - 1D waits until market status is known.
+
    * - If market is OPEN, 1D is owned exclusively by WebSocket ticks.
+
    * - If market is CLOSED, 1D loads the official finalized history.
+
    *
+
    * `marketOpen` is intentionally included in the dependency list.
+
    * Without it, the first 1D render can happen before market status is
+
    * known, return early, and never load history until the user changes
+
    * the chart range manually.
+
    */
+
   // useEffect(() => {
+
   //   if (!instrumentKey) return;
 
   //   // 1D must wait for the market-status request to finish.
+
   //   if (chartRange === "1D") {
+
   //     if (!marketStatusKnownRef.current) {
+
   //       return;
+
   //     }
 
   //     // During market hours, WebSocket ticks exclusively own 1D.
+
   //     if (marketOpen) {
+
   //       return;
+
   //     }
+
   //   }
 
   //   const controller = new AbortController();
@@ -778,25 +928,40 @@ export default function StockDashboard({
   //   loadHistory(instrumentKey, chartRange, controller.signal);
 
   //   return () => {
+
   //     controller.abort();
+
   //   };
+
   // }, [instrumentKey, chartRange, marketOpen, loadHistory]);
 
   useEffect(() => {
     if (!instrumentKey) return;
 
     /*
+
      * Wait until real market status is known.
+
      * Once known, ALWAYS load 1D history.
+
      *
+
      * During market hours:
+
      *   historical 1-minute candles
+
      *   +
+
      *   WebSocket live ticks
+
      *
+
      * After market close:
+
      *   finalized official 1D history
+
      */
+
     if (chartRange === "1D" && !marketStatusKnownRef.current) {
       return;
     }
@@ -814,14 +979,18 @@ export default function StockDashboard({
 
   useEffect(() => {
     const wasOpen = wasMarketOpenRef.current;
+
     wasMarketOpenRef.current = marketOpen;
 
     if (chartRange !== "1D" || !instrumentKey) return;
 
     // OPEN -> CLOSED: replace temporary live chart with official 1D history.
+
     if (wasOpen && !marketOpen) {
       const controller = new AbortController();
+
       finalHistoryLoadedRef.current = false;
+
       loadHistory(instrumentKey, "1D", controller.signal, { force: true });
 
       return () => controller.abort();
@@ -829,9 +998,13 @@ export default function StockDashboard({
   }, [marketOpen, chartRange, instrumentKey, loadHistory]);
 
   /*
+
    * Poll market status so the 1D chart can hand over to official history at
+
    * the close even when no websocket status event is emitted.
+
    */
+
   useEffect(() => {
     if (!instrumentKey) return;
 
@@ -842,11 +1015,13 @@ export default function StockDashboard({
         const response = await axios.get(ENDPOINTS.marketStatus(), {
           timeout: 8000,
         });
+
         if (!alive) return;
 
         const isOpen = normalizeMarketStatus(response.data);
 
         marketStatusKnownRef.current = true;
+
         marketOpenRef.current = Boolean(isOpen);
 
         if (isOpen) {
@@ -858,25 +1033,34 @@ export default function StockDashboard({
         if (!alive || axios.isCancel(error) || error?.code === "ERR_CANCELED") {
           return;
         }
+
         // Keep the last known state on a transient status-poll failure.
+
         console.warn("Market status poll failed:", error?.message || error);
       }
     };
 
     pollMarketStatus();
+
     const intervalId = window.setInterval(pollMarketStatus, 30 * 1000);
 
     return () => {
       alive = false;
+
       window.clearInterval(intervalId);
     };
   }, [instrumentKey]);
 
   /*
+
    * Reset the 1D live session at midnight in India.
+
    * Do not fetch historical data here when the market is OPEN; the first
+
    * WebSocket tick of the new session should start the live chart.
+
    */
+
   useEffect(() => {
     if (chartRange !== "1D") return;
 
@@ -886,22 +1070,32 @@ export default function StockDashboard({
       if (chartSessionDateRef.current === today) return;
 
       chartSessionDateRef.current = today;
+
       lastLiveTickRef.current = 0;
+
       pendingLiveTickRef.current = null;
+
       liveDayHistoryRef.current = [];
+
       hasLiveTickRef.current = false;
+
       finalHistoryLoadedRef.current = false;
+
       setHoverData(null);
+
       setHistory([]);
 
       if (!marketOpenRef.current && instrumentKey) {
         const controller = new AbortController();
+
         loadHistory(instrumentKey, "1D", controller.signal);
+
         window.setTimeout(() => controller.abort(), 25000);
       }
     };
 
     checkSession();
+
     const intervalId = window.setInterval(checkSession, 30 * 1000);
 
     return () => {
@@ -910,23 +1104,33 @@ export default function StockDashboard({
   }, [chartRange, instrumentKey, loadHistory]);
 
   /* WEBSOCKET CONNECTION & TICK HANDLING */
+
   useEffect(() => {
     if (!instrumentKey) return;
+
     let alive = true;
+
     let subscribed = false;
+
     const generation = ++wsGenerationRef.current;
+
     lastLiveTickRef.current = 0;
+
     pendingLiveTickRef.current = null;
 
     if (liveTickFlushTimerRef.current) {
       window.clearInterval(liveTickFlushTimerRef.current);
+
       liveTickFlushTimerRef.current = null;
     }
 
     const isStale = () => !alive || generation !== wsGenerationRef.current;
+
     const belongsToStock = (data) => {
       if (!data) return false;
+
       const key = data.instrumentKey || data.instrument_key || data.instrument;
+
       return !key || key === instrumentKey;
     };
 
@@ -936,13 +1140,17 @@ export default function StockDashboard({
       if (!pending || isStale()) return;
 
       pendingLiveTickRef.current = null;
+
       lastLiveTickRef.current = Date.now();
 
       const { timestamp, price } = pending;
+
       const today = getIndiaDate();
 
       // Once official post-close history has been loaded, never let a late
+
       // WebSocket tick overwrite it.
+
       if (
         chartRangeRef.current !== "1D" ||
         !marketOpenRef.current ||
@@ -959,68 +1167,94 @@ export default function StockDashboard({
         return;
       }
 
+      /*
+       * 1D LIVE CHART
+       * Keep exactly one chart point per market minute.
+       */
+      const minuteTimestamp = Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
+
+      const minuteTime = new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }).format(new Date(minuteTimestamp));
+
       const newPoint = {
-        timestamp,
-        time: new Intl.DateTimeFormat("en-IN", {
-          timeZone: "Asia/Kolkata",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        }).format(new Date(timestamp)),
+        timestamp: minuteTimestamp,
+        tickTimestamp: timestamp,
+        time: minuteTime,
         price,
         close: price,
       };
 
       hasLiveTickRef.current = true;
 
-      // Keep a dedicated live-session array. This is intentionally separate
-      // from historical API data so the two cannot race and get mixed.
       liveDayHistoryRef.current = (() => {
         const current = Array.isArray(liveDayHistoryRef.current)
-          ? liveDayHistoryRef.current
+          ? [...liveDayHistoryRef.current]
           : [];
 
-        const lastPoint = current[current.length - 1];
+        const getMinuteTimestamp = (point) => {
+          const pointTimestamp = parseHistoryTimestamp(
+            Array.isArray(point) ? point[0] : (point?.timestamp ?? point?.time),
+          );
 
-        const lastTimestamp = parseHistoryTimestamp(
-          Array.isArray(lastPoint)
-            ? lastPoint[0]
-            : (lastPoint?.timestamp ?? lastPoint?.time),
+          if (!Number.isFinite(pointTimestamp)) return NaN;
+
+          return Math.floor(pointTimestamp / (60 * 1000)) * (60 * 1000);
+        };
+
+        const getTickTimestamp = (point) => {
+          const value = Number(point?.tickTimestamp);
+          return Number.isFinite(value) ? value : getMinuteTimestamp(point);
+        };
+
+        const existingIndex = current.findIndex(
+          (point) => getMinuteTimestamp(point) === minuteTimestamp,
         );
 
-        /*
-         * A historical 1-minute candle and a live WebSocket tick can
-         * have slightly different timestamps for the same minute.
-         *
-         * Example:
-         * history candle = 12:36:00
-         * live tick       = 12:35:45
-         *
-         * The live tick MUST replace the latest candle instead of
-         * being rejected as "out of order".
-         */
-        if (
-          Number.isFinite(lastTimestamp) &&
-          Math.abs(timestamp - lastTimestamp) < 60 * 1000
-        ) {
-          return [...current.slice(0, -1), newPoint];
+        if (existingIndex !== -1) {
+          const existing = current[existingIndex];
+          const existingTickTimestamp = getTickTimestamp(existing);
+
+          if (
+            Number.isFinite(existingTickTimestamp) &&
+            timestamp < existingTickTimestamp
+          ) {
+            return current;
+          }
+
+          const updated = [...current];
+          updated[existingIndex] = {
+            ...(existing &&
+              typeof existing === "object" &&
+              !Array.isArray(existing)
+              ? existing
+              : {}),
+            ...newPoint,
+          };
+
+          updated.sort((a, b) => getMinuteTimestamp(a) - getMinuteTimestamp(b));
+          return updated;
         }
 
-        /*
-         * Only reject genuinely old ticks after the
-         * same-minute replacement check.
-         */
-        if (Number.isFinite(lastTimestamp) && timestamp < lastTimestamp) {
+        const lastPoint = current[current.length - 1];
+        const lastMinuteTimestamp = getMinuteTimestamp(lastPoint);
+
+        if (
+          Number.isFinite(lastMinuteTimestamp) &&
+          minuteTimestamp < lastMinuteTimestamp
+        ) {
           return current;
         }
 
-        /*
-         * Newer tick -> append.
-         */
-        return [...current, newPoint];
+        const updated = [...current, newPoint];
+        updated.sort((a, b) => getMinuteTimestamp(a) - getMinuteTimestamp(b));
+        return updated;
       })();
 
-      setHistory(liveDayHistoryRef.current);
+      setHistory([...liveDayHistoryRef.current]);
     };
 
     const applyLiveData = (data) => {
@@ -1030,7 +1264,9 @@ export default function StockDashboard({
 
       if (typeof data.marketOpen === "boolean") {
         marketStatusKnownRef.current = true;
+
         marketOpenRef.current = data.marketOpen;
+
         setMarketOpen(data.marketOpen);
 
         if (data.marketOpen) {
@@ -1040,7 +1276,9 @@ export default function StockDashboard({
 
       const newPrice = nullableNumber(
         data.ltp,
+
         data.lastPrice,
+
         data.last_price,
       );
 
@@ -1063,6 +1301,20 @@ export default function StockDashboard({
             indiaDateFromTimestamp(timestamp) === today &&
             isISTTradingTimestamp(timestamp)
           ) {
+            const minuteBucket = (value) =>
+              Math.floor(value / (60 * 1000)) * (60 * 1000);
+
+            const previousPending = pendingLiveTickRef.current;
+
+            if (
+              previousPending &&
+              Number.isFinite(previousPending.timestamp) &&
+              minuteBucket(previousPending.timestamp) < minuteBucket(timestamp)
+            ) {
+              // Commit the previous minute before moving to the new minute.
+              commitPendingTick();
+            }
+
             pendingLiveTickRef.current = { timestamp, price: newPrice };
 
             const now = Date.now();
@@ -1080,6 +1332,7 @@ export default function StockDashboard({
       if (data.fundamentals)
         setFundamentalData((prev) => ({
           ...(prev || {}),
+
           ...data.fundamentals,
         }));
 
@@ -1096,15 +1349,18 @@ export default function StockDashboard({
     }, LIVE_TICK_THROTTLE_MS);
 
     const handleSnapshot = applyLiveData;
+
     const handleTick = applyLiveData;
+
     const handleMarketStatus = (data) => {
       if (isStale() || !belongsToStock(data)) return;
+
       if (typeof data.marketOpen !== "boolean") return;
 
-      const wasOpen = marketOpenRef.current;
       const isOpen = data.marketOpen;
 
       marketStatusKnownRef.current = true;
+
       marketOpenRef.current = isOpen;
 
       if (isOpen) {
@@ -1115,54 +1371,53 @@ export default function StockDashboard({
 
       setSnapshot((prev) => ({
         ...(prev || {}),
+
         marketOpen: isOpen,
+
         marketStatus:
           data.marketStatus || data.status || (isOpen ? "OPEN" : "CLOSED"),
       }));
-
-      // If the socket sends OPEN -> CLOSED before React's marketOpen state
-      // effect runs, finalize the 1D chart here as well.
-      if (
-        wasOpen &&
-        !isOpen &&
-        chartRangeRef.current === "1D" &&
-        instrumentKey
-      ) {
-        finalHistoryLoadedRef.current = false;
-
-        const controller = new AbortController();
-        loadHistory(instrumentKey, "1D", controller.signal, { force: true });
-
-        window.setTimeout(() => controller.abort(), 25000);
-      }
     };
 
     const subscribe = () => {
       if (isStale() || subscribed || !detailStockSocket?.connected) return;
+
       detailStockSocket.emit(
         "detailStock:subscribe",
+
         { instrumentKey, symbol },
+
         (ack) => {
           if (isStale()) {
             if (ack?.success && detailStockSocket?.connected)
               detailStockSocket.emit("detailStock:unsubscribe", {
                 instrumentKey,
               });
+
             return;
           }
+
           if (!ack?.success) {
             subscribed = false;
+
             setMarketError(
               ack?.message || "Unable to subscribe to live market data.",
             );
+
             return;
           }
+
           subscribed = true;
+
           if (ack.snapshot) applyLiveData(ack.snapshot);
+
           if (typeof ack.marketOpen === "boolean") {
             marketStatusKnownRef.current = true;
+
             marketOpenRef.current = ack.marketOpen;
+
             if (ack.marketOpen) finalHistoryLoadedRef.current = false;
+
             setMarketOpen(ack.marketOpen);
           }
         },
@@ -1170,70 +1425,141 @@ export default function StockDashboard({
     };
 
     detailStockSocket?.on("detailStock:snapshot", handleSnapshot);
-    detailStockSocket?.on("detailStock:tick", handleTick);
-    detailStockSocket?.on("detailStock:market-status", handleMarketStatus);
-    detailStockSocket?.on("connect", subscribe);
 
-    if (detailStockSocket?.connected) subscribe();
+    detailStockSocket?.on("detailStock:tick", handleTick);
+
+    detailStockSocket?.on("detailStock:market-status", handleMarketStatus);
+
+    const handleSocketConnect = () => {
+      if (isStale()) return;
+
+      const isReconnect = socketHasConnectedRef.current;
+      socketHasConnectedRef.current = true;
+
+      // Socket.IO reconnects with a fresh server-side connection/room.
+      // Allow the subscribe acknowledgement to rejoin the stock room.
+      if (isReconnect) {
+        subscribed = false;
+      }
+
+      subscribe();
+
+      if (
+        isReconnect &&
+        chartRangeRef.current === "1D" &&
+        marketOpenRef.current &&
+        instrumentKey
+      ) {
+        const controller = new AbortController();
+
+        loadHistory(instrumentKey, "1D", controller.signal, { force: false });
+
+        window.setTimeout(() => controller.abort(), 25000);
+      }
+    };
+
+    detailStockSocket?.on("connect", handleSocketConnect);
+
+    if (detailStockSocket?.connected) {
+      handleSocketConnect();
+    }
 
     return () => {
       alive = false;
+
       if (liveTickFlushTimerRef.current)
         window.clearInterval(liveTickFlushTimerRef.current);
+
       if (detailStockSocket?.connected && subscribed)
         detailStockSocket.emit("detailStock:unsubscribe", { instrumentKey });
+
       detailStockSocket?.off("detailStock:snapshot", handleSnapshot);
       detailStockSocket?.off("detailStock:tick", handleTick);
       detailStockSocket?.off("detailStock:market-status", handleMarketStatus);
+      detailStockSocket?.off("connect", handleSocketConnect);
+      socketHasConnectedRef.current = false;
     };
   }, [instrumentKey, symbol]);
 
   /* MARKET DATA EXTRACTORS */
+
   const ltp = nullableNumber(
     snapshot?.ltp,
+
     snapshot?.lastPrice,
+
     snapshot?.last_price,
+
     snapshot?.price,
+
     snapshot?.close,
+
     stockInfo?.ltp,
+
     stockInfo?.lastPrice,
+
     stockInfo?.price,
+
     initialStock?.ltp,
+
     initialStock?.price,
   );
+
   const open = nullableNumber(
     snapshot?.open,
+
     snapshot?.openPrice,
+
     stockInfo?.open,
   );
+
   const high = nullableNumber(
     snapshot?.high,
+
     snapshot?.dayHigh,
+
     stockInfo?.high,
   );
+
   const low = nullableNumber(snapshot?.low, snapshot?.dayLow, stockInfo?.low);
+
   // The live/finalized backend snapshot is authoritative. `stockInfo` can
+
   // be an older search-card snapshot and may still contain yesterday's
+
   // pre-settlement value, which would make the Performance section disagree
+
   // with the chart return.
+
   const previousClose = nullableNumber(
     snapshot?.previousClose,
+
     snapshot?.prevClose,
+
     stockInfo?.previousClose,
   );
+
   const volume = nullableNumber(
     snapshot?.volume,
+
     snapshot?.totalVolume,
+
     stockInfo?.volume,
   );
+
   const upperCircuit = nullableNumber(
     snapshot?.upperCircuit,
+
     snapshot?.upperLimit,
+
     snapshot?.upperCircuitLimit,
   );
+
   const lowerCircuit = nullableNumber(
     snapshot?.lowerCircuit,
+
     snapshot?.lowerLimit,
+
     snapshot?.lowerCircuitLimit,
   );
 
@@ -1242,28 +1568,45 @@ export default function StockDashboard({
       kind === "low"
         ? [
           "week52Low",
+
           "week_52_low",
+
           "yearLow",
+
           "fiftyTwoWeekLow",
+
           "fifty_two_week_low",
+
           "52WeekLow",
+
           "52_week_low",
+
           "fiftyTwoWeekLowPrice",
         ]
         : [
           "week52High",
+
           "week_52_high",
+
           "yearHigh",
+
           "fiftyTwoWeekHigh",
+
           "fifty_two_week_high",
+
           "52WeekHigh",
+
           "52_week_high",
+
           "fiftyTwoWeekHighPrice",
         ];
+
     for (const source of sources) {
       if (!source || typeof source !== "object") continue;
+
       for (const key of keys) {
         const val = source[key];
+
         if (
           val !== null &&
           val !== undefined &&
@@ -1273,6 +1616,7 @@ export default function StockDashboard({
           return Number(val);
       }
     }
+
     return null;
   }
 
@@ -1283,33 +1627,45 @@ export default function StockDashboard({
   const calculated52WeekHigh =
     nullableNumber(week52Data?.high) ??
     extractWeek52([snapshot, stockInfo, initialStock, fundamentalData], "high");
+
   const bsePrice = nullableNumber(
     snapshot?.bsePrice,
+
     snapshot?.bseLtp,
+
     snapshot?.bseLastPrice,
+
     snapshot?.bse,
   );
+
   const companyName =
     snapshot?.name ||
     stockInfo?.companyName ||
     stockInfo?.name ||
     symbol ||
     "Stock";
+
   const exchange = snapshot?.exchange || stockInfo?.exchange || "NSE";
 
   /* CHART MAPPING & GEOMETRY */
+
   const lineChartPreparedData = useMemo(() => {
     const source = Array.isArray(history) ? history : [];
 
     const parsed = source
+
       .map((item) => {
         let price = null;
+
         let openPrice = null;
+
         let rawTimestamp = NaN;
 
         if (Array.isArray(item)) {
           rawTimestamp = parseHistoryTimestamp(item[0]);
+
           openPrice = nullableNumber(item[1]);
+
           price = nullableNumber(item[4], item[1], item[2], item[3]);
         } else if (item && typeof item === "object") {
           rawTimestamp = parseHistoryTimestamp(
@@ -1323,14 +1679,22 @@ export default function StockDashboard({
             item.t ??
             item.ltt,
           );
+
           openPrice = nullableNumber(item.open, item.openPrice, item.o);
+
           price = nullableNumber(
             item.close,
+
             item.c,
+
             item.ltp,
+
             item.lastPrice,
+
             item.last_price,
+
             item.price,
+
             item.open,
           );
         } else if (typeof item === "number" || typeof item === "string") {
@@ -1345,31 +1709,42 @@ export default function StockDashboard({
           ? chartRange === "1D" || chartRange === "1W"
             ? new Intl.DateTimeFormat("en-IN", {
               timeZone: "Asia/Kolkata",
+
               hour: "2-digit",
+
               minute: "2-digit",
+
               hour12: true,
             }).format(dateObj)
             : new Intl.DateTimeFormat("en-IN", {
               timeZone: "Asia/Kolkata",
+
               day: "2-digit",
+
               month: "short",
+
               year: "numeric",
             }).format(dateObj)
           : "—";
 
         return {
           price,
+
           openPrice,
+
           rawTimestamp,
+
           time: timeStr,
         };
       })
+
       .filter(
         (point) =>
           point.price !== null &&
           point.price > 0 &&
           Number.isFinite(point.rawTimestamp),
       )
+
       .sort((a, b) => a.rawTimestamp - b.rawTimestamp);
 
     if (chartRange !== "1D") {
@@ -1381,7 +1756,9 @@ export default function StockDashboard({
       : nullableNumber(rangeBaseline, previousClose);
 
     // During an open session the line always begins at the previous
+
     // trading day's official close at exactly 09:15 IST.
+
     if (marketOpen && baseline !== null) {
       const marketOpenTs = Date.parse(`${getIndiaDate()}T03:45:00.000Z`);
 
@@ -1391,26 +1768,38 @@ export default function StockDashboard({
 
       if (!livePoints.length) {
         const now = Date.now();
+
         const displayUntil = Math.max(
           marketOpenTs,
+
           Math.min(now, marketOpenTs + 375 * 60 * 1000),
         );
 
         return [
           {
             price: baseline,
+
             openPrice: baseline,
+
             rawTimestamp: marketOpenTs,
+
             time: "09:15 AM",
           },
+
           {
             price: baseline,
+
             openPrice: baseline,
+
             rawTimestamp: displayUntil,
+
             time: new Intl.DateTimeFormat("en-IN", {
               timeZone: "Asia/Kolkata",
+
               hour: "2-digit",
+
               minute: "2-digit",
+
               hour12: true,
             }).format(new Date(displayUntil)),
           },
@@ -1420,36 +1809,51 @@ export default function StockDashboard({
       return [
         {
           price: baseline,
+
           openPrice: baseline,
+
           rawTimestamp: marketOpenTs,
+
           time: "09:15 AM",
         },
+
         ...livePoints,
       ];
     }
 
     // After close/non-trading day, use only the official finalized session
+
     // returned by the backend. If unavailable, show a baseline-only fallback
+
     // rather than a stale live buffer.
+
     if (parsed.length) {
       return parsed;
     }
 
     if (baseline !== null) {
       const todayStr = getIndiaDate();
+
       const marketOpenTs = Date.parse(`${todayStr}T03:45:00.000Z`);
 
       return [
         {
           price: baseline,
+
           openPrice: baseline,
+
           rawTimestamp: marketOpenTs,
+
           time: "09:15 AM",
         },
+
         {
           price: baseline,
+
           openPrice: baseline,
+
           rawTimestamp: marketOpenTs + 375 * 60 * 1000,
+
           time: "03:30 PM",
         },
       ];
@@ -1466,8 +1870,11 @@ export default function StockDashboard({
     }
 
     // For non-1D ranges the backend returns the opening price of the first
+
     // trading candle inside the selected range. This matches the range-return
+
     // convention used by the stock detail UI.
+
     return nullableNumber(rangeBaseline);
   }, [chartRange, previousClose, rangeBaseline, marketOpen]);
 
@@ -1476,6 +1883,7 @@ export default function StockDashboard({
       lineChartPreparedData[lineChartPreparedData.length - 1]?.price ?? null;
 
     // Once the market is closed, the finalized 1D close is authoritative.
+
     if (chartRange === "1D" && !marketOpen && lastChartPrice !== null) {
       return lastChartPrice;
     }
@@ -1489,8 +1897,11 @@ export default function StockDashboard({
     }
 
     // For 1D the snapshot also uses the previous trading day's close.
+
     // Never fall back to daily change for a non-1D range when its real
+
     // range-start baseline is unavailable.
+
     return chartRange === "1D"
       ? (snapshot?.change ?? stockInfo?.change_points ?? null)
       : null;
@@ -1507,59 +1918,87 @@ export default function StockDashboard({
   }, [snapshot, stockInfo, displayChange, rangeStartPrice, chartRange]);
 
   const isPositive = displayChange !== null ? displayChange >= 0 : true;
+
   const chartColor = isPositive ? "#00b28e" : "#e5484d";
 
   const getChartX = useCallback(
     (item, index, total) => {
       if (chartRange === "1D")
         return getISTMarketProgress(item?.rawTimestamp) * CHART_WIDTH;
+
       if (total <= 1) return CHART_WIDTH / 2;
+
       return (
         CHART_PADDING_X +
         (index / (total - 1)) * (CHART_WIDTH - CHART_PADDING_X * 2)
       );
     },
+
     [chartRange],
   );
 
   const lineChartSvg = useMemo(() => {
     const empty = {
       line: "",
+
       area: "",
+
       min: 0,
+
       max: 0,
+
       baselineY: null,
+
       lastPoint: null,
     };
+
     if (!lineChartPreparedData.length) return empty;
 
     const baseline = rangeStartPrice;
+
     const allValues = lineChartPreparedData
+
       .map((d) => d.price)
+
       .filter((v) => Number.isFinite(v));
+
     if (Number.isFinite(baseline)) allValues.push(baseline);
+
     if (!allValues.length) return empty;
 
     let min = Math.min(...allValues);
+
     let max = Math.max(...allValues);
+
     const rawRange = max - min;
+
     const padding = rawRange > 0 ? rawRange * 0.08 : Math.abs(min) * 0.02 || 1;
+
     min -= padding;
+
     max += padding;
+
     const range = max - min;
 
     const toY = (v) =>
       CHART_HEIGHT -
       CHART_PADDING_Y -
       ((v - min) / range) * (CHART_HEIGHT - CHART_PADDING_Y * 2);
+
     const total = lineChartPreparedData.length;
+
     const mappedPoints = lineChartPreparedData
+
       .map((item, index) => ({
         x: getChartX(item, index, total),
+
         y: toY(item.price),
+
         price: item.price,
+
         time: item.time,
       }))
+
       .filter(
         (p) =>
           Number.isFinite(p.x) &&
@@ -1570,16 +2009,24 @@ export default function StockDashboard({
     if (!mappedPoints.length) return empty;
 
     const pathCoords = mappedPoints.map((p) => `${p.x},${p.y}`);
+
     const lastPoint = mappedPoints[mappedPoints.length - 1];
+
     const firstPoint = mappedPoints[0];
+
     const baselineY = Number.isFinite(baseline) ? toY(baseline) : null;
 
     return {
       line: pathCoords.join(" "),
+
       area: `M ${pathCoords[0]} L ${pathCoords.join(" L ")} L ${lastPoint.x},${CHART_HEIGHT} L ${firstPoint.x},${CHART_HEIGHT} Z`,
+
       min,
+
       max,
+
       baselineY: Number.isFinite(baselineY) ? baselineY : null,
+
       lastPoint,
     };
   }, [lineChartPreparedData, rangeStartPrice, getChartX]);
@@ -1587,50 +2034,72 @@ export default function StockDashboard({
   const handleMouseMove = useCallback(
     (event) => {
       if (!lineChartPreparedData.length) return;
+
       const rect = event.currentTarget.getBoundingClientRect();
+
       if (!rect || rect.width <= 0) return;
 
       const mouseX = Math.max(
         0,
+
         Math.min(rect.width, event.clientX - rect.left),
       );
+
       const targetX = (mouseX / rect.width) * CHART_WIDTH;
+
       const total = lineChartPreparedData.length;
+
       const { min, max } = lineChartSvg;
+
       const range = max - min || 1;
 
       let point = null,
         nearestDistance = Infinity;
+
       lineChartPreparedData.forEach((candidate, idx) => {
         const candidateX = getChartX(candidate, idx, total);
+
         if (!Number.isFinite(candidateX)) return;
+
         const dist = Math.abs(candidateX - targetX);
+
         if (dist < nearestDistance) {
           nearestDistance = dist;
+
           point = candidate;
         }
       });
 
       if (!point || !Number.isFinite(point.price)) return;
+
       const idx = lineChartPreparedData.indexOf(point);
+
       const x = getChartX(point, idx, total);
+
       const y =
         CHART_HEIGHT -
         CHART_PADDING_Y -
         ((point.price - min) / range) * (CHART_HEIGHT - CHART_PADDING_Y * 2);
 
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
       const percentX = (x / CHART_WIDTH) * 100;
 
       setHoverData({
         price: point.price,
+
         time: point.time,
+
         x,
+
         y,
+
         percentX,
+
         transformX: percentX < 15 ? "0%" : percentX > 85 ? "-100%" : "-50%",
       });
     },
+
     [lineChartPreparedData, lineChartSvg, getChartX],
   );
 
@@ -1642,24 +2111,36 @@ export default function StockDashboard({
       highValue <= lowValue
     )
       return "50%";
+
     return `${Math.max(0, Math.min(100, ((current - lowValue) / (highValue - lowValue)) * 100))}%`;
   }
 
   const fundamentals = useMemo(() => {
     const data = fundamentalData || snapshot?.fundamentals || {};
+
     return [
       ["Return on Equity", firstDefined(data.roe)],
+
       ["Return on Assets", firstDefined(data.roa)],
+
       ["Return on Capital Employed", firstDefined(data.roce)],
+
       ["P/E Ratio (TTM)", firstDefined(data.peRatio, data.pe_ratio, data.pe)],
+
       ["P/B Ratio", firstDefined(data.pbRatio, data.pb_ratio, data.pb)],
+
       ["EBITDA", firstDefined(data.evEbitda, data.ev_ebitda)],
+
       ["Earnings Per Share", firstDefined(data.eps, data.epsBasic)],
+
       ["Revenue (Cr)", firstDefined(data.revenue)],
+
       [
         "Profit (Cr)",
+
         firstDefined(data.operatingProfit, data.operating_profit),
       ],
+
       ["Net Profit (Cr)", firstDefined(data.netProfit, data.net_profit)],
     ];
   }, [fundamentalData, snapshot]);
@@ -1668,14 +2149,18 @@ export default function StockDashboard({
     () =>
       normalizeAbout(
         profileData || fundamentalData?.profile || snapshot?.profile,
+
         fundamentalData,
+
         snapshot?.symbol || symbol,
       ),
+
     [profileData, fundamentalData, snapshot, symbol],
   );
 
   const shareholdingPeriods = useMemo(() => {
     const periodSet = new Set();
+
     (Array.isArray(shareholdingData) ? shareholdingData : []).forEach(
       (item) => {
         (Array.isArray(item.history) ? item.history : []).forEach((row) => {
@@ -1686,39 +2171,63 @@ export default function StockDashboard({
 
     const parsePeriod = (p) => {
       const str = String(p).trim().toLowerCase();
+
       const monthMap = {
         jan: 1,
+
         feb: 2,
+
         mar: 3,
+
         apr: 4,
+
         may: 5,
+
         jun: 6,
+
         jul: 7,
+
         aug: 8,
+
         sep: 9,
+
         oct: 10,
+
         nov: 11,
+
         dec: 12,
+
         q1: 3,
+
         q2: 6,
+
         q3: 9,
+
         q4: 12,
       };
+
       let month = 0;
+
       for (const [k, m] of Object.entries(monthMap)) {
         if (str.includes(k)) {
           month = m;
+
           break;
         }
       }
+
       let year = 0;
+
       const yearMatch = str.match(/(19|20)\d{2}/);
+
       if (yearMatch) year = Number(yearMatch[0]);
       else {
         const digitRuns = str.match(/\d{1,2}/g);
+
         if (digitRuns?.length)
           year = 2000 + Number(digitRuns[digitRuns.length - 1]);
       }
+
       return year * 100 + month;
     };
 
@@ -1734,35 +2243,46 @@ export default function StockDashboard({
 
   const selectedShareholding = useMemo(() => {
     if (!selectedShareholdingPeriod) return [];
+
     const idx = shareholdingPeriods.indexOf(selectedShareholdingPeriod);
+
     const previousPeriod = idx >= 0 ? shareholdingPeriods[idx + 1] : undefined;
 
     return shareholdingData
+
       .map((item, index) => {
         const historyRows = Array.isArray(item.history) ? item.history : [];
+
         const selected = historyRows.find(
           (row) => row.period === selectedShareholdingPeriod,
         );
+
         if (!selected) return null;
 
         const previousRow = previousPeriod
           ? historyRows.find((row) => row.period === previousPeriod)
           : null;
+
         const percentage = numberValue(selected.percentage, 0);
+
         const previousPercentage = previousRow
           ? numberValue(previousRow.percentage, 0)
           : null;
 
         return {
           key: `${item.label || "unknown"}-${index}`,
+
           label: item.label || "Unknown",
+
           percentage,
+
           change:
             previousPercentage !== null
               ? percentage - previousPercentage
               : null,
         };
       })
+
       .filter(Boolean);
   }, [shareholdingData, selectedShareholdingPeriod, shareholdingPeriods]);
 
@@ -1774,14 +2294,21 @@ export default function StockDashboard({
         fund.fund_name ||
         fund.fund ||
         `Fund ${index + 1}`,
+
       percentage: nullableNumber(
         fund.percentage,
+
         fund.percent,
+
         fund.aumPercentage,
+
         fund.aum_percent,
+
         fund.value,
       ),
+
       value: fund.marketValue || fund.market_value || fund.value || null,
+
       logo: fund.logo || fund.icon || "",
     }));
   }, [mutualFundData]);
@@ -1793,10 +2320,12 @@ export default function StockDashboard({
       fundamentalData?.income_statement ||
       fundamentalData,
     );
+
     if (rows?.length) return rows;
 
     const data = {
       ...(snapshot?.fundamentals || {}),
+
       ...(financialData && typeof financialData === "object"
         ? financialData
         : {}),
@@ -1804,69 +2333,102 @@ export default function StockDashboard({
 
     const period = firstDefined(
       data.period,
+
       data.quarter,
+
       data.reportPeriod,
+
       data.report_period,
+
       data.revenuePeriod,
+
       data.revenue_period,
+
       data.netProfitPeriod,
+
       data.net_profit_period,
+
       data.asOf,
+
       data.as_of,
+
       data.reportDate,
+
       data.report_date,
     );
 
     if (period) {
       const revenue = getFinancialNumber(
         data.revenue,
+
         data.sales,
+
         data.totalRevenue,
+
         data.total_revenue,
+
         data.income,
       );
+
       const profit = getFinancialNumber(
         data.netProfit,
+
         data.net_profit,
+
         data.profit,
+
         data.pat,
+
         data.profitAfterTax,
+
         data.profit_after_tax,
+
         data.operatingProfit,
+
         data.operating_profit,
+
         data.netIncome,
       );
+
       if (revenue !== null || profit !== null) {
         return [
           {
             quarter: String(period),
+
             revenue: revenue ?? 0,
+
             profit: profit ?? 0,
           },
         ];
       }
     }
+
     return [];
   }, [financialData, fundamentalData, snapshot]);
 
   const financialBarData = useMemo(() => {
     const last5 = financialRows.slice(-5);
+
     return last5.map((item, index, rows) => ({
       ...item,
+
       active: index === rows.length - 1,
     }));
   }, [financialRows]);
 
   const maxFinancialValue = useMemo(() => {
     if (!financialBarData.length) return 1;
+
     const highest = Math.max(
       ...financialBarData.flatMap((r) => [r.revenue, r.profit]),
     );
+
     return highest > 0 ? highest : 1;
   }, [financialBarData]);
 
   const effectivePrice =
     numberValue(priceLimit, 0) > 0 ? numberValue(priceLimit) : ltp || 0;
+
   const approximateRequired = numberValue(quantity) * effectivePrice;
 
   const handlePlaceOrder = async (e) => {
@@ -1877,32 +2439,42 @@ export default function StockDashboard({
 
     if (!instrumentKey) {
       setOrderMessage("Instrument is missing.");
+
       return;
     }
 
     setOrderSubmitting(true);
+
     setOrderMessage("");
 
     try {
       const token = localStorage.getItem("token");
 
       const normalizedQuantity = numberValue(quantity);
+
       const normalizedOrderType =
         numberValue(priceLimit, 0) > 0 ? "LIMIT" : "MARKET";
+
       const normalizedLimitPrice =
         normalizedOrderType === "LIMIT" ? numberValue(priceLimit) : null;
 
       const fingerprint = JSON.stringify({
         instrumentKey,
+
         transactionType: orderType,
+
         quantity: normalizedQuantity,
+
         orderType: normalizedOrderType,
+
         limitPrice: normalizedLimitPrice,
+
         product: "CNC",
       });
 
       if (orderFingerprintRef.current !== fingerprint) {
         orderFingerprintRef.current = fingerprint;
+
         orderIdempotencyKeyRef.current =
           window.crypto?.randomUUID?.() ||
           `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1914,10 +2486,15 @@ export default function StockDashboard({
 
       const payload = {
         symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
+
         instrumentKey,
+
         transactionType: String(orderType).toUpperCase(),
+
         quantity: numberValue(quantity),
+
         orderType: isLimitOrder ? "LIMIT" : "MARKET",
+
         product: "CNC",
       };
 
@@ -1927,23 +2504,31 @@ export default function StockDashboard({
 
       const response = await axios.post(ENDPOINTS.order(), payload, {
         timeout: 10000,
+
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
           "Idempotency-Key": crypto.randomUUID(),
         },
       });
 
       if (response.data?.success) {
         const result = response.data?.data || {};
+
         const executedQuantity = Number(result.quantity ?? quantity);
+
         const executedPrice = Number(result.price ?? effectivePrice);
 
         setOrderMessage(
           `Success: ${orderType} order completed for ${executedQuantity} shares at ₹${executedPrice.toFixed(2)}.`,
         );
+
         setQuantity("");
+
         setPriceLimit("");
+
         orderIdempotencyKeyRef.current = null;
+
         orderFingerprintRef.current = "";
       } else {
         setOrderMessage(
@@ -1987,6 +2572,7 @@ export default function StockDashboard({
         <main className="precision-main">
           <div className="precision-content">
             {/* LEFT MAIN CONTENT */}
+
             <div className="precision-left">
               <section className="stock-card">
                 <StockHeader
@@ -2064,6 +2650,7 @@ export default function StockDashboard({
             </div>
 
             {/* RIGHT TRADING PANEL */}
+
             <TradingPanel
               symbol={snapshot?.symbol || stockInfo?.symbol || symbol}
               exchange={exchange}
