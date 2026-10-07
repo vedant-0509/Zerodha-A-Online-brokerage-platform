@@ -175,9 +175,37 @@ async function getMarketStockInstruments() {
         instrument?.tradingSymbol ||
         stock.symbol,
 
+      tradingSymbol:
+        instrument?.tradingSymbol ||
+        stock.symbol,
+
       name:
         instrument?.name ||
         stock.name,
+
+      isin:
+        instrument?.isin ||
+        null,
+
+      exchange:
+        instrument?.exchange ||
+        stock.exchange ||
+        null,
+
+      master_exchange:
+        instrument?.exchange ||
+        stock.exchange ||
+        null,
+
+      segment:
+        instrument?.segment ||
+        stock.segment ||
+        null,
+
+      master_segment:
+        instrument?.segment ||
+        stock.segment ||
+        null,
 
       price: stock.price,
 
@@ -499,6 +527,26 @@ async function saveDailyClose(
                 dayClose:
                   snapshot.dayClose ??
                   snapshot.price,
+
+                exchange:
+                  snapshot.exchange ??
+                  null,
+
+                upperCircuit:
+                  snapshot.upperCircuit ??
+                  null,
+
+                lowerCircuit:
+                  snapshot.lowerCircuit ??
+                  null,
+
+                upperCircuitLimit:
+                  snapshot.upperCircuitLimit ??
+                  null,
+
+                lowerCircuitLimit:
+                  snapshot.lowerCircuitLimit ??
+                  null,
               },
 
               $setOnInsert: {
@@ -532,6 +580,10 @@ async function saveDailyClose(
                   snapshot.symbol ??
                   null,
 
+                name:
+                  snapshot.name ??
+                  null,
+
                 closePrice:
                   snapshot.dayClose ??
                   snapshot.price,
@@ -555,6 +607,45 @@ async function saveDailyClose(
                 previousClose:
                   snapshot.previousClose ??
                   null,
+
+                previousCloseDate:
+                  snapshot.previousCloseDate ??
+                  null,
+
+                exchange:
+                  snapshot.exchange ??
+                  null,
+
+                segment:
+                  snapshot.segment ??
+                  null,
+
+                upperCircuit:
+                  snapshot.upperCircuit ??
+                  null,
+
+                lowerCircuit:
+                  snapshot.lowerCircuit ??
+                  null,
+
+                upperCircuitLimit:
+                  snapshot.upperCircuitLimit ??
+                  null,
+
+                lowerCircuitLimit:
+                  snapshot.lowerCircuitLimit ??
+                  null,
+
+                candles:
+                  Array.isArray(snapshot.candles)
+                    ? snapshot.candles
+                    : [],
+
+                settlementStatus: "finalized",
+
+                finalizedAt:
+                  snapshot.finalizedAt ||
+                  new Date(),
 
                 source:
                   snapshot.source ||
@@ -585,6 +676,47 @@ async function saveDailyClose(
   } finally {
     await session.endSession();
   }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Finalized daily session
+|--------------------------------------------------------------------------
+*/
+
+async function getFinalizedDailySession(instrumentKey, tradingDate) {
+  const db = await getDb();
+
+  const row = await db
+    .collection("detailStockDailyCloses")
+    .findOne({
+      instrumentKey: String(instrumentKey),
+      tradingDate: toTradingDate(tradingDate),
+      settlementStatus: "finalized",
+    });
+
+  if (!row) return null;
+
+  return {
+    instrumentKey: row.instrumentKey,
+    tradingDate: row.tradingDate,
+    candles: Array.isArray(row.candles) ? row.candles : [],
+    closePrice: row.closePrice ?? null,
+    baselineClose: row.previousClose ?? null,
+    baselineDate: row.previousCloseDate ?? null,
+    source: row.source || "upstox-finalized-intraday",
+    finalizedAt: row.finalizedAt || row.updatedAt || null,
+  };
+}
+
+async function hasFinalizedDailySession(instrumentKey, tradingDate) {
+  const db = await getDb();
+
+  return Boolean(await db.collection("detailStockDailyCloses").findOne({
+    instrumentKey: String(instrumentKey),
+    tradingDate: toTradingDate(tradingDate),
+    settlementStatus: "finalized",
+  }, { projection: { _id: 1 } }));
 }
 
 /*
@@ -773,6 +905,8 @@ module.exports = {
   getBseInstrumentByIsin,
 
   saveDailyClose,
+  getFinalizedDailySession,
+  hasFinalizedDailySession,
   getPreviousStoredClose,
   hasDailyCloseForDate,
   getDailyCloseCount,

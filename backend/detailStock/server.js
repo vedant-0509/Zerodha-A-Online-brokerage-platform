@@ -3574,8 +3574,6 @@
 
 
 
-
-
 require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
@@ -3608,6 +3606,8 @@ const {
   initDb,
   close: closeDb,
   saveDailyClose,
+  getFinalizedDailySession,
+  hasFinalizedDailySession,
   getPreviousStoredClose,
   getDbHistory,
   getMarketStockInstruments,
@@ -3728,7 +3728,13 @@ function snapshotKey(key) {
 }
 
 function historyKey(key, unit, interval, from, to) {
-  return `${HISTORY_PREFIX}${key}:${unit}:${interval}:${from || ""}:${to}`;
+  // Prevent a pre-close cache from surviving into the finalized session.
+  // The same closed-session key is reusable overnight until the next session.
+  const sessionState = isMarketOpen()
+    ? `open:${indiaDate()}`
+    : `closed:${latestCompletedTradingDate()}`;
+
+  return `${HISTORY_PREFIX}${key}:${unit}:${interval}:${from || ""}:${to}:${sessionState}`;
 }
 
 function finalized1DKey(instrumentKey, tradingDate) {
@@ -3750,6 +3756,27 @@ function dateAtISTNoon(dateString) {
 }
 
 async function getFinalized1D(instrumentKey, tradingDate) {
+  // MongoDB is the durable source of truth. Redis is only a fast cache.
+  try {
+    const persisted = await getFinalizedDailySession(instrumentKey, tradingDate);
+    if (persisted?.candles?.length) {
+      if (env.redisEnabled) {
+        await redis.set(
+          finalized1DKey(instrumentKey, tradingDate),
+          JSON.stringify(persisted),
+          { EX: 3 * 24 * 60 * 60 },
+        );
+      }
+      return persisted;
+    }
+  } catch (err) {
+    logger.warn("Finalized 1D MongoDB read failed", {
+      instrumentKey,
+      tradingDate,
+      error: errorMessage(err),
+    });
+  }
+
   if (!env.redisEnabled) return null;
 
   try {
@@ -4179,6 +4206,7 @@ async function primeSnapshot(instrumentKey) {
   const today = indiaDate();
   const marketOpen = isMarketOpen();
   const settlementReady = isOfficialSettlementReady();
+  const latestFinalizedDate = latestCompletedTradingDate();
 
   let existing = await getSnapshot(instrumentKey);
 
@@ -4190,7 +4218,7 @@ async function primeSnapshot(instrumentKey) {
 
   const existingIsFinalized =
     !marketOpen &&
-    existing?.marketDate === today &&
+    existing?.marketDate === latestFinalizedDate &&
     existing?.marketStatus === "CLOSED" &&
     finalizedSources.has(existing?.source);
 
@@ -4233,7 +4261,10 @@ async function primeSnapshot(instrumentKey) {
 
       official.finalizedAt = new Date().toISOString();
       official.officialSettlementReady = true;
+      official.settlementStatus = "finalized";
+      official.candles = candles;
 
+      await saveDailyClose(official, tradingDate);
       await cacheSnapshot(official);
 
       await cacheFinalized1D(instrumentKey, tradingDate, {
@@ -5535,6 +5566,35 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
   );
 }
 
+async function fetchOfficialIntradaySessionWithRetry(
+  instrumentKey,
+  tradingDate,
+  attempts = 3,
+) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+    try {
+      return await fetchOfficialIntradaySession(instrumentKey, tradingDate);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+
+      const delayMs = Math.min(5000, 1000 * attempt);
+      logger.warn("Official intraday settlement retry", {
+        instrumentKey,
+        tradingDate,
+        attempt,
+        nextRetryMs: delayMs,
+        error: errorMessage(error),
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError || new Error(`Official settlement failed for ${instrumentKey}`);
+}
+
 function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
   const first = candles[0];
   const last = candles[candles.length - 1];
@@ -5621,6 +5681,9 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     marketOpen: false,
     marketStatus: "CLOSED",
     source: "upstox-finalized-intraday",
+    settlementStatus: "finalized",
+    officialSettlementReady: true,
+    finalizedAt: new Date().toISOString(),
   };
 }
 
@@ -5661,20 +5724,31 @@ async function reconcileAllMarketStocks(
             throw new Error("Invalid instrument key");
           }
 
-          const cached = await getFinalized1D(key, targetTradingDate);
-          const hasClose = await hasDailyCloseForDate(key, targetTradingDate);
+          // A successful finalized session is immutable. On the first run of
+          // this version, older daily-close rows do not have settlementStatus,
+          // so they are deliberately re-settled from official history.
+          const alreadyFinalized = await hasFinalizedDailySession(
+            key,
+            targetTradingDate,
+          );
 
-          if (cached && hasClose) {
-            return { skipped: true };
+          if (alreadyFinalized) {
+            const persisted = await getFinalized1D(key, targetTradingDate);
+            if (persisted?.candles?.length) {
+              const existing = await getSnapshot(key);
+              if (existing?.settlementStatus === "finalized") {
+                return { skipped: true };
+              }
+            }
           }
 
-          // The settlement job owns the final official pull. If a cache was
-          // seeded by a client immediately after close, use it only together
-          // with a persisted close; otherwise fetch fresh official data.
-          const candles =
-            cached?.candles?.length && hasClose
-              ? cached.candles
-              : await fetchOfficialIntradaySession(key, targetTradingDate);
+          // The scheduled settlement always fetches official 1-minute history
+          // rather than trusting a live Redis snapshot.
+          const candles = await fetchOfficialIntradaySessionWithRetry(
+            key,
+            targetTradingDate,
+            3,
+          );
 
           const previousClose = await resolvePreviousClose(
             key,
@@ -5682,14 +5756,33 @@ async function reconcileAllMarketStocks(
           );
 
           const priorSnapshot = snapshots.get(key) || null;
+          let officialQuote = null;
+          try {
+            officialQuote = await upstox.fetchOhlc(key);
+          } catch (quoteError) {
+            logger.warn("Official settlement quote enrichment failed", {
+              instrumentKey: key,
+              error: errorMessage(quoteError),
+            });
+          }
 
           const snapshot = buildOfficialCloseSnapshot(
-            row,
+            {
+              ...row,
+              upperCircuit: officialQuote?.upperCircuit ?? row.upperCircuit,
+              lowerCircuit: officialQuote?.lowerCircuit ?? row.lowerCircuit,
+              upperCircuitLimit: officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
+              lowerCircuitLimit: officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
+            },
             candles,
             previousClose,
             targetTradingDate,
-            priorSnapshot,
+            {
+              ...(priorSnapshot || {}),
+              ...(officialQuote || {}),
+            },
           );
+          snapshot.candles = candles;
 
           await saveDailyClose(snapshot, targetTradingDate);
 
@@ -5833,15 +5926,28 @@ upstox.setTickHandler((tick) => {
     return;
   }
 
+  const today = indiaDate();
   const previous = snapshots.get(tick.instrumentKey) || {};
+  const newTradingSession =
+    previous.marketDate !== today || previous.marketStatus === "CLOSED";
 
+  // Never carry yesterday's day OHLC/volume into the new session. The first
+  // valid tick owns the new session state; previousClose intentionally comes
+  // from the finalized prior session when the feed does not provide it.
   const snapshot = {
-    ...previous,
+    ...(newTradingSession
+      ? {
+          instrumentKey: tick.instrumentKey,
+          previousClose:
+            previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
+          previousCloseDate: previous.marketDate ?? null,
+        }
+      : previous),
     ...tick,
 
     instrumentKey: tick.instrumentKey,
 
-    marketDate: indiaDate(),
+    marketDate: today,
 
     marketOpen: true,
 
@@ -5850,16 +5956,20 @@ upstox.setTickHandler((tick) => {
     source: "upstox-websocket",
   };
 
-  for (const field of [
-    "previousClose",
-    "open",
-    "high",
-    "low",
-    "volume",
-    "upperCircuit",
-    "lowerCircuit",
-    "lastTradeTime",
-  ]) {
+  const carryFields = newTradingSession
+    ? ["previousClose", "previousCloseDate", "upperCircuit", "lowerCircuit", "lastTradeTime"]
+    : [
+        "previousClose",
+        "open",
+        "high",
+        "low",
+        "volume",
+        "upperCircuit",
+        "lowerCircuit",
+        "lastTradeTime",
+      ];
+
+  for (const field of carryFields) {
     if (snapshot[field] == null && previous[field] != null) {
       snapshot[field] = previous[field];
     }
@@ -6286,7 +6396,7 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       if (finalized?.candles?.length) {
         return res.json({
           success: true,
-          source: "redis-finalized-1d",
+          source: "finalized-1d",
           marketOpen: false,
           sessionDate,
           baselineClose: finalized.baselineClose ?? null,
@@ -6356,20 +6466,18 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       data = filterTradingSession(data, sessionDate);
     } else {
       /*
-       * Match the range-return convention used by the stock detail UI: the
-       * selected period starts at the first trading candle inside the range,
-       * and its opening price is the starting value. This is why a 1W range
-       * beginning on a trading day can differ from the prior-day-close
-       * convention. It also makes All work by using the first available
-       * historical candle rather than looking for a date before 2000.
+       * Every non-1D range uses the close of the first valid trading session
+       * on/after the requested lookback date. Do not use the candle OPEN as a
+       * baseline: that can turn a normal range into a large artificial return.
+       * This also keeps all period buttons on one exchange-specific series.
        */
       const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-      const firstOpen = Number(
-        firstCandle?.open ?? firstCandle?.openPrice ?? firstCandle?.price,
+      const firstClose = Number(
+        firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
       );
 
-      if (Number.isFinite(firstOpen) && firstOpen > 0) {
-        baselineClose = firstOpen;
+      if (Number.isFinite(firstClose) && firstClose > 0) {
+        baselineClose = firstClose;
         const firstTimestamp = Date.parse(firstCandle?.timestamp);
         baselineDate = Number.isFinite(firstTimestamp)
           ? indiaDate(new Date(firstTimestamp))
@@ -6433,12 +6541,12 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
         if (dbData.length) {
           const firstCandle = dbData[0];
-          const firstOpen = Number(
-            firstCandle?.open ?? firstCandle?.openPrice ?? firstCandle?.price,
+          const firstClose = Number(
+            firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
           );
           const firstTimestamp = Date.parse(firstCandle?.timestamp);
           const baselineClose =
-            Number.isFinite(firstOpen) && firstOpen > 0 ? firstOpen : null;
+            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
           const baselineDate = Number.isFinite(firstTimestamp)
             ? indiaDate(new Date(firstTimestamp))
             : from || null;
