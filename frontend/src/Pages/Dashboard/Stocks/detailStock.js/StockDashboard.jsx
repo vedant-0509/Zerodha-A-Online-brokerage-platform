@@ -181,8 +181,8 @@ export default function StockDashboard({
         if (axios.isCancel(error) || error?.code === "ERR_CANCELED") return;
         setStockError(
           error?.response?.data?.message ||
-            error?.message ||
-            "Failed to load stock details.",
+          error?.message ||
+          "Failed to load stock details.",
         );
       } finally {
         if (!controller.signal.aborted) setStockLoading(false);
@@ -277,9 +277,9 @@ export default function StockDashboard({
           stocks.some((stock) => {
             const stockKey = String(
               stock?.instrument_key ||
-                stock?.instrumentKey ||
-                stock?.instrument ||
-                "",
+              stock?.instrumentKey ||
+              stock?.instrument ||
+              "",
             ).trim();
 
             return stockKey === currentKey;
@@ -417,8 +417,8 @@ export default function StockDashboard({
         return;
       setMarketError(
         error?.response?.data?.message ||
-          error?.message ||
-          "Unable to load market data.",
+        error?.message ||
+        "Unable to load market data.",
       );
       setMarketOpen(false);
     } finally {
@@ -525,17 +525,17 @@ export default function StockDashboard({
         if (financialFailed && fundamentalsFailed) {
           setFundamentalsError(
             results[2].reason?.response?.data?.message ||
-              results[2].reason?.message ||
-              results[0].reason?.response?.data?.message ||
-              results[0].reason?.message ||
-              "Unable to load company financial data.",
+            results[2].reason?.message ||
+            results[0].reason?.response?.data?.message ||
+            results[0].reason?.message ||
+            "Unable to load company financial data.",
           );
         } else if (financialFailed) {
           console.error(
             "Financials failed:",
             results[2].reason?.response?.data ||
-              results[2].reason?.message ||
-              results[2].reason,
+            results[2].reason?.message ||
+            results[2].reason,
           );
         }
       } finally {
@@ -560,16 +560,6 @@ export default function StockDashboard({
 
     const { force = false } = options;
 
-    // During market hours, 1D is driven exclusively by websocket ticks.
-    if (
-      range === "1D" &&
-      marketStatusKnownRef.current &&
-      marketOpenRef.current &&
-      !force
-    ) {
-      return;
-    }
-
     setHistoryLoading(true);
 
     if (range !== "1D" || force) {
@@ -592,11 +582,13 @@ export default function StockDashboard({
       if (signal?.aborted) return;
 
       const payload = unwrapResponse(response.data) || {};
+
       const baseline = nullableNumber(
         payload.baselineClose,
         payload.baseline,
         payload.previousClose,
       );
+
       if (Number.isFinite(baseline)) {
         setRangeBaseline(baseline);
       } else if (range !== "1D") {
@@ -605,13 +597,129 @@ export default function StockDashboard({
 
       const normalized = normalizeHistory(response.data, range);
 
+      /* =====================================================
+           1D MARKET-OPEN FIX
+  
+           Use official intraday history as the starting chart
+           and then let WebSocket ticks continue from it.
+        ===================================================== */
+
       if (range === "1D") {
-        finalHistoryLoadedRef.current = true;
-        liveDayHistoryRef.current = [];
-        hasLiveTickRef.current = false;
+        const historicalPoints = Array.isArray(normalized) ? normalized : [];
+
+        /*
+         * Preserve live points that may have arrived while the
+         * historical API request was running.
+         */
+        const existingLivePoints = Array.isArray(liveDayHistoryRef.current)
+          ? liveDayHistoryRef.current
+          : [];
+
+        if (marketOpenRef.current && !force) {
+          const merged = [...historicalPoints];
+
+          /*
+           * Merge any WebSocket points that arrived while
+           * the history request was in progress.
+           */
+          for (const livePoint of existingLivePoints) {
+            const liveTimestamp = parseHistoryTimestamp(
+              Array.isArray(livePoint)
+                ? livePoint[0]
+                : (livePoint?.timestamp ?? livePoint?.time),
+            );
+
+            if (!Number.isFinite(liveTimestamp)) {
+              continue;
+            }
+
+            let replaced = false;
+
+            /*
+             * Replace the historical candle when the live
+             * tick belongs to the same ~1-minute window.
+             */
+            for (let i = merged.length - 1; i >= 0; i--) {
+              const historyPoint = merged[i];
+
+              const historyTimestamp = parseHistoryTimestamp(
+                Array.isArray(historyPoint)
+                  ? historyPoint[0]
+                  : (historyPoint?.timestamp ?? historyPoint?.time),
+              );
+
+              if (!Number.isFinite(historyTimestamp)) {
+                continue;
+              }
+
+              if (Math.abs(historyTimestamp - liveTimestamp) < 60 * 1000) {
+                merged[i] = livePoint;
+                replaced = true;
+                break;
+              }
+
+              /*
+               * No reason to keep searching once history
+               * is clearly older than this live point.
+               */
+              if (historyTimestamp < liveTimestamp - 60 * 1000) {
+                break;
+              }
+            }
+
+            /*
+             * Live point is newer than the historical dataset.
+             */
+            if (!replaced) {
+              merged.push(livePoint);
+            }
+          }
+
+          merged.sort((a, b) => {
+            const timestampA = parseHistoryTimestamp(
+              Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
+            );
+
+            const timestampB = parseHistoryTimestamp(
+              Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
+            );
+
+            return timestampA - timestampB;
+          });
+
+          liveDayHistoryRef.current = merged;
+
+          hasLiveTickRef.current = merged.length > 0;
+
+          /*
+           * Keep this FALSE while market is open.
+           * WebSocket ticks continue updating the chart.
+           */
+          finalHistoryLoadedRef.current = false;
+
+          setHistory(merged);
+        } else {
+          /*
+           * Market closed:
+           * finalized official history owns the chart.
+           */
+          finalHistoryLoadedRef.current = true;
+
+          liveDayHistoryRef.current = historicalPoints;
+
+          hasLiveTickRef.current = false;
+
+          setHistory(historicalPoints);
+        }
+
+        return;
       }
 
-      setHistory(normalized);
+      /* =====================================================
+           NON-1D
+        ===================================================== */
+
+      setHistory(Array.isArray(normalized) ? normalized : []);
     } catch (error) {
       if (
         axios.isCancel(error) ||
@@ -620,6 +728,7 @@ export default function StockDashboard({
       ) {
         return;
       }
+
       console.error("History failed:", error);
     } finally {
       if (!signal?.aborted) {
@@ -649,19 +758,47 @@ export default function StockDashboard({
    * known, return early, and never load history until the user changes
    * the chart range manually.
    */
+  // useEffect(() => {
+  //   if (!instrumentKey) return;
+
+  //   // 1D must wait for the market-status request to finish.
+  //   if (chartRange === "1D") {
+  //     if (!marketStatusKnownRef.current) {
+  //       return;
+  //     }
+
+  //     // During market hours, WebSocket ticks exclusively own 1D.
+  //     if (marketOpen) {
+  //       return;
+  //     }
+  //   }
+
+  //   const controller = new AbortController();
+
+  //   loadHistory(instrumentKey, chartRange, controller.signal);
+
+  //   return () => {
+  //     controller.abort();
+  //   };
+  // }, [instrumentKey, chartRange, marketOpen, loadHistory]);
+
   useEffect(() => {
     if (!instrumentKey) return;
 
-    // 1D must wait for the market-status request to finish.
-    if (chartRange === "1D") {
-      if (!marketStatusKnownRef.current) {
-        return;
-      }
-
-      // During market hours, WebSocket ticks exclusively own 1D.
-      if (marketOpen) {
-        return;
-      }
+    /*
+     * Wait until real market status is known.
+     * Once known, ALWAYS load 1D history.
+     *
+     * During market hours:
+     *   historical 1-minute candles
+     *   +
+     *   WebSocket live ticks
+     *
+     * After market close:
+     *   finalized official 1D history
+     */
+    if (chartRange === "1D" && !marketStatusKnownRef.current) {
+      return;
     }
 
     const controller = new AbortController();
@@ -844,20 +981,23 @@ export default function StockDashboard({
           : [];
 
         const lastPoint = current[current.length - 1];
+
         const lastTimestamp = parseHistoryTimestamp(
           Array.isArray(lastPoint)
             ? lastPoint[0]
             : (lastPoint?.timestamp ?? lastPoint?.time),
         );
 
-        // Ignore out-of-order ticks.
-        if (Number.isFinite(lastTimestamp) && timestamp < lastTimestamp) {
-          return current;
-        }
-
         /*
-         * Keep one point per throttle window. A new tick replaces the latest
-         * point only when it is in the same minute; otherwise it is appended.
+         * A historical 1-minute candle and a live WebSocket tick can
+         * have slightly different timestamps for the same minute.
+         *
+         * Example:
+         * history candle = 12:36:00
+         * live tick       = 12:35:45
+         *
+         * The live tick MUST replace the latest candle instead of
+         * being rejected as "out of order".
          */
         if (
           Number.isFinite(lastTimestamp) &&
@@ -866,6 +1006,17 @@ export default function StockDashboard({
           return [...current.slice(0, -1), newPoint];
         }
 
+        /*
+         * Only reject genuinely old ticks after the
+         * same-minute replacement check.
+         */
+        if (Number.isFinite(lastTimestamp) && timestamp < lastTimestamp) {
+          return current;
+        }
+
+        /*
+         * Newer tick -> append.
+         */
         return [...current, newPoint];
       })();
 
@@ -1090,25 +1241,25 @@ export default function StockDashboard({
     const keys =
       kind === "low"
         ? [
-            "week52Low",
-            "week_52_low",
-            "yearLow",
-            "fiftyTwoWeekLow",
-            "fifty_two_week_low",
-            "52WeekLow",
-            "52_week_low",
-            "fiftyTwoWeekLowPrice",
-          ]
+          "week52Low",
+          "week_52_low",
+          "yearLow",
+          "fiftyTwoWeekLow",
+          "fifty_two_week_low",
+          "52WeekLow",
+          "52_week_low",
+          "fiftyTwoWeekLowPrice",
+        ]
         : [
-            "week52High",
-            "week_52_high",
-            "yearHigh",
-            "fiftyTwoWeekHigh",
-            "fifty_two_week_high",
-            "52WeekHigh",
-            "52_week_high",
-            "fiftyTwoWeekHighPrice",
-          ];
+          "week52High",
+          "week_52_high",
+          "yearHigh",
+          "fiftyTwoWeekHigh",
+          "fifty_two_week_high",
+          "52WeekHigh",
+          "52_week_high",
+          "fiftyTwoWeekHighPrice",
+        ];
     for (const source of sources) {
       if (!source || typeof source !== "object") continue;
       for (const key of keys) {
@@ -1163,14 +1314,14 @@ export default function StockDashboard({
         } else if (item && typeof item === "object") {
           rawTimestamp = parseHistoryTimestamp(
             item.timestamp ??
-              item.time ??
-              item.date ??
-              item.datetime ??
-              item.dateTime ??
-              item.ts ??
-              item.epoch ??
-              item.t ??
-              item.ltt,
+            item.time ??
+            item.date ??
+            item.datetime ??
+            item.dateTime ??
+            item.ts ??
+            item.epoch ??
+            item.t ??
+            item.ltt,
           );
           openPrice = nullableNumber(item.open, item.openPrice, item.o);
           price = nullableNumber(
@@ -1193,17 +1344,17 @@ export default function StockDashboard({
         const timeStr = dateObj
           ? chartRange === "1D" || chartRange === "1W"
             ? new Intl.DateTimeFormat("en-IN", {
-                timeZone: "Asia/Kolkata",
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: true,
-              }).format(dateObj)
+              timeZone: "Asia/Kolkata",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            }).format(dateObj)
             : new Intl.DateTimeFormat("en-IN", {
-                timeZone: "Asia/Kolkata",
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              }).format(dateObj)
+              timeZone: "Asia/Kolkata",
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            }).format(dateObj)
           : "—";
 
         return {
@@ -1638,9 +1789,9 @@ export default function StockDashboard({
   const financialRows = useMemo(() => {
     const rows = normalizeFinancialRows(
       financialData ||
-        fundamentalData?.incomeStatement ||
-        fundamentalData?.income_statement ||
-        fundamentalData,
+      fundamentalData?.incomeStatement ||
+      fundamentalData?.income_statement ||
+      fundamentalData,
     );
     if (rows?.length) return rows;
 
@@ -1759,28 +1910,28 @@ export default function StockDashboard({
 
       const idempotencyKey = orderIdempotencyKeyRef.current;
 
-     const isLimitOrder = numberValue(priceLimit, 0) > 0;
+      const isLimitOrder = numberValue(priceLimit, 0) > 0;
 
-const payload = {
-  symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
-  instrumentKey,
-  transactionType: String(orderType).toUpperCase(),
-  quantity: numberValue(quantity),
-  orderType: isLimitOrder ? "LIMIT" : "MARKET",
-  product: "CNC",
-};
+      const payload = {
+        symbol: snapshot?.symbol || stockInfo?.symbol || symbol,
+        instrumentKey,
+        transactionType: String(orderType).toUpperCase(),
+        quantity: numberValue(quantity),
+        orderType: isLimitOrder ? "LIMIT" : "MARKET",
+        product: "CNC",
+      };
 
-if (isLimitOrder) {
-  payload.limitPrice = numberValue(priceLimit);
-}
+      if (isLimitOrder) {
+        payload.limitPrice = numberValue(priceLimit);
+      }
 
-const response = await axios.post(ENDPOINTS.order(), payload, {
-  timeout: 10000,
-  headers: {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    "Idempotency-Key": crypto.randomUUID(),
-  },
-});
+      const response = await axios.post(ENDPOINTS.order(), payload, {
+        timeout: 10000,
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+      });
 
       if (response.data?.success) {
         const result = response.data?.data || {};
@@ -1807,8 +1958,8 @@ const response = await axios.post(ENDPOINTS.order(), payload, {
       } else {
         setOrderMessage(
           err?.response?.data?.message ||
-            err?.message ||
-            "Failed to place simulated order.",
+          err?.message ||
+          "Failed to place simulated order.",
         );
       }
     } finally {

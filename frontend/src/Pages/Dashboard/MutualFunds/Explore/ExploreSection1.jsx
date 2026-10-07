@@ -308,20 +308,26 @@ export default function ExploreSection1() {
             <h2 className="section-title">Top Returns Today</h2>
 
             {navDate && (
-              <div style={{ fontSize: "12px", color: "#777", marginBottom: "12px", }}>
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "#777",
+                  marginBottom: "12px",
+                }}
+              >
                 NAV date: {formatDate(navDate)}
               </div>
             )}
 
             <div className="funds-grid">
               {loading && (
-                <div style={{ padding: "1rem", color: "#777", }}>
+                <div style={{ padding: "1rem", color: "#777" }}>
                   Loading top returns...
                 </div>
               )}
 
               {!loading && funds.length === 0 && (
-                <div style={{ padding: "1rem", color: "#777", }}>
+                <div style={{ padding: "1rem", color: "#777" }}>
                   {error || "No daily return data available yet."}
                 </div>
               )}
@@ -338,7 +344,7 @@ export default function ExploreSection1() {
                         )}`,
                       )
                     }
-                    style={{ cursor: "pointer", }}
+                    style={{ cursor: "pointer" }}
                   >
                     <div>
                       <div
@@ -431,7 +437,16 @@ export default function ExploreSection1() {
 
                   <span
                     className="investment-value"
-                    style={{ color: portfolio.todaysPnL == null ? "inherit" : Number(portfolio.todaysPnL) >= 0 ? "#00B386" : "#EF4444", fontWeight: "600" }}>
+                    style={{
+                      color:
+                        portfolio.todaysPnL == null
+                          ? "inherit"
+                          : Number(portfolio.todaysPnL) >= 0
+                            ? "#00B386"
+                            : "#EF4444",
+                      fontWeight: "600",
+                    }}
+                  >
                     {portfolio.todaysPnL == null
                       ? "-"
                       : `${formatMoney(portfolio.todaysPnL)} (${formatPercent(portfolio.todaysReturnPercent)})`}
@@ -445,7 +460,16 @@ export default function ExploreSection1() {
 
                   <span
                     className="investment-value"
-                    style={{ color: portfolio.totalReturn == null ? "inherit" : Number(portfolio.totalReturn) >= 0 ? "#00B386" : "#ef4444", fontWeight: "600" }}>
+                    style={{
+                      color:
+                        portfolio.totalReturn == null
+                          ? "inherit"
+                          : Number(portfolio.totalReturn) >= 0
+                            ? "#00B386"
+                            : "#ef4444",
+                      fontWeight: "600",
+                    }}
+                  >
                     {portfolio.totalReturn == null
                       ? "-"
                       : `${formatMoney(portfolio.totalReturn)} (${formatPercent(portfolio.totalReturnPercent)})`}
@@ -479,8 +503,18 @@ export default function ExploreSection1() {
 
                   <span
                     className="investment-value dark-value"
-                    style={{ color: portfolio.xirr == null ? "inherit" : portfolio.xirr >= 0 ? "#00B386" : "#EF4444", }}>
-                    {portfolio.xirr == null ? "-" : formatPercent(portfolio.xirr)}
+                    style={{
+                      color:
+                        portfolio.xirr == null
+                          ? "inherit"
+                          : portfolio.xirr >= 0
+                            ? "#00B386"
+                            : "#EF4444",
+                    }}
+                  >
+                    {portfolio.xirr == null
+                      ? "-"
+                      : formatPercent(portfolio.xirr)}
                   </span>
                 </div>
               </div>
