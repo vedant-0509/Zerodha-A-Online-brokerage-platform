@@ -85,6 +85,15 @@ function isExcludedUrl(url) {
             return true;
         }
 
+        // Mutual Fund Top Returns uses offset-based pagination.
+        // It must bypass the global dashboard cache because
+        // different offsets must return different pages.
+        if (
+            pathname === "/api/mutual-funds/top-returns"
+        ) {
+            return true;
+        }
+
         return false;
     } catch {
         return false;
