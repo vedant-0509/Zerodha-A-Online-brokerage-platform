@@ -117,7 +117,7 @@
 // const snapshots = new Map();
 
 // const SNAP_PREFIX = "detailstock:snapshot:";
-// const HISTORY_PREFIX = "detailstock:history:v4:";
+// const HISTORY_PREFIX = "detailstock:history:v5:";
 // const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 // const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -6466,24 +6466,38 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       data = filterTradingSession(data, sessionDate);
     } else {
       /*
-       * Every non-1D range uses the close of the first valid trading session
-       * on/after the requested lookback date. Do not use the candle OPEN as a
-       * baseline: that can turn a normal range into a large artificial return.
-       * This also keeps all period buttons on one exchange-specific series.
+       * Groww-style period return baseline:
+       *
+       * The selected period starts from the last trading-session CLOSE
+       * immediately before the calendar lookback date. The chart itself still
+       * contains only candles inside the selected period.
+       *
+       * This prevents the first day's movement from changing the displayed
+       * period return.
        */
-      const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-      const firstClose = Number(
-        firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
-      );
+      const periodStart = from || to;
+      const previous = await resolvePreviousClose(key, periodStart);
 
-      if (Number.isFinite(firstClose) && firstClose > 0) {
-        baselineClose = firstClose;
-        const firstTimestamp = Date.parse(firstCandle?.timestamp);
-        baselineDate = Number.isFinite(firstTimestamp)
-          ? indiaDate(new Date(firstTimestamp))
-          : from || null;
+      if (previous?.close != null) {
+        baselineClose = Number(previous.close);
+        baselineDate = previous.tradingDate || periodStart;
+      } else {
+        // Provider fallback if no pre-range close is available.
+        const firstCandle =
+          Array.isArray(data) && data.length ? data[0] : null;
+        const firstClose = Number(
+          firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+        );
+
+        if (Number.isFinite(firstClose) && firstClose > 0) {
+          baselineClose = firstClose;
+          const firstTimestamp = Date.parse(firstCandle?.timestamp);
+          baselineDate = Number.isFinite(firstTimestamp)
+            ? indiaDate(new Date(firstTimestamp))
+            : periodStart;
+        }
       }
-    }
+    }    }
 
     const payload = {
       candles: Array.isArray(data) ? data : [],
