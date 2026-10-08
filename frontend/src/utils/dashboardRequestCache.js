@@ -1,15 +1,10 @@
 import axios from "axios";
 
-import {
-    getCached,
-    setCached,
-    clearAllCache,
-} from "./cacheStore";
+import { getCached, setCached, clearAllCache } from "./cacheStore";
 
 const inflight = new Map();
 
 const CACHE_DEFAULT_TTL = 30 * 1000; // 30 seconds
-
 
 /* =========================================================
    USER SCOPE
@@ -31,13 +26,12 @@ function getUserScope() {
             user?.userId ??
             user?.id ??
             user?.email ??
-            "authenticated"
+            "authenticated",
         );
     } catch {
         return "authenticated";
     }
 }
-
 
 /* =========================================================
    URL HELPERS
@@ -51,7 +45,6 @@ function getAbsoluteUrl(url, baseURL = window.location.origin) {
     }
 }
 
-
 function isDashboardApiUrl(url) {
     try {
         const parsed = new URL(url, window.location.origin);
@@ -64,7 +57,6 @@ function isDashboardApiUrl(url) {
         return false;
     }
 }
-
 
 /* =========================================================
    DO NOT CACHE AUTH / LIVE / FILE REQUESTS
@@ -88,9 +80,10 @@ function isExcludedUrl(url) {
         // Mutual Fund Top Returns uses offset-based pagination.
         // It must bypass the global dashboard cache because
         // different offsets must return different pages.
-        if (
-            pathname === "/api/mutual-funds/top-returns"
-        ) {
+        if (pathname === "/api/mutual-funds/top-returns") {
+            return true;
+        }
+        if (pathname === "/api/mutual-funds") {
             return true;
         }
 
@@ -99,7 +92,6 @@ function isExcludedUrl(url) {
         return false;
     }
 }
-
 
 /* =========================================================
    TTL POLICY
@@ -111,8 +103,8 @@ function getTTL(url) {
         const pathname = parsed.pathname.toLowerCase();
 
         /* Stock detail:
-           Keep short because live Socket.IO is also active.
-        */
+               Keep short because live Socket.IO is also active.
+            */
         if (pathname.includes("/detail-stock/")) {
             return 10 * 1000;
         }
@@ -148,7 +140,6 @@ function getTTL(url) {
     }
 }
 
-
 /* =========================================================
    CACHE KEY
 ========================================================= */
@@ -158,7 +149,6 @@ function createCacheKey(url) {
 
     return `dashboard:${privateScope}:${url}`;
 }
-
 
 /* =========================================================
    AXIOS RESPONSE SHAPE FOR CACHED DATA
@@ -175,7 +165,6 @@ function createAxiosResponse(data, config) {
     };
 }
 
-
 /* =========================================================
    AXIOS GLOBAL GET CACHE
 ========================================================= */
@@ -186,26 +175,18 @@ if (AxiosPrototype && !AxiosPrototype.__dashboardCachePatched) {
     const originalRequest = AxiosPrototype.request;
 
     AxiosPrototype.request = function dashboardCachedRequest(config) {
-        const method = String(
-            config?.method || "get"
-        ).toLowerCase();
+        const method = String(config?.method || "get").toLowerCase();
 
-        if (
-            method !== "get" ||
-            typeof window === "undefined"
-        ) {
+        if (method !== "get" || typeof window === "undefined") {
             return originalRequest.call(this, config);
         }
 
         const absoluteUrl = getAbsoluteUrl(
             config?.url,
-            config?.baseURL || window.location.origin
+            config?.baseURL || window.location.origin,
         );
 
-        if (
-            !isDashboardApiUrl(absoluteUrl) ||
-            isExcludedUrl(absoluteUrl)
-        ) {
+        if (!isDashboardApiUrl(absoluteUrl) || isExcludedUrl(absoluteUrl)) {
             return originalRequest.call(this, config);
         }
 
@@ -215,164 +196,109 @@ if (AxiosPrototype && !AxiosPrototype.__dashboardCachePatched) {
         const cached = getCached(cacheKey);
 
         /* =================================================
-           FRESH CACHE
-        ================================================= */
+               FRESH CACHE
+            ================================================= */
 
         if (cached && !cached.stale) {
-            return Promise.resolve(
-                createAxiosResponse(
-                    cached.data,
-                    config
-                )
-            );
+            return Promise.resolve(createAxiosResponse(cached.data, config));
         }
 
         /* =================================================
-           STALE CACHE
-           Show old data immediately.
-           Refresh silently in background.
-        ================================================= */
+               STALE CACHE
+               Show old data immediately.
+               Refresh silently in background.
+            ================================================= */
 
         if (cached && cached.stale) {
             if (!inflight.has(cacheKey)) {
-                const refreshPromise =
-                    originalRequest.call(this, config)
-                        .then((response) => {
-                            if (response?.status >= 200 &&
-                                response?.status < 300) {
-                                setCached(
-                                    cacheKey,
-                                    response.data,
-                                    ttl
-                                );
-                            }
+                const refreshPromise = originalRequest
+                    .call(this, config)
+                    .then((response) => {
+                        if (response?.status >= 200 && response?.status < 300) {
+                            setCached(cacheKey, response.data, ttl);
+                        }
 
-                            return response;
-                        })
-                        .catch((error) => {
-                            console.error(
-                                `[Dashboard Cache] Background refresh failed: ${absoluteUrl}`,
-                                error
-                            );
+                        return response;
+                    })
+                    .catch((error) => {
+                        console.error(
+                            `[Dashboard Cache] Background refresh failed: ${absoluteUrl}`,
+                            error,
+                        );
 
-                            throw error;
-                        })
-                        .finally(() => {
-                            inflight.delete(cacheKey);
-                        });
+                        throw error;
+                    })
+                    .finally(() => {
+                        inflight.delete(cacheKey);
+                    });
 
-                inflight.set(
-                    cacheKey,
-                    refreshPromise
-                );
+                inflight.set(cacheKey, refreshPromise);
             }
 
-            return Promise.resolve(
-                createAxiosResponse(
-                    cached.data,
-                    config
-                )
-            );
+            return Promise.resolve(createAxiosResponse(cached.data, config));
         }
 
         /* =================================================
-           REQUEST ALREADY IN PROGRESS
-        ================================================= */
+               REQUEST ALREADY IN PROGRESS
+            ================================================= */
 
         if (inflight.has(cacheKey)) {
             return inflight
                 .get(cacheKey)
-                .then((response) =>
-                    createAxiosResponse(
-                        response.data,
-                        config
-                    )
-                );
+                .then((response) => createAxiosResponse(response.data, config));
         }
 
         /* =================================================
-           FIRST REQUEST
-        ================================================= */
+               FIRST REQUEST
+            ================================================= */
 
-        const requestPromise =
-            originalRequest.call(this, config)
-                .then((response) => {
-                    if (
-                        response?.status >= 200 &&
-                        response?.status < 300
-                    ) {
-                        setCached(
-                            cacheKey,
-                            response.data,
-                            ttl
-                        );
-                    }
+        const requestPromise = originalRequest
+            .call(this, config)
+            .then((response) => {
+                if (response?.status >= 200 && response?.status < 300) {
+                    setCached(cacheKey, response.data, ttl);
+                }
 
-                    return response;
-                })
-                .finally(() => {
-                    inflight.delete(cacheKey);
-                });
+                return response;
+            })
+            .finally(() => {
+                inflight.delete(cacheKey);
+            });
 
-        inflight.set(
-            cacheKey,
-            requestPromise
-        );
+        inflight.set(cacheKey, requestPromise);
 
         return requestPromise;
     };
 
-    AxiosPrototype.__dashboardCachePatched =
-        true;
+    AxiosPrototype.__dashboardCachePatched = true;
 }
-
 
 /* =========================================================
    FETCH CACHE
    Covers pages using fetch() instead of axios.
 ========================================================= */
 
-if (
-    typeof window !== "undefined" &&
-    !window.__dashboardFetchCachePatched
-) {
-    const originalFetch =
-        window.fetch.bind(window);
+if (typeof window !== "undefined" && !window.__dashboardFetchCachePatched) {
+    const originalFetch = window.fetch.bind(window);
 
-    window.fetch = async function dashboardCachedFetch(
-        input,
-        init = {}
-    ) {
-        const request =
-            input instanceof Request
-                ? input
-                : null;
+    window.fetch = async function dashboardCachedFetch(input, init = {}) {
+        const request = input instanceof Request ? input : null;
 
         const method = String(
-            init?.method ||
-            request?.method ||
-            "GET"
+            init?.method || request?.method || "GET",
         ).toUpperCase();
 
-        const rawUrl =
-            typeof input === "string"
-                ? input
-                : input?.url;
+        const rawUrl = typeof input === "string" ? input : input?.url;
 
-        const absoluteUrl =
-            getAbsoluteUrl(rawUrl);
+        const absoluteUrl = getAbsoluteUrl(rawUrl);
 
         /* =================================================
-           MUTATIONS
-           Clear old cached dashboard data.
-        ================================================= */
+               MUTATIONS
+               Clear old cached dashboard data.
+            ================================================= */
 
         if (method !== "GET") {
-            const response =
-                await originalFetch(
-                    input,
-                    init
-                );
+            const response = await originalFetch(input, init);
 
             if (
                 method === "POST" ||
@@ -386,209 +312,134 @@ if (
             return response;
         }
 
-        if (
-            !isDashboardApiUrl(absoluteUrl) ||
-            isExcludedUrl(absoluteUrl)
-        ) {
-            return originalFetch(
-                input,
-                init
-            );
+        if (!isDashboardApiUrl(absoluteUrl) || isExcludedUrl(absoluteUrl)) {
+            return originalFetch(input, init);
         }
 
-        const cacheKey =
-            createCacheKey(absoluteUrl);
+        const cacheKey = createCacheKey(absoluteUrl);
 
-        const ttl =
-            getTTL(absoluteUrl);
+        const ttl = getTTL(absoluteUrl);
 
-        const cached =
-            getCached(cacheKey);
+        const cached = getCached(cacheKey);
 
         /* =================================================
-           FRESH CACHE
-        ================================================= */
+               FRESH CACHE
+            ================================================= */
 
         if (cached && !cached.stale) {
-            return new Response(
-                JSON.stringify(
-                    cached.data
-                ),
-                {
-                    status: 200,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
+            return new Response(JSON.stringify(cached.data), {
+                status: 200,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
         }
 
         /* =================================================
-           STALE CACHE
-           Return instantly and refresh silently.
-        ================================================= */
+               STALE CACHE
+               Return instantly and refresh silently.
+            ================================================= */
 
         if (cached && cached.stale) {
             if (!inflight.has(cacheKey)) {
-                const refreshPromise =
-                    originalFetch(
-                        input,
-                        init
-                    )
-                        .then(async (response) => {
-                            if (response.ok) {
-                                try {
-                                    const data =
-                                        await response
-                                            .clone()
-                                            .json();
+                const refreshPromise = originalFetch(input, init)
+                    .then(async (response) => {
+                        if (response.ok) {
+                            try {
+                                const data = await response.clone().json();
 
-                                    setCached(
-                                        cacheKey,
-                                        data,
-                                        ttl
-                                    );
-                                } catch {
-                                    /* Non-JSON response:
-                                       don't cache it.
-                                    */
-                                }
+                                setCached(cacheKey, data, ttl);
+                            } catch {
+                                /* Non-JSON response:
+                                                       don't cache it.
+                                                    */
                             }
+                        }
 
-                            return response;
-                        })
-                        .catch((error) => {
-                            console.error(
-                                `[Dashboard Cache] Background refresh failed: ${absoluteUrl}`,
-                                error
-                            );
+                        return response;
+                    })
+                    .catch((error) => {
+                        console.error(
+                            `[Dashboard Cache] Background refresh failed: ${absoluteUrl}`,
+                            error,
+                        );
 
-                            throw error;
-                        })
-                        .finally(() => {
-                            inflight.delete(
-                                cacheKey
-                            );
-                        });
+                        throw error;
+                    })
+                    .finally(() => {
+                        inflight.delete(cacheKey);
+                    });
 
-                inflight.set(
-                    cacheKey,
-                    refreshPromise
-                );
+                inflight.set(cacheKey, refreshPromise);
             }
 
-            return new Response(
-                JSON.stringify(
-                    cached.data
-                ),
-                {
-                    status: 200,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
+            return new Response(JSON.stringify(cached.data), {
+                status: 200,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
         }
 
         /* =================================================
-           REQUEST ALREADY IN PROGRESS
-        ================================================= */
+               REQUEST ALREADY IN PROGRESS
+            ================================================= */
 
         if (inflight.has(cacheKey)) {
-            const response =
-                await inflight.get(cacheKey);
+            const response = await inflight.get(cacheKey);
 
-            return new Response(
-                JSON.stringify(
-                    response.data
-                ),
-                {
-                    status: 200,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
+            return new Response(JSON.stringify(response.data), {
+                status: 200,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
         }
 
         /* =================================================
-           FIRST FETCH
-        ================================================= */
+               FIRST FETCH
+            ================================================= */
 
-        const requestPromise =
-            originalFetch(
-                input,
-                init
-            )
-                .then(async (response) => {
-                    if (response.ok) {
-                        try {
-                            const data =
-                                await response
-                                    .clone()
-                                    .json();
+        const requestPromise = originalFetch(input, init)
+            .then(async (response) => {
+                if (response.ok) {
+                    try {
+                        const data = await response.clone().json();
 
-                            setCached(
-                                cacheKey,
-                                data,
-                                ttl
-                            );
-                        } catch {
-                            /* Ignore non-JSON */
-                        }
+                        setCached(cacheKey, data, ttl);
+                    } catch {
+                        /* Ignore non-JSON */
                     }
+                }
 
-                    return response;
-                })
-                .finally(() => {
-                    inflight.delete(
-                        cacheKey
-                    );
-                });
+                return response;
+            })
+            .finally(() => {
+                inflight.delete(cacheKey);
+            });
 
-        inflight.set(
-            cacheKey,
-            requestPromise
-        );
+        inflight.set(cacheKey, requestPromise);
 
         return requestPromise;
     };
 
-    window.__dashboardFetchCachePatched =
-        true;
+    window.__dashboardFetchCachePatched = true;
 }
-
 
 /* =========================================================
    CLEAR CACHE WHEN AUTH SESSION CHANGES
 ========================================================= */
 
-if (
-    typeof window !== "undefined" &&
-    !window.__dashboardAuthCacheListener
-) {
-    window.addEventListener(
-        "auth-expired",
-        () => {
+if (typeof window !== "undefined" && !window.__dashboardAuthCacheListener) {
+    window.addEventListener("auth-expired", () => {
+        clearAllCache();
+    });
+
+    window.addEventListener("storage", (event) => {
+        if (event.key === "token" && !event.newValue) {
             clearAllCache();
         }
-    );
+    });
 
-    window.addEventListener(
-        "storage",
-        (event) => {
-            if (
-                event.key === "token" &&
-                !event.newValue
-            ) {
-                clearAllCache();
-            }
-        }
-    );
-
-    window.__dashboardAuthCacheListener =
-        true;
+    window.__dashboardAuthCacheListener = true;
 }

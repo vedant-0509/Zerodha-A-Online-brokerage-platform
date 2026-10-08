@@ -121,7 +121,6 @@ const getHoldings = async () => {
 */
 
 const DashboardSection1 = () => {
-
   const [holdings, setHoldings] = useState([]);
   const [selectedHolding, setSelectedHolding] = useState(null);
 
@@ -285,8 +284,8 @@ const DashboardSection1 = () => {
 
           ...(token
             ? {
-              Authorization: `Bearer ${token}`,
-            }
+                Authorization: `Bearer ${token}`,
+              }
             : {}),
         },
 
@@ -301,8 +300,8 @@ const DashboardSection1 = () => {
       if (!response.ok) {
         throw new Error(
           data?.message ||
-          data?.error?.message ||
-          "Unable to place SELL order.",
+            data?.error?.message ||
+            "Unable to place SELL order.",
         );
       }
 

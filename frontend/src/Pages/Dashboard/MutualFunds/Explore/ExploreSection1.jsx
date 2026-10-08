@@ -235,91 +235,86 @@ export default function ExploreSection1() {
   |--------------------------------------------------------------------------
   */
 
- const loadMore = async () => {
-  console.log("🔥 LOAD MORE CLICK", {
-    loadingMore,
-    fundsLength: funds.length,
-    totalHouses,
-  });
-
-  // Prevent duplicate requests
-  if (loadingMore) {
-    console.log("⛔ BLOCKED: loadingMore is true");
-    return;
-  }
-
-  // Stop if everything is already loaded
-  if (funds.length >= totalHouses) {
-    console.log("⛔ BLOCKED: all funds already loaded");
-    return;
-  }
-
-  console.log("✅ PASSED GUARDS — REQUESTING", {
-    offset: funds.length,
-    limit: INITIAL_LIMIT,
-  });
-
-  setLoadingMore(true);
-
-  try {
-    const response = await axios.get(`${API}/top-returns`, {
-      params: {
-        limit: INITIAL_LIMIT,
-        offset: funds.length,
-        _t: Date.now(),
-      },
-      headers: {
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-      },
+  const loadMore = async () => {
+    console.log("🔥 LOAD MORE CLICK", {
+      loadingMore,
+      fundsLength: funds.length,
+      totalHouses,
     });
 
-    const data = response?.data || {};
+    // Prevent duplicate requests
+    if (loadingMore) {
+      console.log("⛔ BLOCKED: loadingMore is true");
+      return;
+    }
 
-    const newFunds = Array.isArray(data.data) ? data.data : [];
+    // Stop if everything is already loaded
+    if (funds.length >= totalHouses) {
+      console.log("⛔ BLOCKED: all funds already loaded");
+      return;
+    }
 
-    console.log("📦 LOAD MORE RESPONSE", {
-      received: newFunds.length,
-      total: data.totalHouses,
-      offset: data.offset,
-      limit: data.limit,
-      hasMore: data.hasMore,
+    console.log("✅ PASSED GUARDS — REQUESTING", {
+      offset: funds.length,
+      limit: INITIAL_LIMIT,
     });
 
-    setFunds((previous) => {
-      const existing = new Set(
-        previous.map(
-          (fund) => String(fund.schemeCode ?? fund.schemeId)
-        )
-      );
+    setLoadingMore(true);
 
-      const uniqueFunds = newFunds.filter(
-        (fund) =>
-          !existing.has(
-            String(fund.schemeCode ?? fund.schemeId)
-          )
-      );
-
-      console.log("➕ ADDING FUNDS", {
-        previous: previous.length,
-        received: newFunds.length,
-        unique: uniqueFunds.length,
-        final: previous.length + uniqueFunds.length,
+    try {
+      const response = await axios.get(`${API}/top-returns`, {
+        params: {
+          limit: INITIAL_LIMIT,
+          offset: funds.length,
+          _t: Date.now(),
+        },
+        headers: {
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
       });
 
-      return [...previous, ...uniqueFunds];
-    });
+      const data = response?.data || {};
 
-    if (data.totalHouses !== undefined) {
-      setTotalHouses(Number(data.totalHouses));
+      const newFunds = Array.isArray(data.data) ? data.data : [];
+
+      console.log("📦 LOAD MORE RESPONSE", {
+        received: newFunds.length,
+        total: data.totalHouses,
+        offset: data.offset,
+        limit: data.limit,
+        hasMore: data.hasMore,
+      });
+
+      setFunds((previous) => {
+        const existing = new Set(
+          previous.map((fund) => String(fund.schemeCode ?? fund.schemeId)),
+        );
+
+        const uniqueFunds = newFunds.filter(
+          (fund) => !existing.has(String(fund.schemeCode ?? fund.schemeId)),
+        );
+
+        console.log("➕ ADDING FUNDS", {
+          previous: previous.length,
+          received: newFunds.length,
+          unique: uniqueFunds.length,
+          final: previous.length + uniqueFunds.length,
+        });
+
+        return [...previous, ...uniqueFunds];
+      });
+
+      if (data.totalHouses !== undefined) {
+        setTotalHouses(Number(data.totalHouses));
+      }
+    } catch (err) {
+      console.error("❌ Failed to load more mutual funds:", err);
+    } finally {
+      setLoadingMore(false);
+      console.log("🏁 LOAD MORE FINISHED");
     }
-  } catch (err) {
-    console.error("❌ Failed to load more mutual funds:", err);
-  } finally {
-    setLoadingMore(false);
-    console.log("🏁 LOAD MORE FINISHED");
-  }
-};
+  };
 
   /*
   |--------------------------------------------------------------------------
@@ -341,16 +336,12 @@ export default function ExploreSection1() {
     <div className="explore-section-wrapper">
       <main className="explore-dashboard">
         <div className="dashboard-layout">
-
           {/* =====================================================
               LEFT COLUMN
           ====================================================== */}
 
           <section className="popular-funds-section">
-
-            <h2 className="section-title">
-              Top Returns Today
-            </h2>
+            <h2 className="section-title">Top Returns Today</h2>
 
             {navDate && (
               <div
@@ -365,7 +356,6 @@ export default function ExploreSection1() {
             )}
 
             <div className="funds-grid">
-
               {loading && (
                 <div
                   style={{
@@ -404,9 +394,7 @@ export default function ExploreSection1() {
                       cursor: "pointer",
                     }}
                   >
-
                     <div>
-
                       <div
                         className={`fund-icon ${ICON_CLASSES[index % ICON_CLASSES.length]
                           }`}
@@ -417,41 +405,28 @@ export default function ExploreSection1() {
                             fontWeight: 700,
                           }}
                         >
-                          {getInitials(
-                            fund.fundHouse || fund.schemeName
-                          )}
+                          {getInitials(fund.fundHouse || fund.schemeName)}
                         </span>
                       </div>
 
-                      <h3 className="fund-name">
-                        {fund.schemeName}
-                      </h3>
-
+                      <h3 className="fund-name">{fund.schemeName}</h3>
                     </div>
 
                     <div className="fund-bottom">
-
                       <span
                         className="fund-return"
                         style={{
                           color:
-                            Number(fund.dayReturn) >= 0
-                              ? "#00a878"
-                              : "#ef4444",
+                            Number(fund.dayReturn) >= 0 ? "#00a878" : "#ef4444",
                         }}
                       >
                         {formatPercent(fund.dayReturn)}
                       </span>
 
-                      <span className="fund-period">
-                        1D
-                      </span>
-
+                      <span className="fund-period">1D</span>
                     </div>
-
                   </article>
                 ))}
-
             </div>
 
             {/* =================================================
@@ -465,9 +440,7 @@ export default function ExploreSection1() {
                 onClick={loadMore}
                 disabled={loadingMore}
               >
-                <span>
-                  {loadingMore ? "Loading..." : "Load More"}
-                </span>
+                <span>{loadingMore ? "Loading..." : "Load More"}</span>
               </button>
             )}
 
@@ -483,11 +456,8 @@ export default function ExploreSection1() {
                 marginLeft: "1rem",
               }}
             >
-              <span>
-                All Mutual Funds
-              </span>
+              <span>All Mutual Funds</span>
             </button>
-
           </section>
 
           {/* =====================================================
@@ -495,36 +465,24 @@ export default function ExploreSection1() {
           ====================================================== */}
 
           <aside className="investments-section">
-
-            <h2 className="section-title">
-              Your Investments
-            </h2>
+            <h2 className="section-title">Your Investments</h2>
 
             <div className="investment-card">
-
               <div>
-
-                <span className="current-label">
-                  Current
-                </span>
+                <span className="current-label">Current</span>
 
                 <div className="current-value">
                   {formatMoney(portfolio.currentValue)}
                 </div>
-
               </div>
 
               <hr className="investment-divider" />
 
               <div className="investment-stats">
-
                 {/* 1D */}
 
                 <div className="investment-row">
-
-                  <span className="investment-label">
-                    1D returns
-                  </span>
+                  <span className="investment-label">1D returns</span>
 
                   <span
                     className="investment-value"
@@ -540,22 +498,16 @@ export default function ExploreSection1() {
                   >
                     {portfolio.todaysPnL == null
                       ? "-"
-                      : `${formatMoney(
-                        portfolio.todaysPnL
-                      )} (${formatPercent(
-                        portfolio.todaysReturnPercent
+                      : `${formatMoney(portfolio.todaysPnL)} (${formatPercent(
+                        portfolio.todaysReturnPercent,
                       )})`}
                   </span>
-
                 </div>
 
                 {/* TOTAL */}
 
                 <div className="investment-row">
-
-                  <span className="investment-label">
-                    Total returns
-                  </span>
+                  <span className="investment-label">Total returns</span>
 
                   <span
                     className="investment-value"
@@ -571,54 +523,36 @@ export default function ExploreSection1() {
                   >
                     {portfolio.totalReturn == null
                       ? "-"
-                      : `${formatMoney(
-                        portfolio.totalReturn
-                      )} (${formatPercent(
-                        portfolio.totalReturnPercent
+                      : `${formatMoney(portfolio.totalReturn)} (${formatPercent(
+                        portfolio.totalReturnPercent,
                       )})`}
                   </span>
-
                 </div>
 
                 {/* INVESTED */}
 
                 <div className="investment-row">
-
-                  <span className="investment-label">
-                    Invested
-                  </span>
+                  <span className="investment-label">Invested</span>
 
                   <span className="investment-value dark-value">
-                    {formatMoney(
-                      portfolio.investedAmount
-                    )}
+                    {formatMoney(portfolio.investedAmount)}
                   </span>
-
                 </div>
 
                 {/* CURRENT */}
 
                 <div className="investment-row">
-
-                  <span className="investment-label">
-                    Current Value
-                  </span>
+                  <span className="investment-label">Current Value</span>
 
                   <span className="investment-value dark-value">
-                    {formatMoney(
-                      portfolio.currentValue
-                    )}
+                    {formatMoney(portfolio.currentValue)}
                   </span>
-
                 </div>
 
                 {/* XIRR */}
 
                 <div className="investment-row">
-
-                  <span className="investment-label">
-                    XIRR
-                  </span>
+                  <span className="investment-label">XIRR</span>
 
                   <span
                     className="investment-value dark-value"
@@ -633,19 +567,12 @@ export default function ExploreSection1() {
                   >
                     {portfolio.xirr == null
                       ? "-"
-                      : formatPercent(
-                        portfolio.xirr
-                      )}
+                      : formatPercent(portfolio.xirr)}
                   </span>
-
                 </div>
-
               </div>
-
             </div>
-
           </aside>
-
         </div>
       </main>
     </div>
