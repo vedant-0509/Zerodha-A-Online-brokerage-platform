@@ -5729,9 +5729,14 @@ function filterTradingSession(candles, tradingDate) {
 async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
   /*
    * A requested date can be a market holiday even when it is a weekday.
-   * Upstox correctly returns no candles for such a date. Instead of making
-   * the 1D chart fail, walk backwards to the latest session for which
-   * official 1-minute candles actually exist.
+   * Walk backwards to the latest trading session that has official 1-minute
+   * candles.
+   *
+   * IMPORTANT:
+   * Do not use Upstox's /historical-candle/intraday endpoint for the closed
+   * session. That endpoint is specifically documented for the current trading
+   * day. After the market closes, use the V3 historical-candle endpoint with
+   * explicit to/from dates so the finalized session is retrieved deterministically.
    */
   const requestedDate = String(tradingDate || indiaDate());
   let lastProviderError = null;
@@ -5744,21 +5749,13 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
     }
 
     try {
-      const raw =
-        candidateDate === indiaDate()
-          ? await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-            )
-          : await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-              shiftIndiaDate(candidateDate, -7),
-            );
+      const raw = await upstox.fetchHistory(
+        instrumentKey,
+        "minutes",
+        "1",
+        candidateDate,
+        shiftIndiaDate(candidateDate, -7),
+      );
 
       const candles = filterTradingSession(raw, candidateDate);
 
@@ -5772,9 +5769,13 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
         }
         return candles;
       }
+
+      lastProviderError = new Error(
+        `Upstox returned no 1-minute candles for ${candidateDate}`,
+      );
     } catch (err) {
       lastProviderError = err;
-      logger.warn("Intraday session lookup failed", {
+      logger.warn("Historical intraday session lookup failed", {
         instrumentKey,
         candidateDate,
         error: errorMessage(err),
