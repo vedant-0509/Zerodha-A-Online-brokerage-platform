@@ -7750,8 +7750,18 @@ async function startup() {
 
   await initDb();
 
-  await reconcileOnStartup();
-
+  /*
+   * IMPORTANT:
+   * Never block the HTTP/WebSocket server on the all-stocks EOD reconciliation.
+   *
+   * After market close this job can process ~2,553 instruments. Previously
+   * startup awaited reconcileOnStartup() before server.listen(), which meant
+   * the Central API received ECONNREFUSED on port 3021 while the reconciliation
+   * was still running. That made the stock-detail page show a blank 1D chart
+   * even though the data service itself was starting.
+   *
+   * Start the service first, then run the repair in the background.
+   */
   server.listen(env.port, "127.0.0.1", () => {
     logger.info("detail-stock server started", {
       port: env.port,
@@ -7772,6 +7782,14 @@ async function startup() {
 
       timezone: env.timezone,
     });
+
+    setTimeout(() => {
+      reconcileOnStartup().catch((error) => {
+        logger.error("Startup close reconciliation failed", {
+          error: errorMessage(error),
+        });
+      });
+    }, 1000);
   });
 }
 
