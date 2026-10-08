@@ -37,8 +37,8 @@ export function getHistoryParams(range) {
      * 3M  -> 1 day
      * 6M  -> 1 day
      * 1Y  -> 1 day
-     * 3Y  -> 1 day
-     * 5Y  -> 1 day
+     * 3Y  -> 1 week
+     * 5Y  -> 1 week
      * All -> 1 month
      *
      * Do not introduce a custom intraday baseline calculation here. The
@@ -87,14 +87,14 @@ export function getHistoryParams(range) {
 
     case "3Y":
       return {
-        unit: "days",
+        unit: "weeks",
         interval: "1",
         from: getDateYearsAgo(3),
       };
 
     case "5Y":
       return {
-        unit: "days",
+        unit: "weeks",
         interval: "1",
         from: getDateYearsAgo(5),
       };
