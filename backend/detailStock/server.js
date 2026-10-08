@@ -4214,6 +4214,7 @@ async function primeSnapshot(instrumentKey) {
     "upstox-close-reconciliation",
     "upstox-finalized-intraday",
     "upstox-finalized-history",
+    "upstox-official-eod-quote",
   ]);
 
   const existingIsFinalized =
@@ -5887,86 +5888,114 @@ async function reconcileAllMarketStocks(
       logger.warn("No market stocks available for official settlement", {
         reason,
         tradingDate: targetTradingDate,
-        database: "mongodb",
       });
       return { total: 0, saved: 0 };
     }
+
+    let officialQuotes = {};
+    try {
+      officialQuotes = await upstox.fetchOfficialCloseQuotes(
+        rows.map((row) => row.instrument_key),
+      );
+    } catch (error) {
+      logger.error("Official EOD quote fetch failed", {
+        reason,
+        tradingDate: targetTradingDate,
+        error: errorMessage(error),
+      });
+    }
+
+    const findOfficialQuote = (row) => {
+      const direct = officialQuotes?.[row.instrument_key];
+      if (direct) return direct;
+      const segment = row.master_segment || row.segment || "NSE_EQ";
+      const symbol = row.tradingSymbol || row.symbol || "";
+      return officialQuotes?.[`${segment}|${symbol}`] || null;
+    };
+
+    logger.info("Official EOD quote batch received", {
+      reason,
+      tradingDate: targetTradingDate,
+      requested: rows.length,
+      received: Object.keys(officialQuotes || {}).length,
+    });
 
     const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
     let saved = 0;
 
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
-
       const results = await Promise.allSettled(
         batch.map(async (row) => {
           const key = row.instrument_key;
-          if (!validKey(key)) {
-            throw new Error("Invalid instrument key");
-          }
+          if (!validKey(key)) throw new Error("Invalid instrument key");
 
-          // A successful finalized session is immutable. On the first run of
-          // this version, older daily-close rows do not have settlementStatus,
-          // so they are deliberately re-settled from official history.
-          const alreadyFinalized = await hasFinalizedDailySession(
-            key,
-            targetTradingDate,
-          );
+          const existing = await getSnapshot(key);
+          const quote = findOfficialQuote(row);
 
-          if (alreadyFinalized) {
-            const persisted = await getFinalized1D(key, targetTradingDate);
-            if (persisted?.candles?.length) {
-              const existing = await getSnapshot(key);
-              if (existing?.settlementStatus === "finalized") {
-                return { skipped: true };
-              }
+          if (quote?.close != null && Number(quote.close) > 0) {
+            const close = Number(quote.close);
+            const previous = Number(quote.previousClose);
+            const previousClose =
+              Number.isFinite(previous) && previous > 0
+                ? {
+                    close: previous,
+                    tradingDate: previousTradingDate(dateAtISTNoon(targetTradingDate)),
+                    source: "upstox-v3-official-eod-quote",
+                  }
+                : await resolvePreviousClose(key, targetTradingDate);
+
+            const candle = {
+              timestamp: `${targetTradingDate}T15:30:00+05:30`,
+              open: Number(quote.open ?? close),
+              high: Number(quote.high ?? close),
+              low: Number(quote.low ?? close),
+              close,
+              volume: Number(quote.volume ?? 0),
+            };
+
+            const snapshot = buildOfficialCloseSnapshot(
+              {
+                ...row,
+                upperCircuit: quote.upperCircuit ?? row.upperCircuit,
+                lowerCircuit: quote.lowerCircuit ?? row.lowerCircuit,
+                upperCircuitLimit: quote.upperCircuitLimit ?? row.upperCircuitLimit,
+                lowerCircuitLimit: quote.lowerCircuitLimit ?? row.lowerCircuitLimit,
+              },
+              [candle],
+              previousClose,
+              targetTradingDate,
+              { ...(existing || {}), ...(quote || {}) },
+            );
+
+            snapshot.source = "upstox-official-eod-quote";
+            snapshot.settlementStatus = "finalized";
+            snapshot.officialSettlementReady = true;
+            snapshot.candles = [];
+
+            await saveDailyClose(snapshot, targetTradingDate);
+            await cacheSnapshot(snapshot);
+
+            if (subscribers.has(key)) {
+              io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
             }
+
+            return;
           }
 
-          // The scheduled settlement always fetches official 1-minute history
-          // rather than trusting a live Redis snapshot.
-          const candles = await fetchOfficialIntradaySessionWithRetry(
-            key,
-            targetTradingDate,
-            3,
-          );
-
-          const previousClose = await resolvePreviousClose(
-            key,
-            targetTradingDate,
-          );
-
-          const priorSnapshot = snapshots.get(key) || null;
-          let officialQuote = null;
-          try {
-            officialQuote = await upstox.fetchOhlc(key);
-          } catch (quoteError) {
-            logger.warn("Official settlement quote enrichment failed", {
-              instrumentKey: key,
-              error: errorMessage(quoteError),
-            });
-          }
-
+          // Per-stock fallback only when the batch did not return this symbol.
+          const candles = await fetchOfficialIntradaySessionWithRetry(key, targetTradingDate, 3);
+          const previousClose = await resolvePreviousClose(key, targetTradingDate);
           const snapshot = buildOfficialCloseSnapshot(
-            {
-              ...row,
-              upperCircuit: officialQuote?.upperCircuit ?? row.upperCircuit,
-              lowerCircuit: officialQuote?.lowerCircuit ?? row.lowerCircuit,
-              upperCircuitLimit: officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
-              lowerCircuitLimit: officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
-            },
+            row,
             candles,
             previousClose,
             targetTradingDate,
-            {
-              ...(priorSnapshot || {}),
-              ...(officialQuote || {}),
-            },
+            existing,
           );
           snapshot.candles = candles;
 
           await saveDailyClose(snapshot, targetTradingDate);
-
           await cacheFinalized1D(key, targetTradingDate, {
             tradingDate: targetTradingDate,
             candles,
@@ -5976,14 +6005,11 @@ async function reconcileAllMarketStocks(
             source: "upstox-finalized-intraday",
             finalizedAt: new Date().toISOString(),
           });
-
           await cacheSnapshot(snapshot);
 
           if (subscribers.has(key)) {
             io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
           }
-
-          return { skipped: false };
         }),
       );
 
@@ -6006,17 +6032,14 @@ async function reconcileAllMarketStocks(
       }
     }
 
-    logger.info("Official 1D settlement complete", {
+    logger.info("Official EOD settlement complete", {
       reason,
       tradingDate: targetTradingDate,
       total: rows.length,
       saved,
     });
 
-    return {
-      total: rows.length,
-      saved,
-    };
+    return { total: rows.length, saved };
   })();
 
   try {
@@ -6025,7 +6048,6 @@ async function reconcileAllMarketStocks(
     closingSyncPromise = null;
   }
 }
-
 /* =========================================================
    STARTUP RECONCILIATION
 ========================================================= */
@@ -7350,8 +7372,8 @@ async function persistClosingPrices(reason = "scheduled-settlement") {
     return { total: 0, saved: 0, skipped: true };
   }
 
-  if (!isAfterMarketClose()) {
-    logger.warn("EOD settlement skipped because market is still open", {
+  if (!isOfficialSettlementReady()) {
+    logger.warn("EOD settlement skipped because official settlement is not ready", {
       date: indiaDate(),
       reason,
     });
@@ -7448,8 +7470,10 @@ async function startup() {
 
   await initDb();
 
-  await reconcileOnStartup();
-
+  /*
+   * Bind the Detail Stock service before the potentially long all-stock
+   * reconciliation. This prevents Central API 502/ECONNREFUSED during startup.
+   */
   server.listen(env.port, "127.0.0.1", () => {
     logger.info("detail-stock server started", {
       port: env.port,
@@ -7470,6 +7494,14 @@ async function startup() {
 
       timezone: env.timezone,
     });
+
+    setTimeout(() => {
+      reconcileOnStartup().catch((error) => {
+        logger.error("Startup close reconciliation failed", {
+          error: errorMessage(error),
+        });
+      });
+    }, 1000);
   });
 }
 
