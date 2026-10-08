@@ -6903,6 +6903,93 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
     });
   } catch (err) {
     /*
+     * Closed-market 1D safety fallback.
+     *
+     * The normal path above should return the finalized 1-minute session from
+     * Upstox V3. If the provider has a transient history outage, do not leave
+     * the stock page completely blank when we already have the settled EOD
+     * snapshot in MongoDB. Return a minimal 1D price path from the stored
+     * session OHLC. This is a fallback only; real historical candles always
+     * win whenever they are available.
+     */
+    if (isOneDay && !isMarketOpen()) {
+      try {
+        const marketRow = await getMarketStockByInstrumentKey(key);
+        const closePrice = Number(
+          marketRow?.dayClose ?? marketRow?.price,
+        );
+        const openPrice = Number(
+          marketRow?.openPrice ?? closePrice,
+        );
+        const highPrice = Number(
+          marketRow?.dayHigh ?? Math.max(openPrice, closePrice),
+        );
+        const lowPrice = Number(
+          marketRow?.dayLow ?? Math.min(openPrice, closePrice),
+        );
+
+        if (
+          Number.isFinite(closePrice) &&
+          closePrice > 0 &&
+          Number.isFinite(openPrice) &&
+          openPrice > 0
+        ) {
+          const fallbackDate = latestCompletedTradingDate();
+          const fallbackCandles = [
+            {
+              timestamp: `${fallbackDate}T09:15:00+05:30`,
+              open: openPrice,
+              high: highPrice,
+              low: lowPrice,
+              close: openPrice,
+              volume: 0,
+            },
+            {
+              timestamp: `${fallbackDate}T15:30:00+05:30`,
+              open: openPrice,
+              high: highPrice,
+              low: lowPrice,
+              close: closePrice,
+              volume: Number(marketRow?.volume) || 0,
+            },
+          ];
+
+          const previous = await resolvePreviousClose(key, fallbackDate);
+          const fallbackBaseline =
+            previous?.close ?? Number(marketRow?.previousClose) || null;
+          const fallbackBaselineDate =
+            previous?.tradingDate ?? marketRow?.previousCloseDate ?? null;
+
+          logger.warn("Using stored EOD fallback for closed 1D history", {
+            instrumentKey: key,
+            tradingDate: fallbackDate,
+            error: errorMessage(err),
+          });
+
+          return res.json({
+            success: true,
+            source: "database-eod-fallback",
+            marketOpen: false,
+            refreshed: forceRefresh,
+            sessionDate: fallbackDate,
+            baselineClose: fallbackBaseline,
+            baselineDate: fallbackBaselineDate,
+            data: {
+              candles: fallbackCandles,
+              baselineClose: fallbackBaseline,
+              baselineDate: fallbackBaselineDate,
+            },
+          });
+        }
+      } catch (fallbackError) {
+        logger.warn("Stored EOD 1D fallback failed", {
+          instrumentKey: key,
+          error: errorMessage(fallbackError),
+        });
+      }
+    }
+
+    /*
      * Keep the existing DB fallback for longer ranges. Baseline is resolved
      * independently from the first candle, so weekends/holidays are safe.
      */
