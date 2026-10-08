@@ -485,94 +485,6 @@ async function fetchOhlc(instrumentKey) {
 }
 
 /* =========================================================
-   REST - OFFICIAL EOD QUOTES
-========================================================= */
-
-/*
- * Upstox V3 Full Market Quotes returns exchange-sourced market snapshots
- * and accepts up to 500 instrument keys per request. We use ohlc.close as
- * the finalized session close after the settlement window.
- */
-async function fetchOfficialCloseQuotes(instrumentKeys) {
-  const keys = uniqueKeys(instrumentKeys);
-
-  if (!keys.length) {
-    return {};
-  }
-
-  const requested = new Set(keys);
-  const result = {};
-  const batchSize = 500;
-
-  for (let i = 0; i < keys.length; i += batchSize) {
-    const batch = keys.slice(i, i + batchSize);
-
-    try {
-      const response = await axios.get(`${V3}/market-quote/quotes`, {
-        params: {
-          instrument_key: batch.join(","),
-        },
-        headers: headers(),
-        timeout: 20000,
-      });
-
-      const data = response.data?.data || {};
-
-      for (const [responseKey, quote] of Object.entries(data)) {
-        const lastPrice = n(quote?.last_price);
-        const netChange = n(quote?.net_change);
-        const instrumentKey =
-          quote?.instrument_token ||
-          quote?.instrument_key ||
-          String(responseKey).replace(/:/, "|");
-
-        if (!requested.has(instrumentKey)) {
-          continue;
-        }
-
-        const ohlc = quote?.ohlc || {};
-        const close = n(ohlc.close);
-
-        if (close === null || close <= 0) {
-          continue;
-        }
-
-        const previousClose = n(
-          quote?.prev_close_price ??
-          quote?.cp ??
-          (lastPrice !== null && netChange !== null
-            ? lastPrice - netChange
-            : null),
-        );
-
-        result[instrumentKey] = {
-          instrumentKey,
-          close,
-          open: n(ohlc.open),
-          high: n(ohlc.high),
-          low: n(ohlc.low),
-          volume: n(ohlc.volume ?? quote?.volume),
-          timestamp: n(ohlc.ts),
-          previousClose,
-          upperCircuit: n(quote?.upper_circuit_limit),
-          lowerCircuit: n(quote?.lower_circuit_limit),
-          lastTradeTime: n(quote?.last_trade_time),
-          source: "upstox-v3-official-eod-quote",
-        };
-      }
-    } catch (error) {
-      logger.warn("Official EOD quote batch failed", {
-        batchStart: i,
-        batchSize: batch.length,
-        error: error?.message || String(error),
-      });
-    }
-  }
-
-  return result;
-}
-
-/* =========================================================
    REST - BATCH QUOTES
 ========================================================= */
 
@@ -1076,7 +988,6 @@ module.exports = {
   /* REST Market Data */
   fetchOhlc,
   fetchQuotes,
-  fetchOfficialCloseQuotes,
   fetchHistory,
 
   /* Fundamentals & Financials */
