@@ -117,7 +117,7 @@
 // const snapshots = new Map();
 
 // const SNAP_PREFIX = "detailstock:snapshot:";
-// const HISTORY_PREFIX = "detailstock:history:v4:";
+// const HISTORY_PREFIX = "detailstock:history:v5:";
 // const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 // const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -1678,7 +1678,176 @@
 //    OFFICIAL INTRADAY SETTLEMENT
 // ========================================================= */
 
-// async function resolvePreviousClose(instrumentKey, beforeDate) {
+// function candleTradingDate(candle) {
+  const timestamp = Date.parse(candle?.timestamp);
+  return Number.isFinite(timestamp) ? indiaDate(new Date(timestamp)) : null;
+}
+
+function candleOpen(candle) {
+  const value = Number(candle?.open ?? candle?.o);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function candleClose(candle) {
+  const value = Number(candle?.close ?? candle?.c ?? candle?.price);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function currentISTMarketMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const minutes = Number(values.hour || 0) * 60 + Number(values.minute || 0);
+  return Math.max(9 * 60 + 15, Math.min(15 * 60 + 30, minutes));
+}
+
+function istMinutesFromTimestamp(timestamp) {
+  const ts = Date.parse(timestamp);
+  if (!Number.isFinite(ts)) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ts));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour || 0) * 60 + Number(values.minute || 0);
+}
+
+function nearestTradingCandle(candles, targetDate, targetMinutes) {
+  const rows = (Array.isArray(candles) ? candles : [])
+    .filter((candle) => candleTradingDate(candle) === targetDate && candleClose(candle) !== null)
+    .sort((a, b) => {
+      const am = istMinutesFromTimestamp(a.timestamp);
+      const bm = istMinutesFromTimestamp(b.timestamp);
+      return Math.abs((am ?? 0) - targetMinutes) - Math.abs((bm ?? 0) - targetMinutes);
+    });
+
+  return rows[0] || null;
+}
+
+async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data) {
+  if (!from) return null;
+
+  try {
+    /*
+     * The period-return number is not the OHLC OPEN of the first daily/weekly
+     * candle. It is the market price around the same clock time at the start
+     * of the selected period. This is why the earlier versions could be off
+     * by a few rupees even when the chart itself looked correct.
+     *
+     * Upstox V3 supports minute history from Jan-2022. For intervals above
+     * 15 minutes, a quarter-sized request is allowed, so a 30-minute candle
+     * is enough to resolve the reference point for 3M/6M/1Y/3Y when the
+     * starting date is inside the provider's intraday history.
+     */
+    const today = indiaDate();
+    const targetMinutes = currentISTMarketMinutes();
+    const yearsSince2022 = Number(from.slice(0, 4)) >= 2022;
+
+    // The All range begins at 2000 in the UI, but the return anchor is the
+    // last quoted price immediately before that boundary. For Reliance this
+    // is the Dec-1999 close (19.84), which is also why using the Jan-2000
+    // monthly OPEN produced a large All-range mismatch.
+    if (unit === "months" && from === "2000-01-01") {
+      const previousWindowFrom = shiftIndiaDate(from, -62);
+      const previousCandles = await upstox.fetchHistory(
+        instrumentKey,
+        "months",
+        "1",
+        from,
+        previousWindowFrom,
+      );
+      const previousRows = (Array.isArray(previousCandles) ? previousCandles : [])
+        .filter((candle) => candleTradingDate(candle) < from && candleClose(candle) !== null)
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      const previous = previousRows[previousRows.length - 1];
+      if (previous) {
+        return {
+          close: candleClose(previous),
+          tradingDate: candleTradingDate(previous),
+          source: "upstox-pre-range-close",
+        };
+      }
+    }
+
+    if (yearsSince2022) {
+      const intradayInterval =
+        unit === "minutes" ? Math.max(1, Math.min(Number(interval) || 5, 15)) :
+        from >= shiftIndiaDate(today, -31) ? 5 : 30;
+
+      // Ask for a small window beginning at the range start. Upstox requires
+      // to_date >= from_date; the previous implementation got this direction
+      // wrong for the short-range lookup.
+      const intradayTo = shiftIndiaDate(from, 3);
+      const intradayCandles = await upstox.fetchHistory(
+        instrumentKey,
+        "minutes",
+        String(intradayInterval),
+        intradayTo,
+        from,
+      );
+
+      // If the exact calendar start is a holiday/weekend, use the first
+      // trading session on/after the requested start date.
+      const valid = (Array.isArray(intradayCandles) ? intradayCandles : [])
+        .filter((candle) => candleClose(candle) !== null)
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+      if (valid.length) {
+        const firstTradingDate = candleTradingDate(valid[0]);
+        const sameDay = nearestTradingCandle(valid, firstTradingDate, targetMinutes);
+        if (sameDay) {
+          return {
+            close: candleClose(sameDay),
+            tradingDate: firstTradingDate,
+            source: `upstox-period-start-${intradayInterval}m-same-time`,
+          };
+        }
+      }
+    }
+
+    /*
+     * For dates before the intraday provider window, use the first plotted
+     * candle's OPEN. This is the closest stable equivalent to the start-time
+     * price and is also what our long-range chart already plots.
+     */
+    const rows = (Array.isArray(data) ? data : [])
+      .filter((candle) => {
+        const date = candleTradingDate(candle);
+        return date && date >= from;
+      })
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+    const first = rows[0];
+    const open = candleOpen(first);
+    const close = candleClose(first);
+
+    if (open !== null || close !== null) {
+      return {
+        close: open ?? close,
+        tradingDate: candleTradingDate(first),
+        source: open !== null ? "upstox-range-start-open" : "upstox-range-start-close",
+      };
+    }
+  } catch (err) {
+    logger.warn("Range start price resolution failed", {
+      instrumentKey,
+      unit,
+      interval,
+      from,
+      error: errorMessage(err),
+    });
+  }
+
+  return null;
+}
+
+async function resolvePreviousClose(instrumentKey, beforeDate) {
 //   if (!beforeDate) return null;
 
 //   /*
@@ -3696,7 +3865,7 @@ const subscribers = new Map();
 const snapshots = new Map();
 
 const SNAP_PREFIX = "detailstock:snapshot:";
-const HISTORY_PREFIX = "detailstock:history:v4:";
+const HISTORY_PREFIX = "detailstock:history:v5:";
 const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -6466,22 +6635,29 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       data = filterTradingSession(data, sessionDate);
     } else {
       /*
-       * Every non-1D range uses the close of the first valid trading session
-       * on/after the requested lookback date. Do not use the candle OPEN as a
-       * baseline: that can turn a normal range into a large artificial return.
-       * This also keeps all period buttons on one exchange-specific series.
+       * Non-1D return baseline:
+       *
+       * The first OHLC candle is NOT necessarily the price at which the
+       * selected performance period should start. For short ranges we resolve
+       * an intraday price near the same market-clock time on the first trading
+       * session. For the All range we anchor to the last quoted price before
+       * the 2000-01-01 boundary. For older periods, we safely fall back to
+       * the first plotted candle's OPEN.
+       *
+       * This restores the previously working Groww-style period-return
+       * calculation without touching the finalized 1D settlement path.
        */
-      const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-      const firstClose = Number(
-        firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+      const rangeStart = await resolveRangeStartPrice(
+        key,
+        unit,
+        interval,
+        from,
+        data,
       );
 
-      if (Number.isFinite(firstClose) && firstClose > 0) {
-        baselineClose = firstClose;
-        const firstTimestamp = Date.parse(firstCandle?.timestamp);
-        baselineDate = Number.isFinite(firstTimestamp)
-          ? indiaDate(new Date(firstTimestamp))
-          : from || null;
+      if (rangeStart?.close != null) {
+        baselineClose = Number(rangeStart.close);
+        baselineDate = rangeStart.tradingDate || from || null;
       }
     }
 
@@ -6540,16 +6716,17 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
         const dbData = await getDbHistory(key, from || "2000-01-01", to);
 
         if (dbData.length) {
-          const firstCandle = dbData[0];
-          const firstClose = Number(
-            firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+          const rangeStart = await resolveRangeStartPrice(
+            key,
+            unit,
+            interval,
+            from || "2000-01-01",
+            dbData,
           );
-          const firstTimestamp = Date.parse(firstCandle?.timestamp);
           const baselineClose =
-            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
-          const baselineDate = Number.isFinite(firstTimestamp)
-            ? indiaDate(new Date(firstTimestamp))
-            : from || null;
+            rangeStart?.close != null ? Number(rangeStart.close) : null;
+          const baselineDate =
+            rangeStart?.tradingDate || from || "2000-01-01";
 
           const payload = {
             candles: dbData,
