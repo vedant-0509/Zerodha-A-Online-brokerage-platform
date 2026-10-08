@@ -27,9 +27,23 @@ export function getDateYearsAgo(years) {
 
 export function getHistoryParams(range) {
   switch (range) {
-    // IMPORTANT:
-    // 1D must use Upstox intraday endpoint.
-    // Do NOT send a "from" date.
+    /*
+     * Keep the range -> candle resolution aligned with the chart presets.
+     * These are the default resolutions used by this implementation:
+     *
+     * 1D  -> 1 minute (also supported by the preset; best for live data)
+     * 1W  -> 15 minutes
+     * 1M  -> 1 day
+     * 3M  -> 1 day
+     * 6M  -> 1 day
+     * 1Y  -> 1 day
+     * 3Y  -> 1 week
+     * 5Y  -> 1 week
+     * All -> 1 month
+     *
+     * Do not introduce a custom intraday baseline calculation here. The
+     * backend history response remains responsible for the range baseline.
+     */
     case "1D":
       return {
         unit: "minutes",
@@ -38,8 +52,8 @@ export function getHistoryParams(range) {
 
     case "1W":
       return {
-        unit: "days",
-        interval: "1",
+        unit: "minutes",
+        interval: "15",
         from: getDateDaysAgo(7),
       };
 
@@ -73,14 +87,14 @@ export function getHistoryParams(range) {
 
     case "3Y":
       return {
-        unit: "days",
+        unit: "weeks",
         interval: "1",
         from: getDateYearsAgo(3),
       };
 
     case "5Y":
       return {
-        unit: "days",
+        unit: "weeks",
         interval: "1",
         from: getDateYearsAgo(5),
       };
