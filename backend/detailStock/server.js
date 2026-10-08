@@ -5969,24 +5969,28 @@ async function reconcileAllMarketStocks(
       return { total: 0, saved: 0 };
     }
 
-    const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
-    let saved = 0;
-
     /*
-     * Fetch official EOD OHLC for the entire stock universe in batches first.
-     * Upstox V3 supports up to 500 instruments per full-market-quote request.
-     * This gives us an exchange-sourced close/previous-close without making
-     * one quote request per stock.
+     * Fetch the official EOD OHLC snapshot for the entire universe in batches.
+     * Upstox V3 supports up to 500 instruments per request. This is the source
+     * of truth for the stored close after the settlement window.
      */
     const officialQuotes = await upstox.fetchOfficialCloseQuotes(
       rows.map((row) => row.instrument_key),
     );
 
+    const received = Object.keys(officialQuotes || {}).length;
+
     logger.info("Official EOD quote snapshot fetched", {
+      reason,
       tradingDate: targetTradingDate,
       requested: rows.length,
-      received: Object.keys(officialQuotes || {}).length,
+      received,
+      missing: rows.length - received,
     });
+
+    const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
+    let saved = 0;
+    let fallbackCount = 0;
 
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
@@ -5994,47 +5998,75 @@ async function reconcileAllMarketStocks(
       const results = await Promise.allSettled(
         batch.map(async (row) => {
           const key = row.instrument_key;
+
           if (!validKey(key)) {
             throw new Error("Invalid instrument key");
           }
 
-          // A successful finalized session is immutable. On the first run of
-          // this version, older daily-close rows do not have settlementStatus,
-          // so they are deliberately re-settled from official history.
           const alreadyFinalized = await hasFinalizedDailySession(
             key,
             targetTradingDate,
           );
 
           if (alreadyFinalized) {
-            const persisted = await getFinalized1D(key, targetTradingDate);
-            if (persisted?.candles?.length) {
-              const existing = await getSnapshot(key);
-              if (existing?.settlementStatus === "finalized") {
-                return { skipped: true };
-              }
+            const existing = await getSnapshot(key);
+            if (existing?.settlementStatus === "finalized") {
+              return { skipped: true };
             }
           }
 
-          // The scheduled settlement always fetches official 1-minute history
-          // rather than trusting a live Redis snapshot.
-          const candles = await fetchOfficialIntradaySessionWithRetry(
-            key,
-            targetTradingDate,
-            3,
-          );
-
           const officialQuote = officialQuotes?.[key] || null;
+          let previousClose = null;
+          let candles = [];
 
-          const previousClose =
-            Number.isFinite(Number(officialQuote?.previousClose)) &&
-            Number(officialQuote.previousClose) > 0
-              ? {
-                  close: Number(officialQuote.previousClose),
-                  tradingDate: previousTradingDate(targetTradingDate),
-                  source: "upstox-v3-official-eod-quote",
-                }
-              : await resolvePreviousClose(key, targetTradingDate);
+          if (officialQuote?.close != null) {
+            previousClose =
+              Number.isFinite(Number(officialQuote.previousClose)) &&
+              Number(officialQuote.previousClose) > 0
+                ? {
+                    close: Number(officialQuote.previousClose),
+                    tradingDate: previousTradingDate(
+                      dateAtISTNoon(targetTradingDate),
+                    ),
+                    source: "upstox-v3-official-eod-quote",
+                  }
+                : null;
+
+            /*
+             * The settlement snapshot itself does not need 1-minute candles.
+             * The official session OHLC is sufficient for close/open/high/low/
+             * volume, and the actual 1D candle series is fetched on demand
+             * when a user opens the chart after market close.
+             */
+            candles = [
+              {
+                timestamp:
+                  officialQuote.timestamp ||
+                  `${targetTradingDate}T15:30:00+05:30`,
+                open: officialQuote.open ?? officialQuote.close,
+                high: officialQuote.high ?? officialQuote.close,
+                low: officialQuote.low ?? officialQuote.close,
+                close: officialQuote.close,
+                volume: officialQuote.volume ?? 0,
+              },
+            ];
+          } else {
+            /*
+             * Only instruments missing from the batched official quote fall
+             * back to the existing authoritative intraday/history path.
+             */
+            fallbackCount += 1;
+            candles = await fetchOfficialIntradaySessionWithRetry(
+              key,
+              targetTradingDate,
+              3,
+            );
+
+            previousClose = await resolvePreviousClose(
+              key,
+              targetTradingDate,
+            );
+          }
 
           const priorSnapshot = snapshots.get(key) || null;
 
@@ -6067,27 +6099,45 @@ async function reconcileAllMarketStocks(
             },
             officialQuote,
           );
-          snapshot.candles = candles;
+
+          if (officialQuote?.close != null) {
+            snapshot.dayClose = Number(officialQuote.close);
+            snapshot.price = Number(officialQuote.close);
+            snapshot.ltp = Number(officialQuote.close);
+            snapshot.source = "upstox-official-eod-quote";
+          }
 
           await saveDailyClose(snapshot, targetTradingDate);
-
-          await cacheFinalized1D(key, targetTradingDate, {
-            tradingDate: targetTradingDate,
-            candles,
-            closePrice: snapshot.dayClose,
-            baselineClose: snapshot.previousClose,
-            baselineDate: snapshot.previousCloseDate,
-            source: "upstox-finalized-intraday",
-            finalizedAt: new Date().toISOString(),
-          });
-
           await cacheSnapshot(snapshot);
+
+          /*
+           * An OPEN-session Redis history entry can otherwise survive into
+           * the after-close period. Delete today's 1D cache so the next 1D
+           * request fetches the finalized session candles and then seeds
+           * finalized-1d from the actual intraday series.
+           */
+          if (env.redisEnabled) {
+            try {
+              await redis.del(
+                historyKey(key, "minutes", "1", "", targetTradingDate),
+              );
+            } catch (err) {
+              logger.warn("1D history cache invalidation failed", {
+                instrumentKey: key,
+                tradingDate: targetTradingDate,
+                error: errorMessage(err),
+              });
+            }
+          }
 
           if (subscribers.has(key)) {
             io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
           }
 
-          return { skipped: false };
+          return {
+            skipped: false,
+            official: Boolean(officialQuote?.close != null),
+          };
         }),
       );
 
@@ -6115,11 +6165,15 @@ async function reconcileAllMarketStocks(
       tradingDate: targetTradingDate,
       total: rows.length,
       saved,
+      officialQuoteCount: received,
+      fallbackCount,
     });
 
     return {
       total: rows.length,
       saved,
+      officialQuoteCount: received,
+      fallbackCount,
     };
   })();
 
@@ -6129,7 +6183,6 @@ async function reconcileAllMarketStocks(
     closingSyncPromise = null;
   }
 }
-
 /* =========================================================
    STARTUP RECONCILIATION
 ========================================================= */
