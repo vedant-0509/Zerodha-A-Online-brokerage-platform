@@ -235,47 +235,77 @@ export default function ExploreSection1() {
   |--------------------------------------------------------------------------
   */
 
-  const loadMore = async () => {
+ const loadMore = async () => {
+  console.log("🔥 LOAD MORE CLICK", {
+    loadingMore,
+    fundsLength: funds.length,
+    totalHouses,
+  });
+
+  // Prevent duplicate requests
   if (loadingMore) {
+    console.log("⛔ BLOCKED: loadingMore is true");
     return;
   }
 
+  // Stop if everything is already loaded
   if (funds.length >= totalHouses) {
+    console.log("⛔ BLOCKED: all funds already loaded");
     return;
   }
+
+  console.log("✅ PASSED GUARDS — REQUESTING", {
+    offset: funds.length,
+    limit: INITIAL_LIMIT,
+  });
 
   setLoadingMore(true);
 
   try {
     const response = await axios.get(`${API}/top-returns`, {
-  params: {
-    limit: INITIAL_LIMIT,
-    offset: funds.length,
-    _t: Date.now(),
-  },
-  headers: {
-    "Cache-Control": "no-cache",
-    Pragma: "no-cache",
-  },
-});
+      params: {
+        limit: INITIAL_LIMIT,
+        offset: funds.length,
+        _t: Date.now(),
+      },
+      headers: {
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+    });
 
     const data = response?.data || {};
 
     const newFunds = Array.isArray(data.data) ? data.data : [];
 
+    console.log("📦 LOAD MORE RESPONSE", {
+      received: newFunds.length,
+      total: data.totalHouses,
+      offset: data.offset,
+      limit: data.limit,
+      hasMore: data.hasMore,
+    });
+
     setFunds((previous) => {
       const existing = new Set(
         previous.map(
           (fund) => String(fund.schemeCode ?? fund.schemeId)
-        ),
+        )
       );
 
       const uniqueFunds = newFunds.filter(
         (fund) =>
           !existing.has(
             String(fund.schemeCode ?? fund.schemeId)
-          ),
+          )
       );
+
+      console.log("➕ ADDING FUNDS", {
+        previous: previous.length,
+        received: newFunds.length,
+        unique: uniqueFunds.length,
+        final: previous.length + uniqueFunds.length,
+      });
 
       return [...previous, ...uniqueFunds];
     });
@@ -284,9 +314,10 @@ export default function ExploreSection1() {
       setTotalHouses(Number(data.totalHouses));
     }
   } catch (err) {
-    console.error("Failed to load more mutual funds:", err);
+    console.error("❌ Failed to load more mutual funds:", err);
   } finally {
     setLoadingMore(false);
+    console.log("🏁 LOAD MORE FINISHED");
   }
 };
 
@@ -377,9 +408,8 @@ export default function ExploreSection1() {
                     <div>
 
                       <div
-                        className={`fund-icon ${
-                          ICON_CLASSES[index % ICON_CLASSES.length]
-                        }`}
+                        className={`fund-icon ${ICON_CLASSES[index % ICON_CLASSES.length]
+                          }`}
                       >
                         <span
                           style={{
@@ -503,18 +533,18 @@ export default function ExploreSection1() {
                         portfolio.todaysPnL == null
                           ? "inherit"
                           : Number(portfolio.todaysPnL) >= 0
-                          ? "#00B386"
-                          : "#EF4444",
+                            ? "#00B386"
+                            : "#EF4444",
                       fontWeight: "600",
                     }}
                   >
                     {portfolio.todaysPnL == null
                       ? "-"
                       : `${formatMoney(
-                          portfolio.todaysPnL
-                        )} (${formatPercent(
-                          portfolio.todaysReturnPercent
-                        )})`}
+                        portfolio.todaysPnL
+                      )} (${formatPercent(
+                        portfolio.todaysReturnPercent
+                      )})`}
                   </span>
 
                 </div>
@@ -534,18 +564,18 @@ export default function ExploreSection1() {
                         portfolio.totalReturn == null
                           ? "inherit"
                           : Number(portfolio.totalReturn) >= 0
-                          ? "#00B386"
-                          : "#ef4444",
+                            ? "#00B386"
+                            : "#ef4444",
                       fontWeight: "600",
                     }}
                   >
                     {portfolio.totalReturn == null
                       ? "-"
                       : `${formatMoney(
-                          portfolio.totalReturn
-                        )} (${formatPercent(
-                          portfolio.totalReturnPercent
-                        )})`}
+                        portfolio.totalReturn
+                      )} (${formatPercent(
+                        portfolio.totalReturnPercent
+                      )})`}
                   </span>
 
                 </div>
@@ -597,15 +627,15 @@ export default function ExploreSection1() {
                         portfolio.xirr == null
                           ? "inherit"
                           : portfolio.xirr >= 0
-                          ? "#00B386"
-                          : "#EF4444",
+                            ? "#00B386"
+                            : "#EF4444",
                     }}
                   >
                     {portfolio.xirr == null
                       ? "-"
                       : formatPercent(
-                          portfolio.xirr
-                        )}
+                        portfolio.xirr
+                      )}
                   </span>
 
                 </div>
