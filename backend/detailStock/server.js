@@ -4216,6 +4216,7 @@ async function primeSnapshot(instrumentKey) {
     "upstox-close-reconciliation",
     "upstox-finalized-intraday",
     "upstox-finalized-history",
+    "upstox-official-eod-quote",
   ]);
 
   const existingIsFinalized =
