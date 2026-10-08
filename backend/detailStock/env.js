@@ -49,7 +49,10 @@
 
 //   redisUrl: process.env.REDIS_URL || "redis://127.0.0.1:6379",
 
-//   upstoxAccessToken: process.env.UPSTOX_ACCESS_TOKEN || "",
+//   upstoxAccessToken:
+    process.env.UPSTOX_ACCESS_TOKEN ||
+    process.env.UPSTOX_ANALYTIC_TOKEN ||
+    "",
 
 //   /*
 //    * V3:
@@ -72,7 +75,14 @@
 
 //   week52CacheSeconds: numberValue(process.env.WEEK52_CACHE_SECONDS, 86400),
 
-//   closeQuoteBatchSize: numberValue(process.env.CLOSE_QUOTE_BATCH_SIZE, 100),
+//   closeQuoteBatchSize: numberValue(process.env.CLOSE_QUOTE_BATCH_SIZE, 500),
+
+  redisEnabled: booleanValue(process.env.DETAIL_STOCK_REDIS_ENABLED, true),
+
+  startupReconcileClosed: booleanValue(
+    process.env.DETAIL_STOCK_STARTUP_RECONCILE_CLOSED,
+    true,
+  ),
 
 //   closeBatchSize: numberValue(process.env.CLOSING_BATCH_SIZE, 5),
 
