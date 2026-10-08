@@ -4774,11 +4774,10 @@ export default function StockDashboard({
     const lastChartPrice =
       lineChartPreparedData[lineChartPreparedData.length - 1]?.price ?? null;
 
-    // During the closed/finalized session, the official snapshot close is
-    // authoritative for the displayed 1D value. During market hours, the
-    // live LTP remains authoritative.
-    if (chartRange === "1D" && !marketOpen) {
-      return ltp ?? lastChartPrice ?? null;
+    // Once the market is closed, the finalized 1D close is authoritative.
+
+    if (chartRange === "1D" && !marketOpen && lastChartPrice !== null) {
+      return lastChartPrice;
     }
 
     return ltp ?? lastChartPrice ?? null;
