@@ -248,16 +248,16 @@ export default function ExploreSection1() {
 
   try {
     const response = await axios.get(`${API}/top-returns`, {
-      params: {
-        limit: INITIAL_LIMIT,
-        offset: funds.length,
-        _t: Date.now(),
-      },
-      headers: {
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-      },
-    });
+  params: {
+    limit: INITIAL_LIMIT,
+    offset: funds.length,
+    _t: Date.now(),
+  },
+  headers: {
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  },
+});
 
     const data = response?.data || {};
 
