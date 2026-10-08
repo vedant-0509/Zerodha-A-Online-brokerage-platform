@@ -193,59 +193,38 @@ async function getTopReturns(req, res) {
     const schemes = db.collection("mfSchemes");
 
     /*
-     * Get the best 1D-return fund from
-     * each fund house.
+     * Return all eligible mutual-fund schemes ordered by 1D return.
+     * Pagination is applied to individual funds, not fund houses.
      */
+    const baseMatch = {
+      isActive: true,
+      fundHouse: {
+        $exists: true,
+        $nin: ["", null],
+      },
+      currentNav: {
+        $gt: 0,
+      },
+      previousNav: {
+        $gt: 0,
+      },
+      return1d: {
+        $ne: null,
+      },
+    };
+
     const rows = await schemes
       .aggregate([
         {
-          $match: {
-            isActive: true,
-            fundHouse: {
-              $exists: true,
-              $nin: ["", null],
-            },
-            currentNav: {
-              $gt: 0,
-            },
-            previousNav: {
-              $gt: 0,
-            },
-            return1d: {
-              $ne: null,
-            },
-          },
+          $match: baseMatch,
         },
 
         {
           $sort: {
-            fundHouse: 1,
             return1d: -1,
+            fundHouse: 1,
             schemeName: 1,
             schemeCode: 1,
-          },
-        },
-
-        {
-          $group: {
-            _id: "$fundHouse",
-            fund: {
-              $first: "$$ROOT",
-            },
-          },
-        },
-
-        {
-          $replaceRoot: {
-            newRoot: "$fund",
-          },
-        },
-
-        {
-          $sort: {
-            return1d: -1,
-            fundHouse: 1,
-            schemeName: 1,
           },
         },
 
@@ -285,49 +264,28 @@ async function getTopReturns(req, res) {
       ])
       .toArray();
 
-    const totalHousesResult = await schemes
+    const totalResult = await schemes
       .aggregate([
         {
-          $match: {
-            isActive: true,
-            fundHouse: {
-              $exists: true,
-              $nin: ["", null],
-            },
-            currentNav: {
-              $gt: 0,
-            },
-            previousNav: {
-              $gt: 0,
-            },
-            return1d: {
-              $ne: null,
-            },
-          },
+          $match: baseMatch,
         },
-
         {
-          $group: {
-            _id: "$fundHouse",
-          },
-        },
-
-        {
-          $count: "totalHouses",
+          $count: "total",
         },
       ])
       .toArray();
 
-    const totalHouses = Number(totalHousesResult[0]?.totalHouses || 0);
+    const total = Number(totalResult[0]?.total || 0);
 
     return res.json({
       success: true,
       data: rows,
-      totalHouses,
+      totalHouses: total,
+      total: total,
       returned: rows.length,
       offset,
       limit,
-      hasMore: offset + rows.length < totalHouses,
+      hasMore: offset + rows.length < total,
     });
   } catch (error) {
     console.error("[MF TOP RETURNS]", error);

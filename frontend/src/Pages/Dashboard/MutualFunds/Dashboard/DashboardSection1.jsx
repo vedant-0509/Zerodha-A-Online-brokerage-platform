@@ -121,11 +121,6 @@ const getHoldings = async () => {
 */
 
 const DashboardSection1 = () => {
-  /*
-  |--------------------------------------------------------------------------
-  | Portfolio state
-  |--------------------------------------------------------------------------
-  */
 
   const [holdings, setHoldings] = useState([]);
   const [selectedHolding, setSelectedHolding] = useState(null);
