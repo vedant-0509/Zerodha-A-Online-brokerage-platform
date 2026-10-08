@@ -1903,7 +1903,9 @@
 //     marketDate: tradingDate,
 //     marketOpen: false,
 //     marketStatus: "CLOSED",
-//     source: "upstox-finalized-intraday",
+//     source: officialQuote
+      ? "upstox-official-eod-quote"
+      : "upstox-finalized-intraday",
 //   };
 // }
 
@@ -2053,7 +2055,7 @@
 
 //   const savedToday = await getDailyCloseCount(date);
 
-//   const markerKey = `detailstock:close-reconciled:v3:${date}`;
+//   const markerKey = `detailstock:close-reconciled:v4:${date}`;
 
 //   let marker = null;
 
@@ -3378,7 +3380,7 @@
 
 //   if (env.redisEnabled && result.total > 0 && result.saved >= result.total) {
 //     try {
-//       await redis.set(`detailstock:close-reconciled:v3:${tradingDate}`, "ok", {
+//       await redis.set(`detailstock:close-reconciled:v4:${tradingDate}`, "ok", {
 //         EX: 3 * 24 * 60 * 60,
 //       });
 //     } catch (err) {
@@ -5814,10 +5816,23 @@ async function fetchOfficialIntradaySessionWithRetry(
   throw lastError || new Error(`Official settlement failed for ${instrumentKey}`);
 }
 
-function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
+function buildOfficialCloseSnapshot(
+  row,
+  candles,
+  previousClose,
+  tradingDate,
+  priorSnapshot = null,
+  officialQuote = null,
+) {
   const first = candles[0];
   const last = candles[candles.length - 1];
-  const close = Number(last.close);
+
+  /*
+   * The post-market settlement source is the batched Upstox V3 market quote.
+   * Its OHLC snapshot is exchange-sourced. The intraday candle is retained
+   * for the 1D chart and remains the fallback if the quote was unavailable.
+   */
+  const close = Number(officialQuote?.close ?? last.close);
 
   if (!Number.isFinite(close) || close <= 0) {
     throw new Error(
@@ -5832,10 +5847,18 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     .map((candle) => Number(candle.low))
     .filter((value) => Number.isFinite(value) && value > 0);
 
-  const volume = candles.reduce((sum, candle) => {
-    const value = Number(candle.volume);
-    return sum + (Number.isFinite(value) && value > 0 ? value : 0);
-  }, 0);
+  const sessionHigh = Number(officialQuote?.high);
+  const sessionLow = Number(officialQuote?.low);
+  const sessionOpen = Number(officialQuote?.open);
+  const sessionVolume = Number(officialQuote?.volume);
+
+  const volume =
+    Number.isFinite(sessionVolume) && sessionVolume >= 0
+      ? sessionVolume
+      : candles.reduce((sum, candle) => {
+          const value = Number(candle.volume);
+          return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+        }, 0);
 
   const change =
     previousClose?.close != null ? close - Number(previousClose.close) : null;
@@ -5862,9 +5885,22 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     changePercent: previousClose?.close
       ? (change / Number(previousClose.close)) * 100
       : null,
-    open: Number(first.open),
-    high: highs.length ? Math.max(...highs) : Number(first.high),
-    low: lows.length ? Math.min(...lows) : Number(first.low),
+    open:
+      Number.isFinite(sessionOpen) && sessionOpen > 0
+        ? sessionOpen
+        : Number(first.open),
+    high:
+      Number.isFinite(sessionHigh) && sessionHigh > 0
+        ? sessionHigh
+        : highs.length
+          ? Math.max(...highs)
+          : Number(first.high),
+    low:
+      Number.isFinite(sessionLow) && sessionLow > 0
+        ? sessionLow
+        : lows.length
+          ? Math.min(...lows)
+          : Number(first.low),
     volume,
     upperCircuit: Number(
       priorSnapshot?.upperCircuit ??
@@ -5894,7 +5930,10 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
       row?.lowerCircuit ??
       NaN,
     ),
-    lastTradeTime: Date.parse(last.timestamp) || null,
+    lastTradeTime:
+      Number(officialQuote?.lastTradeTime) ||
+      Date.parse(last.timestamp) ||
+      null,
     timestamp: Date.now(),
     marketDate: tradingDate,
     marketOpen: false,
@@ -5933,6 +5972,22 @@ async function reconcileAllMarketStocks(
     const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
     let saved = 0;
 
+    /*
+     * Fetch official EOD OHLC for the entire stock universe in batches first.
+     * Upstox V3 supports up to 500 instruments per full-market-quote request.
+     * This gives us an exchange-sourced close/previous-close without making
+     * one quote request per stock.
+     */
+    const officialQuotes = await upstox.fetchOfficialCloseQuotes(
+      rows.map((row) => row.instrument_key),
+    );
+
+    logger.info("Official EOD quote snapshot fetched", {
+      tradingDate: targetTradingDate,
+      requested: rows.length,
+      received: Object.keys(officialQuotes || {}).length,
+    });
+
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
 
@@ -5969,29 +6024,39 @@ async function reconcileAllMarketStocks(
             3,
           );
 
-          const previousClose = await resolvePreviousClose(
-            key,
-            targetTradingDate,
-          );
+          const officialQuote = officialQuotes?.[key] || null;
+
+          const previousClose =
+            Number.isFinite(Number(officialQuote?.previousClose)) &&
+            Number(officialQuote.previousClose) > 0
+              ? {
+                  close: Number(officialQuote.previousClose),
+                  tradingDate: previousTradingDate(targetTradingDate),
+                  source: "upstox-v3-official-eod-quote",
+                }
+              : await resolvePreviousClose(key, targetTradingDate);
 
           const priorSnapshot = snapshots.get(key) || null;
-          let officialQuote = null;
-          try {
-            officialQuote = await upstox.fetchOhlc(key);
-          } catch (quoteError) {
-            logger.warn("Official settlement quote enrichment failed", {
-              instrumentKey: key,
-              error: errorMessage(quoteError),
-            });
-          }
 
           const snapshot = buildOfficialCloseSnapshot(
             {
               ...row,
-              upperCircuit: officialQuote?.upperCircuit ?? row.upperCircuit,
-              lowerCircuit: officialQuote?.lowerCircuit ?? row.lowerCircuit,
-              upperCircuitLimit: officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
-              lowerCircuitLimit: officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
+              upperCircuit:
+                row.upperCircuit ??
+                priorSnapshot?.upperCircuit ??
+                priorSnapshot?.upperCircuitLimit,
+              lowerCircuit:
+                row.lowerCircuit ??
+                priorSnapshot?.lowerCircuit ??
+                priorSnapshot?.lowerCircuitLimit,
+              upperCircuitLimit:
+                row.upperCircuitLimit ??
+                priorSnapshot?.upperCircuitLimit ??
+                priorSnapshot?.upperCircuit,
+              lowerCircuitLimit:
+                row.lowerCircuitLimit ??
+                priorSnapshot?.lowerCircuitLimit ??
+                priorSnapshot?.lowerCircuit,
             },
             candles,
             previousClose,
@@ -6000,6 +6065,7 @@ async function reconcileAllMarketStocks(
               ...(priorSnapshot || {}),
               ...(officialQuote || {}),
             },
+            officialQuote,
           );
           snapshot.candles = candles;
 
@@ -6069,7 +6135,7 @@ async function reconcileAllMarketStocks(
 ========================================================= */
 
 async function reconcileOnStartup() {
-  if (!env.startupReconcileClosed || isMarketOpen()) {
+  if (!env.startupReconcileClosed || !isOfficialSettlementReady()) {
     return;
   }
 
@@ -7444,8 +7510,8 @@ async function persistClosingPrices(reason = "scheduled-settlement") {
     return { total: 0, saved: 0, skipped: true };
   }
 
-  if (!isAfterMarketClose()) {
-    logger.warn("EOD settlement skipped because market is still open", {
+  if (!isOfficialSettlementReady()) {
+    logger.warn("EOD settlement skipped because official settlement is not ready", {
       date: indiaDate(),
       reason,
     });
