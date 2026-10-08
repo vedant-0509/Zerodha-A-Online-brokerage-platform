@@ -117,7 +117,7 @@
 // const snapshots = new Map();
 
 // const SNAP_PREFIX = "detailstock:snapshot:";
-// const HISTORY_PREFIX = "detailstock:history:v5:";
+// const HISTORY_PREFIX = "detailstock:history:v4:";
 // const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 // const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -6635,17 +6635,12 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       data = filterTradingSession(data, sessionDate);
     } else {
       /*
-       * Non-1D return baseline:
+       * Period-return baseline:
        *
-       * The first OHLC candle is NOT necessarily the price at which the
-       * selected performance period should start. For short ranges we resolve
-       * an intraday price near the same market-clock time on the first trading
-       * session. For the All range we anchor to the last quoted price before
-       * the 2000-01-01 boundary. For older periods, we safely fall back to
-       * the first plotted candle's OPEN.
-       *
-       * This restores the previously working Groww-style period-return
-       * calculation without touching the finalized 1D settlement path.
+       * Use a price at the selected range's actual starting point rather
+       * than blindly taking the first chart candle's close. This matches the
+       * previously working stock-detail calculation and handles weekends,
+       * holidays, intraday ranges, and the All range separately.
        */
       const rangeStart = await resolveRangeStartPrice(
         key,
