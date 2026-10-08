@@ -3696,7 +3696,7 @@ const subscribers = new Map();
 const snapshots = new Map();
 
 const SNAP_PREFIX = "detailstock:snapshot:";
-const HISTORY_PREFIX = "detailstock:history:v5:";
+const HISTORY_PREFIX = "detailstock:history:v6:";
 const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -5455,54 +5455,73 @@ async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data)
 
   try {
     /*
-     * The period-return number is not the OHLC OPEN of the first daily/weekly
-     * candle. It is the market price around the same clock time at the start
-     * of the selected period. This is why the earlier versions could be off
-     * by a few rupees even when the chart itself looked correct.
+     * Historical performance must start from the PRICE AT THE START of the
+     * selected period, not the closing price of the first daily/weekly candle.
      *
-     * Upstox V3 supports minute history from Jan-2022. For intervals above
-     * 15 minutes, a quarter-sized request is allowed, so a 30-minute candle
-     * is enough to resolve the reference point for 3M/6M/1Y/3Y when the
-     * starting date is inside the provider's intraday history.
+     * For periods inside Upstox intraday history, use the first available
+     * intraday candle of the first trading session on/after the requested
+     * range start. Its OPEN is the exchange-native start price.
+     *
+     * For older ranges, fall back to the first historical candle OPEN.
      */
     const today = indiaDate();
-    const targetMinutes = currentISTMarketMinutes();
-    const yearsSince2022 = Number(from.slice(0, 4)) >= 2022;
+    const yearsSince2022 = Number(String(from).slice(0, 4)) >= 2022;
 
-    // The All range begins at 2000 in the UI, but the return anchor is the
-    // last quoted price immediately before that boundary. For Reliance this
-    // is the Dec-1999 close (19.84), which is also why using the Jan-2000
-    // monthly OPEN produced a large All-range mismatch.
+    /*
+     * The All range begins at 2000-01-01. First try the last available
+     * quoted price before that boundary. If the provider has no pre-boundary
+     * candle, the generic historical OPEN fallback below is used.
+     */
     if (unit === "months" && from === "2000-01-01") {
       const previousWindowFrom = shiftIndiaDate(from, -62);
-      const previousCandles = await upstox.fetchHistory(
-        instrumentKey,
-        "months",
-        "1",
-        from,
-        previousWindowFrom,
-      );
-      const previousRows = (Array.isArray(previousCandles) ? previousCandles : [])
-        .filter((candle) => candleTradingDate(candle) < from && candleClose(candle) !== null)
-        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-      const previous = previousRows[previousRows.length - 1];
-      if (previous) {
-        return {
-          close: candleClose(previous),
-          tradingDate: candleTradingDate(previous),
-          source: "upstox-pre-range-close",
-        };
+
+      try {
+        const previousCandles = await upstox.fetchHistory(
+          instrumentKey,
+          "months",
+          "1",
+          from,
+          previousWindowFrom,
+        );
+
+        const previousRows = (Array.isArray(previousCandles) ? previousCandles : [])
+          .filter(
+            (candle) =>
+              candleTradingDate(candle) < from && candleClose(candle) !== null,
+          )
+          .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+        const previous = previousRows[previousRows.length - 1];
+
+        if (previous) {
+          return {
+            close: candleClose(previous),
+            tradingDate: candleTradingDate(previous),
+            source: "upstox-pre-range-close",
+          };
+        }
+      } catch (err) {
+        logger.warn("All-range pre-boundary lookup failed", {
+          instrumentKey,
+          from,
+          error: errorMessage(err),
+        });
       }
     }
 
     if (yearsSince2022) {
+      /*
+       * Recent ranges use 5-minute candles. Older ranges use 30-minute
+       * candles to keep the request small while still giving a precise
+       * first-session opening price.
+       */
       const intradayInterval =
-        unit === "minutes" ? Math.max(1, Math.min(Number(interval) || 5, 15)) :
-        from >= shiftIndiaDate(today, -31) ? 5 : 30;
+        unit === "minutes"
+          ? Math.max(1, Math.min(Number(interval) || 5, 15))
+          : from >= shiftIndiaDate(today, -31)
+            ? 5
+            : 30;
 
-      // Ask for a small window beginning at the range start. Upstox requires
-      // to_date >= from_date; the previous implementation got this direction
-      // wrong for the short-range lookup.
       const intradayTo = shiftIndiaDate(from, 3);
       const intradayCandles = await upstox.fetchHistory(
         instrumentKey,
@@ -5512,29 +5531,57 @@ async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data)
         from,
       );
 
-      // If the exact calendar start is a holiday/weekend, use the first
-      // trading session on/after the requested start date.
       const valid = (Array.isArray(intradayCandles) ? intradayCandles : [])
-        .filter((candle) => candleClose(candle) !== null)
+        .filter(
+          (candle) =>
+            candleTradingDate(candle) >= from && candleClose(candle) !== null,
+        )
         .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
 
       if (valid.length) {
+        /*
+         * IMPORTANT: use the FIRST candle of the FIRST trading session.
+         *
+         * The previous implementation chose the candle nearest 15:30 after
+         * market close. That effectively used the end-of-session price as
+         * the range baseline and caused the 1M/3M/6M/1Y values to disagree
+         * with the reference chart.
+         */
         const firstTradingDate = candleTradingDate(valid[0]);
-        const sameDay = nearestTradingCandle(valid, firstTradingDate, targetMinutes);
-        if (sameDay) {
+        const firstSession = valid.find(
+          (candle) =>
+            candleTradingDate(candle) === firstTradingDate &&
+            candleOpen(candle) !== null,
+        );
+
+        if (firstSession) {
           return {
-            close: candleClose(sameDay),
+            close: candleOpen(firstSession),
             tradingDate: firstTradingDate,
-            source: `upstox-period-start-${intradayInterval}m-same-time`,
+            source: `upstox-period-start-${intradayInterval}m-open`,
+          };
+        }
+
+        const firstClose = valid.find(
+          (candle) =>
+            candleTradingDate(candle) === firstTradingDate &&
+            candleClose(candle) !== null,
+        );
+
+        if (firstClose) {
+          return {
+            close: candleClose(firstClose),
+            tradingDate: firstTradingDate,
+            source: `upstox-period-start-${intradayInterval}m-close-fallback`,
           };
         }
       }
     }
 
     /*
-     * For dates before the intraday provider window, use the first plotted
-     * candle's OPEN. This is the closest stable equivalent to the start-time
-     * price and is also what our long-range chart already plots.
+     * Intraday history is only available for a finite historical window.
+     * For older ranges, use the first historical candle OPEN rather than
+     * its CLOSE because the performance range starts at the candle opening.
      */
     const rows = (Array.isArray(data) ? data : [])
       .filter((candle) => {
@@ -5551,7 +5598,10 @@ async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data)
       return {
         close: open ?? close,
         tradingDate: candleTradingDate(first),
-        source: open !== null ? "upstox-range-start-open" : "upstox-range-start-close",
+        source:
+          open !== null
+            ? "upstox-range-start-open"
+            : "upstox-range-start-close",
       };
     }
   } catch (err) {
@@ -6623,6 +6673,35 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
     let baselineClose = null;
     let baselineDate = null;
     let sessionDate = null;
+    let rangeFrom = from;
+
+    /*
+     * 1W is a trading-week view, not a literal seven-calendar-day slice.
+     * Keep the six most recent actual sessions (start + five sessions).
+     * The frontend requests a wider calendar window so market holidays do
+     * not shift the range incorrectly.
+     */
+    if (!isOneDay && unit === "minutes" && interval === "15" && from) {
+      const sessions = Array.from(
+        new Set(
+          (Array.isArray(data) ? data : [])
+            .map((candle) => candleTradingDate(candle))
+            .filter(Boolean),
+        ),
+      ).sort();
+
+      const selectedSessions = sessions.slice(-6);
+
+      if (selectedSessions.length) {
+        const selectedSet = new Set(selectedSessions);
+
+        data = data.filter((candle) =>
+          selectedSet.has(candleTradingDate(candle)),
+        );
+
+        rangeFrom = selectedSessions[0];
+      }
+    }
 
     if (isOneDay) {
       sessionDate = !isMarketOpen() ? latestCompletedTradingDate() : to;
@@ -6646,7 +6725,7 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
         key,
         unit,
         interval,
-        from,
+        rangeFrom,
         data,
       );
 
