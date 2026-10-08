@@ -6883,7 +6883,15 @@ app.get("/api/detail-stock/about/:isin", async (req, res) => {
   }
 
   try {
-    const profile = await upstox.getProfile(isin);
+    let profile = await upstox.getProfile(isin);
+
+    // The dedicated Upstox company-profile endpoint is authoritative. If it
+    // returns an empty object, reuse the already-supported fundamentals path
+    // so a transient profile response cannot erase a valid company profile.
+    if (!profile || typeof profile !== "object" || !Object.keys(profile).length) {
+      const fundamentals = await getFundamentalsCached(isin);
+      profile = fundamentals?.profile || {};
+    }
 
     return res.json({
       success: true,
