@@ -5524,21 +5524,18 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
     }
 
     try {
-      const raw =
-        candidateDate === indiaDate()
-          ? await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-            )
-          : await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-              shiftIndiaDate(candidateDate, -7),
-            );
+      /*
+       * This helper is used for completed sessions. Use the Historical Candle
+       * V3 endpoint with explicit dates rather than the Intraday endpoint,
+       * whose contract is for the current trading day.
+       */
+      const raw = await upstox.fetchHistory(
+        instrumentKey,
+        "minutes",
+        "1",
+        candidateDate,
+        shiftIndiaDate(candidateDate, -7),
+      );
 
       const candles = filterTradingSession(raw, candidateDate);
 
@@ -5785,13 +5782,21 @@ async function reconcileAllMarketStocks(
             3,
           );
 
-          const previousClose = await resolvePreviousClose(
-            key,
-            targetTradingDate,
-          );
+          const officialQuote = officialQuotes?.[key] || null;
+
+          const quotePreviousClose = Number(officialQuote?.previousClose);
+          const previousClose =
+            Number.isFinite(quotePreviousClose) && quotePreviousClose > 0
+              ? {
+                  close: quotePreviousClose,
+                  tradingDate: previousTradingDate(
+                    dateAtISTNoon(targetTradingDate),
+                  ),
+                  source: "upstox-v3-official-eod-quote",
+                }
+              : await resolvePreviousClose(key, targetTradingDate);
 
           const priorSnapshot = snapshots.get(key) || null;
-          const officialQuote = officialQuotes?.[key] || null;
 
           const snapshot = buildOfficialCloseSnapshot(
             {
