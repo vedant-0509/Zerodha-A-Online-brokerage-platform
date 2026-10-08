@@ -6639,17 +6639,47 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       }
     }
 
-    let data;
+    // Initialize the complete history response contract before any provider
+    // call. The old implementation left these variables undefined and, more
+    // importantly, never fetched the requested non-1D candle series.
+    let data = [];
+    let baselineClose = null;
+    let baselineDate = null;
+    let sessionDate = null;
 
-    if (isOneDay && !isMarketOpen()) {
-      const sessionDate = latestCompletedTradingDate();
-      data = await fetchOfficialIntradaySession(key, sessionDate);
+    if (isOneDay) {
+      sessionDate = latestCompletedTradingDate();
+
+      if (!isMarketOpen()) {
+        // After close, use the official finalized session candles.
+        data = await fetchOfficialIntradaySession(key, sessionDate);
+      } else {
+        // During market hours V3 intraday history supplies completed candles;
+        // the WebSocket separately overlays the current live minute.
+        data = await upstox.fetchHistory(
+          key,
+          "minutes",
+          "1",
+          indiaDate(),
+        );
+      }
+
+      const previousClose = await resolvePreviousClose(key, sessionDate);
+      if (previousClose?.close != null) {
+        baselineClose = Number(previousClose.close);
+        baselineDate = previousClose.tradingDate || null;
+      }
     } else {
-      /*
-       * Keep chart candles and displayed period return separate. The return
-       * baseline is resolved at the beginning of the selected range using
-       * the older working Detail Stock range-anchor logic.
-       */
+      // Fetch the actual requested historical series first. Without this
+      // call, 1W/1M/3M/6M/1Y/3Y/5Y/All received an empty data variable.
+      data = await upstox.fetchHistory(
+        key,
+        unit,
+        interval,
+        to,
+        from || undefined,
+      );
+
       const rangeStart = await resolveRangeStartPrice(
         key,
         unit,
@@ -6853,7 +6883,15 @@ app.get("/api/detail-stock/about/:isin", async (req, res) => {
   }
 
   try {
-    const profile = await upstox.getProfile(isin);
+    let profile = await upstox.getProfile(isin);
+
+    // The dedicated Upstox company-profile endpoint is authoritative. If it
+    // returns an empty object, reuse the already-supported fundamentals path
+    // so a transient profile response cannot erase a valid company profile.
+    if (!profile || typeof profile !== "object" || !Object.keys(profile).length) {
+      const fundamentals = await getFundamentalsCached(isin);
+      profile = fundamentals?.profile || {};
+    }
 
     return res.json({
       success: true,
