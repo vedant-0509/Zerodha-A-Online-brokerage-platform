@@ -1903,7 +1903,9 @@
 //     marketDate: tradingDate,
 //     marketOpen: false,
 //     marketStatus: "CLOSED",
-//     source: "upstox-finalized-intraday",
+//     source: officialQuote
+      ? "upstox-official-eod-quote"
+      : "upstox-finalized-intraday",
 //   };
 // }
 
@@ -5595,10 +5597,10 @@ async function fetchOfficialIntradaySessionWithRetry(
   throw lastError || new Error(`Official settlement failed for ${instrumentKey}`);
 }
 
-function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
+function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null, officialQuote = null) {
   const first = candles[0];
   const last = candles[candles.length - 1];
-  const close = Number(last.close);
+  const close = Number(officialQuote?.close ?? last?.close);
 
   if (!Number.isFinite(close) || close <= 0) {
     throw new Error(
@@ -5613,10 +5615,14 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     .map((candle) => Number(candle.low))
     .filter((value) => Number.isFinite(value) && value > 0);
 
-  const volume = candles.reduce((sum, candle) => {
-    const value = Number(candle.volume);
-    return sum + (Number.isFinite(value) && value > 0 ? value : 0);
-  }, 0);
+  const quoteVolume = Number(officialQuote?.volume);
+  const volume =
+    Number.isFinite(quoteVolume) && quoteVolume >= 0
+      ? quoteVolume
+      : candles.reduce((sum, candle) => {
+          const value = Number(candle.volume);
+          return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+        }, 0);
 
   const change =
     previousClose?.close != null ? close - Number(previousClose.close) : null;
@@ -5643,9 +5649,22 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     changePercent: previousClose?.close
       ? (change / Number(previousClose.close)) * 100
       : null,
-    open: Number(first.open),
-    high: highs.length ? Math.max(...highs) : Number(first.high),
-    low: lows.length ? Math.min(...lows) : Number(first.low),
+    open:
+      Number.isFinite(Number(officialQuote?.open)) && Number(officialQuote?.open) > 0
+        ? Number(officialQuote.open)
+        : Number(first?.open),
+    high:
+      Number.isFinite(Number(officialQuote?.high)) && Number(officialQuote?.high) > 0
+        ? Number(officialQuote.high)
+        : highs.length
+          ? Math.max(...highs)
+          : Number(first?.high),
+    low:
+      Number.isFinite(Number(officialQuote?.low)) && Number(officialQuote?.low) > 0
+        ? Number(officialQuote.low)
+        : lows.length
+          ? Math.min(...lows)
+          : Number(first?.low),
     volume,
     upperCircuit: Number(
       priorSnapshot?.upperCircuit ??
@@ -5711,6 +5730,22 @@ async function reconcileAllMarketStocks(
       return { total: 0, saved: 0 };
     }
 
+    /*
+     * Fetch the exchange-sourced EOD quote for all instruments in batches.
+     * The individual historical request below is still used to preserve the
+     * real 1D candle series stored for the closed session.
+     */
+    const officialQuotes = await upstox.fetchOfficialCloseQuotes(
+      rows.map((row) => row.instrument_key),
+    );
+
+    logger.info("Official EOD quotes fetched", {
+      reason,
+      tradingDate: targetTradingDate,
+      requested: rows.length,
+      received: Object.keys(officialQuotes || {}).length,
+    });
+
     const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
     let saved = 0;
 
@@ -5756,15 +5791,7 @@ async function reconcileAllMarketStocks(
           );
 
           const priorSnapshot = snapshots.get(key) || null;
-          let officialQuote = null;
-          try {
-            officialQuote = await upstox.fetchOhlc(key);
-          } catch (quoteError) {
-            logger.warn("Official settlement quote enrichment failed", {
-              instrumentKey: key,
-              error: errorMessage(quoteError),
-            });
-          }
+          const officialQuote = officialQuotes?.[key] || null;
 
           const snapshot = buildOfficialCloseSnapshot(
             {
@@ -5781,6 +5808,7 @@ async function reconcileAllMarketStocks(
               ...(priorSnapshot || {}),
               ...(officialQuote || {}),
             },
+            officialQuote,
           );
           snapshot.candles = candles;
 
@@ -7291,8 +7319,11 @@ async function startup() {
 
   await initDb();
 
-  await reconcileOnStartup();
-
+  /*
+   * Start the Detail Stock HTTP/WebSocket server before the potentially long
+   * all-stocks close reconciliation. This keeps the service reachable during
+   * startup; reconciliation continues in the background.
+   */
   server.listen(env.port, "127.0.0.1", () => {
     logger.info("detail-stock server started", {
       port: env.port,
@@ -7313,6 +7344,14 @@ async function startup() {
 
       timezone: env.timezone,
     });
+
+    setTimeout(() => {
+      reconcileOnStartup().catch((error) => {
+        logger.error("Startup close reconciliation failed", {
+          error: errorMessage(error),
+        });
+      });
+    }, 1000);
   });
 }
 
