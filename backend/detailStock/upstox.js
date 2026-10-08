@@ -532,7 +532,6 @@ async function fetchOfficialCloseQuotes(instrumentKeys) {
     return {};
   }
 
-  const requested = new Set(keys.map(String));
   const result = {};
   const batchSize = 500;
 
@@ -552,19 +551,12 @@ async function fetchOfficialCloseQuotes(instrumentKeys) {
 
       for (const [responseKey, quote] of Object.entries(data)) {
         const normalizedKey = String(responseKey).replace(/:/, "|");
-        const candidates = [
-          quote?.instrument_key,
-          quote?.instrument_token,
-          normalizedKey,
-        ].filter(Boolean).map(String);
-
-        const instrumentKey = candidates.find((candidate) =>
-          requested.has(candidate),
-        );
-
-        if (!instrumentKey) {
-          continue;
-        }
+        const instrumentToken = quote?.instrument_token
+          ? String(quote.instrument_token)
+          : null;
+        const explicitKey = quote?.instrument_key
+          ? String(quote.instrument_key)
+          : null;
 
         const ohlc = quote?.ohlc || {};
         const close = n(ohlc.close);
@@ -590,8 +582,10 @@ async function fetchOfficialCloseQuotes(instrumentKeys) {
           previousClose = lastPrice - netChange;
         }
 
-        result[instrumentKey] = {
-          instrumentKey,
+        const normalized = {
+          instrumentKey: instrumentToken || explicitKey || normalizedKey,
+          responseKey: normalizedKey,
+          symbol: quote?.symbol || null,
           close,
           open: n(ohlc.open),
           high: n(ohlc.high),
@@ -604,6 +598,10 @@ async function fetchOfficialCloseQuotes(instrumentKeys) {
           timestamp: n(ohlc.ts ?? quote?.last_trade_time),
           source: "upstox-v3-official-eod-quote",
         };
+
+        result[normalizedKey] = normalized;
+        if (instrumentToken) result[instrumentToken] = normalized;
+        if (explicitKey) result[explicitKey] = normalized;
       }
     } catch (error) {
       logger.warn("Official EOD quote batch failed", {
@@ -613,6 +611,11 @@ async function fetchOfficialCloseQuotes(instrumentKeys) {
       });
     }
   }
+
+  logger.info("Official EOD quote collection complete", {
+    requested: keys.length,
+    aliases: Object.keys(result).length,
+  });
 
   return result;
 }
