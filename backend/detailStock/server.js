@@ -117,7 +117,7 @@
 // const snapshots = new Map();
 
 // const SNAP_PREFIX = "detailstock:snapshot:";
-// const HISTORY_PREFIX = "detailstock:history:v7:";
+// const HISTORY_PREFIX = "detailstock:history:v8:";
 // const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 // const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -3696,7 +3696,7 @@ const subscribers = new Map();
 const snapshots = new Map();
 
 const SNAP_PREFIX = "detailstock:snapshot:";
-const HISTORY_PREFIX = "detailstock:history:v7:";
+const HISTORY_PREFIX = "detailstock:history:v8:";
 const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -5425,56 +5425,129 @@ function candleClose(candle) {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function currentISTMarketMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const minutes = Number(values.hour || 0) * 60 + Number(values.minute || 0);
+  return Math.max(9 * 60 + 15, Math.min(15 * 60 + 30, minutes));
+}
+
+function istMinutesFromTimestamp(timestamp) {
+  const ts = Date.parse(timestamp);
+  if (!Number.isFinite(ts)) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ts));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour || 0) * 60 + Number(values.minute || 0);
+}
+
+function nearestTradingCandle(candles, targetDate, targetMinutes) {
+  const rows = (Array.isArray(candles) ? candles : [])
+    .filter((candle) => candleTradingDate(candle) === targetDate && candleClose(candle) !== null)
+    .sort((a, b) => {
+      const am = istMinutesFromTimestamp(a.timestamp);
+      const bm = istMinutesFromTimestamp(b.timestamp);
+      return Math.abs((am ?? 0) - targetMinutes) - Math.abs((bm ?? 0) - targetMinutes);
+    });
+
+  return rows[0] || null;
+}
+
 async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data) {
   if (!from) return null;
 
   try {
     /*
-     * Groww's period return is anchored to the first plotted price of the
-     * selected range, not to the previous session close and not necessarily
-     * to the daily OHLC open.  For short ranges we can reproduce that much
-     * more closely with an intraday candle on the range-start session.
+     * The period-return number is not the OHLC OPEN of the first daily/weekly
+     * candle. It is the market price around the same clock time at the start
+     * of the selected period. This is why the earlier versions could be off
+     * by a few rupees even when the chart itself looked correct.
      *
-     * IMPORTANT: fetchHistory(to, from) expects TO first.  The previous v6
-     * implementation accidentally reversed these dates, so this branch was
-     * silently falling back to the daily candle open.
+     * Upstox V3 supports minute history from Jan-2022. For intervals above
+     * 15 minutes, a quarter-sized request is allowed, so a 30-minute candle
+     * is enough to resolve the reference point for 3M/6M/1Y/3Y when the
+     * starting date is inside the provider's intraday history.
      */
-    if (unit === "minutes" || (unit === "days" && from >= shiftIndiaDate(indiaDate(new Date()), -95))) {
-      const intradayInterval = unit === "minutes"
-        ? Math.max(1, Math.min(Number(interval) || 5, 30))
-        : from >= shiftIndiaDate(indiaDate(new Date()), -35)
-          ? 5
-          : 30;
+    const today = indiaDate();
+    const targetMinutes = currentISTMarketMinutes();
+    const yearsSince2022 = Number(from.slice(0, 4)) >= 2022;
 
-      const toDate = shiftIndiaDate(from, 2);
+    // The All range begins at 2000 in the UI, but the return anchor is the
+    // last quoted price immediately before that boundary. For Reliance this
+    // is the Dec-1999 close (19.84), which is also why using the Jan-2000
+    // monthly OPEN produced a large All-range mismatch.
+    if (unit === "months" && from === "2000-01-01") {
+      const previousWindowFrom = shiftIndiaDate(from, -62);
+      const previousCandles = await upstox.fetchHistory(
+        instrumentKey,
+        "months",
+        "1",
+        from,
+        previousWindowFrom,
+      );
+      const previousRows = (Array.isArray(previousCandles) ? previousCandles : [])
+        .filter((candle) => candleTradingDate(candle) < from && candleClose(candle) !== null)
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      const previous = previousRows[previousRows.length - 1];
+      if (previous) {
+        return {
+          close: candleClose(previous),
+          tradingDate: candleTradingDate(previous),
+          source: "upstox-pre-range-close",
+        };
+      }
+    }
+
+    if (yearsSince2022) {
+      const intradayInterval =
+        unit === "minutes" ? Math.max(1, Math.min(Number(interval) || 5, 15)) :
+        from >= shiftIndiaDate(today, -31) ? 5 : 30;
+
+      // Ask for a small window beginning at the range start. Upstox requires
+      // to_date >= from_date; the previous implementation got this direction
+      // wrong for the short-range lookup.
+      const intradayTo = shiftIndiaDate(from, 3);
       const intradayCandles = await upstox.fetchHistory(
         instrumentKey,
         "minutes",
         String(intradayInterval),
-        toDate,
+        intradayTo,
         from,
       );
 
-      const firstSession = (Array.isArray(intradayCandles) ? intradayCandles : [])
-        .filter((candle) => candleTradingDate(candle) === from && candleClose(candle) !== null)
+      // If the exact calendar start is a holiday/weekend, use the first
+      // trading session on/after the requested start date.
+      const valid = (Array.isArray(intradayCandles) ? intradayCandles : [])
+        .filter((candle) => candleClose(candle) !== null)
         .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
 
-      if (firstSession.length) {
-        const first = firstSession[0];
-        const price = candleClose(first);
-        if (price !== null) {
+      if (valid.length) {
+        const firstTradingDate = candleTradingDate(valid[0]);
+        const sameDay = nearestTradingCandle(valid, firstTradingDate, targetMinutes);
+        if (sameDay) {
           return {
-            close: price,
-            tradingDate: from,
-            source: `upstox-range-start-${intradayInterval}m-close`,
+            close: candleClose(sameDay),
+            tradingDate: firstTradingDate,
+            source: `upstox-period-start-${intradayInterval}m-same-time`,
           };
         }
       }
     }
 
-    // For ranges beyond the intraday historical window, use the first valid
-    // candle on/after the requested date.  The OPEN is the closest available
-    // equivalent to Groww's beginning-of-period anchor at this resolution.
+    /*
+     * For dates before the intraday provider window, use the first plotted
+     * candle's OPEN. This is the closest stable equivalent to the start-time
+     * price and is also what our long-range chart already plots.
+     */
     const rows = (Array.isArray(data) ? data : [])
       .filter((candle) => {
         const date = candleTradingDate(candle);
@@ -5490,10 +5563,7 @@ async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data)
       return {
         close: open ?? close,
         tradingDate: candleTradingDate(first),
-        source:
-          open !== null
-            ? "upstox-range-start-open"
-            : "upstox-range-start-close",
+        source: open !== null ? "upstox-range-start-open" : "upstox-range-start-close",
       };
     }
   } catch (err) {
