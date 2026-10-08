@@ -236,49 +236,59 @@ export default function ExploreSection1() {
   */
 
   const loadMore = async () => {
-    if (loadingMore) {
-      return;
+  if (loadingMore) {
+    return;
+  }
+
+  if (funds.length >= totalHouses) {
+    return;
+  }
+
+  setLoadingMore(true);
+
+  try {
+    const response = await axios.get(`${API}/top-returns`, {
+      params: {
+        limit: INITIAL_LIMIT,
+        offset: funds.length,
+        _t: Date.now(),
+      },
+      headers: {
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+    });
+
+    const data = response?.data || {};
+
+    const newFunds = Array.isArray(data.data) ? data.data : [];
+
+    setFunds((previous) => {
+      const existing = new Set(
+        previous.map(
+          (fund) => String(fund.schemeCode ?? fund.schemeId)
+        ),
+      );
+
+      const uniqueFunds = newFunds.filter(
+        (fund) =>
+          !existing.has(
+            String(fund.schemeCode ?? fund.schemeId)
+          ),
+      );
+
+      return [...previous, ...uniqueFunds];
+    });
+
+    if (data.totalHouses !== undefined) {
+      setTotalHouses(Number(data.totalHouses));
     }
-
-    if (funds.length >= totalHouses) {
-      return;
-    }
-
-    setLoadingMore(true);
-
-    try {
-      const response = await axios.get(`${API}/top-returns`, {
-        params: {
-          limit: INITIAL_LIMIT,
-          offset: funds.length,
-        },
-      });
-
-      const data = response?.data || {};
-
-      const newFunds = Array.isArray(data.data) ? data.data : [];
-
-      setFunds((previous) => {
-        const existing = new Set(
-          previous.map((fund) => String(fund.schemeCode ?? fund.schemeId)),
-        );
-
-        const uniqueFunds = newFunds.filter(
-          (fund) => !existing.has(String(fund.schemeCode ?? fund.schemeId)),
-        );
-
-        return [...previous, ...uniqueFunds];
-      });
-
-      if (data.totalHouses !== undefined) {
-        setTotalHouses(Number(data.totalHouses));
-      }
-    } catch (err) {
-      console.error("Failed to load more mutual funds:", err);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  } catch (err) {
+    console.error("Failed to load more mutual funds:", err);
+  } finally {
+    setLoadingMore(false);
+  }
+};
 
   /*
   |--------------------------------------------------------------------------
