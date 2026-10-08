@@ -6956,7 +6956,7 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
           const previous = await resolvePreviousClose(key, fallbackDate);
           const fallbackBaseline =
-            previous?.close ?? Number(marketRow?.previousClose) || null;
+            previous?.close ?? (Number(marketRow?.previousClose) || null);
           const fallbackBaselineDate =
             previous?.tradingDate ?? marketRow?.previousCloseDate ?? null;
 
