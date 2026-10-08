@@ -566,82 +566,6 @@ async function fetchHistory(instrumentKey, unit, interval, to, from) {
 }
 
 /* =========================================================
-   OFFICIAL EOD QUOTES
-========================================================= */
-
-/*
- * Fetch exchange-sourced full quotes in batches of 500.
- *
- * This endpoint is used only after the market/closing-auction window.
- * Upstox V3 exposes the session OHLC close in ohlc.close, which is the
- * value we persist as the official EOD close for the stock.
- */
-async function fetchOfficialCloseQuotes(instrumentKeys) {
-  const keys = uniqueKeys(instrumentKeys);
-
-  if (!keys.length) {
-    return {};
-  }
-
-  const result = {};
-  const batchSize = 500;
-
-  for (let i = 0; i < keys.length; i += batchSize) {
-    const batch = keys.slice(i, i + batchSize);
-
-    try {
-      const response = await axios.get(`${V3}/market-quote/quotes`, {
-        params: {
-          instrument_key: batch.join(","),
-        },
-        headers: headers(),
-        timeout: 20000,
-      });
-
-      const data = response.data?.data || {};
-
-      for (const [responseKey, item] of Object.entries(data)) {
-        const instrumentKey =
-          item?.instrument_token ||
-          item?.instrument_key ||
-          String(responseKey).replace(":", "|");
-
-        if (!keys.includes(instrumentKey)) {
-          continue;
-        }
-
-        const ohlc = item?.ohlc || {};
-        const close = n(ohlc.close);
-
-        if (close === null || close <= 0) {
-          continue;
-        }
-
-        result[instrumentKey] = {
-          instrumentKey,
-          close,
-          open: n(ohlc.open),
-          high: n(ohlc.high),
-          low: n(ohlc.low),
-          volume: n(ohlc.volume ?? item?.volume),
-          timestamp: n(ohlc.ts),
-          lastTradeTime: n(item?.last_trade_time),
-          previousClose: n(item?.prev_close_price ?? item?.cp),
-          source: "upstox-v3-official-close",
-        };
-      }
-    } catch (err) {
-      logger.warn("Official EOD quote batch failed", {
-        batchStart: i,
-        batchSize: batch.length,
-        error: err?.message || String(err),
-      });
-    }
-  }
-
-  return result;
-}
-/* =========================================================
    FUNDAMENTALS REQUEST
 ========================================================= */
 
@@ -1064,7 +988,6 @@ module.exports = {
   /* REST Market Data */
   fetchOhlc,
   fetchQuotes,
-  fetchOfficialCloseQuotes,
   fetchHistory,
 
   /* Fundamentals & Financials */
