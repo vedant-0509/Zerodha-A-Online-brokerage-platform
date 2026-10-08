@@ -3658,6 +3658,116 @@ export default function StockDashboard({
         return;
       }
 
+      /*
+       * Closed-market 1D UI fallback:
+       *
+       * If historical candles are temporarily unavailable, the snapshot
+       * endpoint still contains the settled stock price. Build a minimal
+       * two-point session path so the chart never renders as "Market data
+       * unavailable" merely because the history provider/cache is unavailable.
+       * Real 1-minute history always wins in the normal path above.
+       */
+      if (range === "1D" && !marketOpenRef.current) {
+        try {
+          const snapshotResponse = await axios.get(
+            ENDPOINTS.snapshot(key),
+            {
+              timeout: 10000,
+              signal,
+            },
+          );
+
+          if (
+            !signal?.aborted &&
+            requestGeneration === historyRequestGenerationRef.current
+          ) {
+            const fallbackSnapshot =
+              unwrapResponse(snapshotResponse.data) || {};
+
+            const closePrice = nullableNumber(
+              fallbackSnapshot.dayClose,
+              fallbackSnapshot.price,
+              fallbackSnapshot.ltp,
+            );
+            const openPrice = nullableNumber(
+              fallbackSnapshot.open,
+              fallbackSnapshot.openPrice,
+              closePrice,
+            );
+            const previousClose = nullableNumber(
+              fallbackSnapshot.previousClose,
+              fallbackSnapshot.previous_close,
+            );
+
+            if (closePrice !== null && openPrice !== null) {
+              const sessionDate =
+                fallbackSnapshot.marketDate ||
+                fallbackSnapshot.tradingDate ||
+                getIndiaDate();
+
+              const fallback = [
+                {
+                  timestamp: sessionDate + "T09:15:00+05:30",
+                  open: openPrice,
+                  high: nullableNumber(
+                    fallbackSnapshot.high,
+                    fallbackSnapshot.dayHigh,
+                    Math.max(openPrice, closePrice),
+                  ),
+                  low: nullableNumber(
+                    fallbackSnapshot.low,
+                    fallbackSnapshot.dayLow,
+                    Math.min(openPrice, closePrice),
+                  ),
+                  close: openPrice,
+                  volume: 0,
+                },
+                {
+                  timestamp: sessionDate + "T15:30:00+05:30",
+                  open: openPrice,
+                  high: nullableNumber(
+                    fallbackSnapshot.high,
+                    fallbackSnapshot.dayHigh,
+                    Math.max(openPrice, closePrice),
+                  ),
+                  low: nullableNumber(
+                    fallbackSnapshot.low,
+                    fallbackSnapshot.dayLow,
+                    Math.min(openPrice, closePrice),
+                  ),
+                  close: closePrice,
+                  volume: nullableNumber(
+                    fallbackSnapshot.volume,
+                    0,
+                  ),
+                },
+              ];
+
+              if (previousClose !== null) {
+                setRangeBaseline(previousClose);
+              }
+
+              historicalDayHistoryRef.current = fallback;
+              provisionalLiveMinutesRef.current = new Map();
+              liveDayHistoryRef.current = fallback;
+              hasLiveTickRef.current = false;
+              finalHistoryLoadedRef.current = true;
+              setHistory(fallback);
+            }
+          }
+        } catch (fallbackError) {
+          if (
+            !axios.isCancel(fallbackError) &&
+            fallbackError?.code !== "ERR_CANCELED"
+          ) {
+            console.warn(
+              "Closed 1D snapshot fallback failed:",
+              fallbackError?.message || fallbackError,
+            );
+          }
+        }
+      }
+
       console.error("History failed:", error);
     } finally {
       if (
