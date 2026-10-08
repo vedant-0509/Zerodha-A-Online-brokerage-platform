@@ -53,7 +53,6 @@ export default function ExploreSection1() {
 
   const [navDate, setNavDate] = useState(null);
   const [totalHouses, setTotalHouses] = useState(0);
-  const [topHasMore, setTopHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -166,7 +165,6 @@ export default function ExploreSection1() {
         setFunds(topFunds);
 
         setTotalHouses(Number(topData.totalHouses || 0));
-        setTopHasMore(Boolean(topData.hasMore));
 
         setNavDate(topFunds[0]?.navDate || topData.navDate || null);
 
@@ -241,7 +239,7 @@ export default function ExploreSection1() {
       return;
     }
 
-    if (!topHasMore) {
+    if (funds.length >= totalHouses) {
       return;
     }
 
@@ -274,8 +272,6 @@ export default function ExploreSection1() {
       if (data.totalHouses !== undefined) {
         setTotalHouses(Number(data.totalHouses));
       }
-
-      setTopHasMore(Boolean(data.hasMore));
     } catch (err) {
       console.error("Failed to load more mutual funds:", err);
     } finally {
@@ -388,7 +384,7 @@ export default function ExploreSection1() {
                 LOAD MORE
             ================================================== */}
 
-            {!loading && topHasMore && (
+            {!loading && funds.length < totalHouses && (
               <button
                 type="button"
                 className="all-funds-link"
