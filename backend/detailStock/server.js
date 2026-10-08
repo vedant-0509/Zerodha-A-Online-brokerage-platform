@@ -1,3 +1,6 @@
+
+
+
 require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
@@ -120,7 +123,7 @@ const subscribers = new Map();
 const snapshots = new Map();
 
 const SNAP_PREFIX = "detailstock:snapshot:";
-const HISTORY_PREFIX = "detailstock:history:v5:";
+const HISTORY_PREFIX = "detailstock:history:v6:";
 const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -1822,6 +1825,128 @@ function latestCompletedTradingDate(date = new Date()) {
    OFFICIAL INTRADAY SETTLEMENT
 ========================================================= */
 
+
+function indiaMinutesOfDay(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour || 0) * 60 + Number(values.minute || 0);
+}
+
+function candleTradingDate(candle) {
+  const timestamp = Date.parse(candle?.timestamp);
+  return Number.isFinite(timestamp) ? indiaDate(new Date(timestamp)) : null;
+}
+
+function candleOpen(candle) {
+  const value = Number(candle?.open ?? candle?.o);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function candleClose(candle) {
+  const value = Number(candle?.close ?? candle?.c ?? candle?.price);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data) {
+  if (!from) return null;
+
+  try {
+    if (unit === "minutes" && Number(interval) <= 15) {
+      const minuteCandles = await upstox.fetchHistory(
+        instrumentKey,
+        "minutes",
+        "5",
+        from,
+        shiftIndiaDate(from, -5),
+      );
+
+      const candidates = (Array.isArray(minuteCandles) ? minuteCandles : [])
+        .map((candle) => ({
+          candle,
+          date: candleTradingDate(candle),
+          timestamp: Date.parse(candle?.timestamp),
+        }))
+        .filter(
+          (item) =>
+            Number.isFinite(item.timestamp) &&
+            item.date &&
+            item.date <= from &&
+            candleClose(item.candle) !== null,
+        );
+
+      if (candidates.length) {
+        const selectedDate = candidates.reduce(
+          (latest, item) => (!latest || item.date > latest.date ? item : latest),
+          null,
+        ).date;
+
+        const targetMinutes = Math.max(
+          9 * 60 + 15,
+          Math.min(15 * 60 + 30, indiaMinutesOfDay()),
+        );
+
+        const sameSession = candidates
+          .filter((item) => item.date === selectedDate)
+          .sort((a, b) => {
+            const aMinutes = indiaMinutesOfDay(new Date(a.timestamp));
+            const bMinutes = indiaMinutesOfDay(new Date(b.timestamp));
+            return (
+              Math.abs(aMinutes - targetMinutes) -
+              Math.abs(bMinutes - targetMinutes)
+            );
+          });
+
+        const selected = sameSession[0]?.candle;
+        const price = candleClose(selected);
+        if (price !== null) {
+          return {
+            close: price,
+            tradingDate: candleTradingDate(selected),
+            source: "upstox-range-start-intraday",
+          };
+        }
+      }
+    }
+
+    const rows = (Array.isArray(data) ? data : [])
+      .filter((candle) => {
+        const date = candleTradingDate(candle);
+        return date && date >= from;
+      })
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+    const first = rows[0];
+    const open = candleOpen(first);
+    const close = candleClose(first);
+
+    if (open !== null || close !== null) {
+      return {
+        close: open ?? close,
+        tradingDate: candleTradingDate(first),
+        source:
+          open !== null
+            ? "upstox-range-start-open"
+            : "upstox-range-start-close",
+      };
+    }
+  } catch (err) {
+    logger.warn("Range start price resolution failed", {
+      instrumentKey,
+      unit,
+      interval,
+      from,
+      error: errorMessage(err),
+    });
+  }
+
+  return null;
+}
+
 async function resolvePreviousClose(instrumentKey, beforeDate) {
   if (!beforeDate) return null;
 
@@ -2889,41 +3014,17 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
       data = filterTradingSession(data, sessionDate);
     } else {
-      /*
-       * Match the standard chart-performance convention used by broker
-       * interfaces: the selected period's return is measured from the last
-       * official closing price BEFORE the requested lookback date.
-       *
-       * Example: if 3M starts on 2026-07-08, the chart data begins on/after
-       * 2026-07-08, but the displayed return baseline is the previous trading
-       * session close (2026-07-07). Using the first candle's OPEN/CLOSE as the
-       * baseline makes the displayed return depend on the first day's movement
-       * and can produce the exact mismatch seen against Groww.
-       *
-       * For ALL, there may be no provider data before the first available
-       * session, so the earliest valid historical close is the fallback.
-       */
-      if (from && from !== "2000-01-01") {
-        const previous = await resolvePreviousClose(key, from);
-        if (previous?.close != null) {
-          baselineClose = Number(previous.close);
-          baselineDate = previous.tradingDate || null;
-        }
-      }
+      const rangeStart = await resolveRangeStartPrice(
+        key,
+        unit,
+        interval,
+        from,
+        data,
+      );
 
-      if (baselineClose === null) {
-        const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-        const firstClose = Number(
-          firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
-        );
-
-        if (Number.isFinite(firstClose) && firstClose > 0) {
-          baselineClose = firstClose;
-          const firstTimestamp = Date.parse(firstCandle?.timestamp);
-          baselineDate = Number.isFinite(firstTimestamp)
-            ? indiaDate(new Date(firstTimestamp))
-            : from || null;
-        }
+      if (rangeStart?.close != null) {
+        baselineClose = Number(rangeStart.close);
+        baselineDate = rangeStart.tradingDate || from || null;
       }
     }
 
