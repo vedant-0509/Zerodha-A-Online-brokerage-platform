@@ -1903,9 +1903,7 @@
 //     marketDate: tradingDate,
 //     marketOpen: false,
 //     marketStatus: "CLOSED",
-//     source: officialQuote
-      ? "upstox-official-eod-quote"
-      : "upstox-finalized-intraday",
+//     source: "upstox-finalized-intraday",
 //   };
 // }
 
@@ -2055,7 +2053,7 @@
 
 //   const savedToday = await getDailyCloseCount(date);
 
-//   const markerKey = `detailstock:close-reconciled:v4:${date}`;
+//   const markerKey = `detailstock:close-reconciled:v3:${date}`;
 
 //   let marker = null;
 
@@ -3380,7 +3378,7 @@
 
 //   if (env.redisEnabled && result.total > 0 && result.saved >= result.total) {
 //     try {
-//       await redis.set(`detailstock:close-reconciled:v4:${tradingDate}`, "ok", {
+//       await redis.set(`detailstock:close-reconciled:v3:${tradingDate}`, "ok", {
 //         EX: 3 * 24 * 60 * 60,
 //       });
 //     } catch (err) {
@@ -3698,7 +3696,7 @@ const subscribers = new Map();
 const snapshots = new Map();
 
 const SNAP_PREFIX = "detailstock:snapshot:";
-const HISTORY_PREFIX = "detailstock:history:v6:";
+const HISTORY_PREFIX = "detailstock:history:v4:";
 const FINAL_1D_PREFIX = "detailstock:finalized-1d:v1:";
 const WEEK52_PREFIX = "detailstock:52-week:v1:";
 
@@ -4216,7 +4214,6 @@ async function primeSnapshot(instrumentKey) {
     "upstox-close-reconciliation",
     "upstox-finalized-intraday",
     "upstox-finalized-history",
-    "upstox-official-eod-quote",
   ]);
 
   const existingIsFinalized =
@@ -5401,225 +5398,6 @@ function latestCompletedTradingDate(date = new Date()) {
    OFFICIAL INTRADAY SETTLEMENT
 ========================================================= */
 
-function candleTradingDate(candle) {
-  const timestamp = Date.parse(candle?.timestamp);
-  return Number.isFinite(timestamp) ? indiaDate(new Date(timestamp)) : null;
-}
-
-function candleOpen(candle) {
-  const value = Number(candle?.open ?? candle?.o);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function candleClose(candle) {
-  const value = Number(candle?.close ?? candle?.c ?? candle?.price);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function currentISTMarketMinutes() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const minutes = Number(values.hour || 0) * 60 + Number(values.minute || 0);
-  return Math.max(9 * 60 + 15, Math.min(15 * 60 + 30, minutes));
-}
-
-function istMinutesFromTimestamp(timestamp) {
-  const ts = Date.parse(timestamp);
-  if (!Number.isFinite(ts)) return null;
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(ts));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return Number(values.hour || 0) * 60 + Number(values.minute || 0);
-}
-
-function nearestTradingCandle(candles, targetDate, targetMinutes) {
-  const rows = (Array.isArray(candles) ? candles : [])
-    .filter((candle) => candleTradingDate(candle) === targetDate && candleClose(candle) !== null)
-    .sort((a, b) => {
-      const am = istMinutesFromTimestamp(a.timestamp);
-      const bm = istMinutesFromTimestamp(b.timestamp);
-      return Math.abs((am ?? 0) - targetMinutes) - Math.abs((bm ?? 0) - targetMinutes);
-    });
-
-  return rows[0] || null;
-}
-
-async function resolveRangeStartPrice(instrumentKey, unit, interval, from, data) {
-  if (!from) return null;
-
-  try {
-    /*
-     * Historical performance must start from the PRICE AT THE START of the
-     * selected period, not the closing price of the first daily/weekly candle.
-     *
-     * For periods inside Upstox intraday history, use the first available
-     * intraday candle of the first trading session on/after the requested
-     * range start. Its OPEN is the exchange-native start price.
-     *
-     * For older ranges, fall back to the first historical candle OPEN.
-     */
-    const today = indiaDate();
-    const yearsSince2022 = Number(String(from).slice(0, 4)) >= 2022;
-
-    /*
-     * The All range begins at 2000-01-01. First try the last available
-     * quoted price before that boundary. If the provider has no pre-boundary
-     * candle, the generic historical OPEN fallback below is used.
-     */
-    if (unit === "months" && from === "2000-01-01") {
-      const previousWindowFrom = shiftIndiaDate(from, -62);
-
-      try {
-        const previousCandles = await upstox.fetchHistory(
-          instrumentKey,
-          "months",
-          "1",
-          from,
-          previousWindowFrom,
-        );
-
-        const previousRows = (Array.isArray(previousCandles) ? previousCandles : [])
-          .filter(
-            (candle) =>
-              candleTradingDate(candle) < from && candleClose(candle) !== null,
-          )
-          .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-
-        const previous = previousRows[previousRows.length - 1];
-
-        if (previous) {
-          return {
-            close: candleClose(previous),
-            tradingDate: candleTradingDate(previous),
-            source: "upstox-pre-range-close",
-          };
-        }
-      } catch (err) {
-        logger.warn("All-range pre-boundary lookup failed", {
-          instrumentKey,
-          from,
-          error: errorMessage(err),
-        });
-      }
-    }
-
-    if (yearsSince2022) {
-      /*
-       * Recent ranges use 5-minute candles. Older ranges use 30-minute
-       * candles to keep the request small while still giving a precise
-       * first-session opening price.
-       */
-      const intradayInterval =
-        unit === "minutes"
-          ? Math.max(1, Math.min(Number(interval) || 5, 15))
-          : from >= shiftIndiaDate(today, -31)
-            ? 5
-            : 30;
-
-      const intradayTo = shiftIndiaDate(from, 3);
-      const intradayCandles = await upstox.fetchHistory(
-        instrumentKey,
-        "minutes",
-        String(intradayInterval),
-        intradayTo,
-        from,
-      );
-
-      const valid = (Array.isArray(intradayCandles) ? intradayCandles : [])
-        .filter(
-          (candle) =>
-            candleTradingDate(candle) >= from && candleClose(candle) !== null,
-        )
-        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-
-      if (valid.length) {
-        /*
-         * IMPORTANT: use the FIRST candle of the FIRST trading session.
-         *
-         * The previous implementation chose the candle nearest 15:30 after
-         * market close. That effectively used the end-of-session price as
-         * the range baseline and caused the 1M/3M/6M/1Y values to disagree
-         * with the reference chart.
-         */
-        const firstTradingDate = candleTradingDate(valid[0]);
-        const firstSession = valid.find(
-          (candle) =>
-            candleTradingDate(candle) === firstTradingDate &&
-            candleOpen(candle) !== null,
-        );
-
-        if (firstSession) {
-          return {
-            close: candleOpen(firstSession),
-            tradingDate: firstTradingDate,
-            source: `upstox-period-start-${intradayInterval}m-open`,
-          };
-        }
-
-        const firstClose = valid.find(
-          (candle) =>
-            candleTradingDate(candle) === firstTradingDate &&
-            candleClose(candle) !== null,
-        );
-
-        if (firstClose) {
-          return {
-            close: candleClose(firstClose),
-            tradingDate: firstTradingDate,
-            source: `upstox-period-start-${intradayInterval}m-close-fallback`,
-          };
-        }
-      }
-    }
-
-    /*
-     * Intraday history is only available for a finite historical window.
-     * For older ranges, use the first historical candle OPEN rather than
-     * its CLOSE because the performance range starts at the candle opening.
-     */
-    const rows = (Array.isArray(data) ? data : [])
-      .filter((candle) => {
-        const date = candleTradingDate(candle);
-        return date && date >= from;
-      })
-      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-
-    const first = rows[0];
-    const open = candleOpen(first);
-    const close = candleClose(first);
-
-    if (open !== null || close !== null) {
-      return {
-        close: open ?? close,
-        tradingDate: candleTradingDate(first),
-        source:
-          open !== null
-            ? "upstox-range-start-open"
-            : "upstox-range-start-close",
-      };
-    }
-  } catch (err) {
-    logger.warn("Range start price resolution failed", {
-      instrumentKey,
-      unit,
-      interval,
-      from,
-      error: errorMessage(err),
-    });
-  }
-
-  return null;
-}
-
 async function resolvePreviousClose(instrumentKey, beforeDate) {
   if (!beforeDate) return null;
 
@@ -5729,14 +5507,9 @@ function filterTradingSession(candles, tradingDate) {
 async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
   /*
    * A requested date can be a market holiday even when it is a weekday.
-   * Walk backwards to the latest trading session that has official 1-minute
-   * candles.
-   *
-   * IMPORTANT:
-   * Do not use Upstox's /historical-candle/intraday endpoint for the closed
-   * session. That endpoint is specifically documented for the current trading
-   * day. After the market closes, use the V3 historical-candle endpoint with
-   * explicit to/from dates so the finalized session is retrieved deterministically.
+   * Upstox correctly returns no candles for such a date. Instead of making
+   * the 1D chart fail, walk backwards to the latest session for which
+   * official 1-minute candles actually exist.
    */
   const requestedDate = String(tradingDate || indiaDate());
   let lastProviderError = null;
@@ -5749,13 +5522,21 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
     }
 
     try {
-      const raw = await upstox.fetchHistory(
-        instrumentKey,
-        "minutes",
-        "1",
-        candidateDate,
-        shiftIndiaDate(candidateDate, -7),
-      );
+      const raw =
+        candidateDate === indiaDate()
+          ? await upstox.fetchHistory(
+              instrumentKey,
+              "minutes",
+              "1",
+              candidateDate,
+            )
+          : await upstox.fetchHistory(
+              instrumentKey,
+              "minutes",
+              "1",
+              candidateDate,
+              shiftIndiaDate(candidateDate, -7),
+            );
 
       const candles = filterTradingSession(raw, candidateDate);
 
@@ -5769,13 +5550,9 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
         }
         return candles;
       }
-
-      lastProviderError = new Error(
-        `Upstox returned no 1-minute candles for ${candidateDate}`,
-      );
     } catch (err) {
       lastProviderError = err;
-      logger.warn("Historical intraday session lookup failed", {
+      logger.warn("Intraday session lookup failed", {
         instrumentKey,
         candidateDate,
         error: errorMessage(err),
@@ -5818,23 +5595,10 @@ async function fetchOfficialIntradaySessionWithRetry(
   throw lastError || new Error(`Official settlement failed for ${instrumentKey}`);
 }
 
-function buildOfficialCloseSnapshot(
-  row,
-  candles,
-  previousClose,
-  tradingDate,
-  priorSnapshot = null,
-  officialQuote = null,
-) {
+function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
   const first = candles[0];
   const last = candles[candles.length - 1];
-
-  /*
-   * The post-market settlement source is the batched Upstox V3 market quote.
-   * Its OHLC snapshot is exchange-sourced. The intraday candle is retained
-   * for the 1D chart and remains the fallback if the quote was unavailable.
-   */
-  const close = Number(officialQuote?.close ?? last.close);
+  const close = Number(last.close);
 
   if (!Number.isFinite(close) || close <= 0) {
     throw new Error(
@@ -5849,18 +5613,10 @@ function buildOfficialCloseSnapshot(
     .map((candle) => Number(candle.low))
     .filter((value) => Number.isFinite(value) && value > 0);
 
-  const sessionHigh = Number(officialQuote?.high);
-  const sessionLow = Number(officialQuote?.low);
-  const sessionOpen = Number(officialQuote?.open);
-  const sessionVolume = Number(officialQuote?.volume);
-
-  const volume =
-    Number.isFinite(sessionVolume) && sessionVolume >= 0
-      ? sessionVolume
-      : candles.reduce((sum, candle) => {
-          const value = Number(candle.volume);
-          return sum + (Number.isFinite(value) && value > 0 ? value : 0);
-        }, 0);
+  const volume = candles.reduce((sum, candle) => {
+    const value = Number(candle.volume);
+    return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+  }, 0);
 
   const change =
     previousClose?.close != null ? close - Number(previousClose.close) : null;
@@ -5887,22 +5643,9 @@ function buildOfficialCloseSnapshot(
     changePercent: previousClose?.close
       ? (change / Number(previousClose.close)) * 100
       : null,
-    open:
-      Number.isFinite(sessionOpen) && sessionOpen > 0
-        ? sessionOpen
-        : Number(first.open),
-    high:
-      Number.isFinite(sessionHigh) && sessionHigh > 0
-        ? sessionHigh
-        : highs.length
-          ? Math.max(...highs)
-          : Number(first.high),
-    low:
-      Number.isFinite(sessionLow) && sessionLow > 0
-        ? sessionLow
-        : lows.length
-          ? Math.min(...lows)
-          : Number(first.low),
+    open: Number(first.open),
+    high: highs.length ? Math.max(...highs) : Number(first.high),
+    low: lows.length ? Math.min(...lows) : Number(first.low),
     volume,
     upperCircuit: Number(
       priorSnapshot?.upperCircuit ??
@@ -5932,10 +5675,7 @@ function buildOfficialCloseSnapshot(
       row?.lowerCircuit ??
       NaN,
     ),
-    lastTradeTime:
-      Number(officialQuote?.lastTradeTime) ||
-      Date.parse(last.timestamp) ||
-      null,
+    lastTradeTime: Date.parse(last.timestamp) || null,
     timestamp: Date.now(),
     marketDate: tradingDate,
     marketOpen: false,
@@ -5971,28 +5711,8 @@ async function reconcileAllMarketStocks(
       return { total: 0, saved: 0 };
     }
 
-    /*
-     * Fetch the official EOD OHLC snapshot for the entire universe in batches.
-     * Upstox V3 supports up to 500 instruments per request. This is the source
-     * of truth for the stored close after the settlement window.
-     */
-    const officialQuotes = await upstox.fetchOfficialCloseQuotes(
-      rows.map((row) => row.instrument_key),
-    );
-
-    const received = Object.keys(officialQuotes || {}).length;
-
-    logger.info("Official EOD quote snapshot fetched", {
-      reason,
-      tradingDate: targetTradingDate,
-      requested: rows.length,
-      received,
-      missing: rows.length - received,
-    });
-
     const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
     let saved = 0;
-    let fallbackCount = 0;
 
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
@@ -6000,97 +5720,59 @@ async function reconcileAllMarketStocks(
       const results = await Promise.allSettled(
         batch.map(async (row) => {
           const key = row.instrument_key;
-
           if (!validKey(key)) {
             throw new Error("Invalid instrument key");
           }
 
+          // A successful finalized session is immutable. On the first run of
+          // this version, older daily-close rows do not have settlementStatus,
+          // so they are deliberately re-settled from official history.
           const alreadyFinalized = await hasFinalizedDailySession(
             key,
             targetTradingDate,
           );
 
           if (alreadyFinalized) {
-            const existing = await getSnapshot(key);
-            if (existing?.settlementStatus === "finalized") {
-              return { skipped: true };
+            const persisted = await getFinalized1D(key, targetTradingDate);
+            if (persisted?.candles?.length) {
+              const existing = await getSnapshot(key);
+              if (existing?.settlementStatus === "finalized") {
+                return { skipped: true };
+              }
             }
           }
 
-          const officialQuote = officialQuotes?.[key] || null;
-          let previousClose = null;
-          let candles = [];
+          // The scheduled settlement always fetches official 1-minute history
+          // rather than trusting a live Redis snapshot.
+          const candles = await fetchOfficialIntradaySessionWithRetry(
+            key,
+            targetTradingDate,
+            3,
+          );
 
-          if (officialQuote?.close != null) {
-            previousClose =
-              Number.isFinite(Number(officialQuote.previousClose)) &&
-              Number(officialQuote.previousClose) > 0
-                ? {
-                    close: Number(officialQuote.previousClose),
-                    tradingDate: previousTradingDate(
-                      dateAtISTNoon(targetTradingDate),
-                    ),
-                    source: "upstox-v3-official-eod-quote",
-                  }
-                : null;
-
-            /*
-             * The settlement snapshot itself does not need 1-minute candles.
-             * The official session OHLC is sufficient for close/open/high/low/
-             * volume, and the actual 1D candle series is fetched on demand
-             * when a user opens the chart after market close.
-             */
-            candles = [
-              {
-                timestamp:
-                  officialQuote.timestamp ||
-                  `${targetTradingDate}T15:30:00+05:30`,
-                open: officialQuote.open ?? officialQuote.close,
-                high: officialQuote.high ?? officialQuote.close,
-                low: officialQuote.low ?? officialQuote.close,
-                close: officialQuote.close,
-                volume: officialQuote.volume ?? 0,
-              },
-            ];
-          } else {
-            /*
-             * Only instruments missing from the batched official quote fall
-             * back to the existing authoritative intraday/history path.
-             */
-            fallbackCount += 1;
-            candles = await fetchOfficialIntradaySessionWithRetry(
-              key,
-              targetTradingDate,
-              3,
-            );
-
-            previousClose = await resolvePreviousClose(
-              key,
-              targetTradingDate,
-            );
-          }
+          const previousClose = await resolvePreviousClose(
+            key,
+            targetTradingDate,
+          );
 
           const priorSnapshot = snapshots.get(key) || null;
+          let officialQuote = null;
+          try {
+            officialQuote = await upstox.fetchOhlc(key);
+          } catch (quoteError) {
+            logger.warn("Official settlement quote enrichment failed", {
+              instrumentKey: key,
+              error: errorMessage(quoteError),
+            });
+          }
 
           const snapshot = buildOfficialCloseSnapshot(
             {
               ...row,
-              upperCircuit:
-                row.upperCircuit ??
-                priorSnapshot?.upperCircuit ??
-                priorSnapshot?.upperCircuitLimit,
-              lowerCircuit:
-                row.lowerCircuit ??
-                priorSnapshot?.lowerCircuit ??
-                priorSnapshot?.lowerCircuitLimit,
-              upperCircuitLimit:
-                row.upperCircuitLimit ??
-                priorSnapshot?.upperCircuitLimit ??
-                priorSnapshot?.upperCircuit,
-              lowerCircuitLimit:
-                row.lowerCircuitLimit ??
-                priorSnapshot?.lowerCircuitLimit ??
-                priorSnapshot?.lowerCircuit,
+              upperCircuit: officialQuote?.upperCircuit ?? row.upperCircuit,
+              lowerCircuit: officialQuote?.lowerCircuit ?? row.lowerCircuit,
+              upperCircuitLimit: officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
+              lowerCircuitLimit: officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
             },
             candles,
             previousClose,
@@ -6099,47 +5781,28 @@ async function reconcileAllMarketStocks(
               ...(priorSnapshot || {}),
               ...(officialQuote || {}),
             },
-            officialQuote,
           );
-
-          if (officialQuote?.close != null) {
-            snapshot.dayClose = Number(officialQuote.close);
-            snapshot.price = Number(officialQuote.close);
-            snapshot.ltp = Number(officialQuote.close);
-            snapshot.source = "upstox-official-eod-quote";
-          }
+          snapshot.candles = candles;
 
           await saveDailyClose(snapshot, targetTradingDate);
-          await cacheSnapshot(snapshot);
 
-          /*
-           * An OPEN-session Redis history entry can otherwise survive into
-           * the after-close period. Delete today's 1D cache so the next 1D
-           * request fetches the finalized session candles and then seeds
-           * finalized-1d from the actual intraday series.
-           */
-          if (env.redisEnabled) {
-            try {
-              await redis.del(
-                historyKey(key, "minutes", "1", "", targetTradingDate),
-              );
-            } catch (err) {
-              logger.warn("1D history cache invalidation failed", {
-                instrumentKey: key,
-                tradingDate: targetTradingDate,
-                error: errorMessage(err),
-              });
-            }
-          }
+          await cacheFinalized1D(key, targetTradingDate, {
+            tradingDate: targetTradingDate,
+            candles,
+            closePrice: snapshot.dayClose,
+            baselineClose: snapshot.previousClose,
+            baselineDate: snapshot.previousCloseDate,
+            source: "upstox-finalized-intraday",
+            finalizedAt: new Date().toISOString(),
+          });
+
+          await cacheSnapshot(snapshot);
 
           if (subscribers.has(key)) {
             io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
           }
 
-          return {
-            skipped: false,
-            official: Boolean(officialQuote?.close != null),
-          };
+          return { skipped: false };
         }),
       );
 
@@ -6167,15 +5830,11 @@ async function reconcileAllMarketStocks(
       tradingDate: targetTradingDate,
       total: rows.length,
       saved,
-      officialQuoteCount: received,
-      fallbackCount,
     });
 
     return {
       total: rows.length,
       saved,
-      officialQuoteCount: received,
-      fallbackCount,
     };
   })();
 
@@ -6185,12 +5844,13 @@ async function reconcileAllMarketStocks(
     closingSyncPromise = null;
   }
 }
+
 /* =========================================================
    STARTUP RECONCILIATION
 ========================================================= */
 
 async function reconcileOnStartup() {
-  if (!env.startupReconcileClosed || !isOfficialSettlementReady()) {
+  if (!env.startupReconcileClosed || isMarketOpen()) {
     return;
   }
 
@@ -6794,35 +6454,6 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
     let baselineClose = null;
     let baselineDate = null;
     let sessionDate = null;
-    let rangeFrom = from;
-
-    /*
-     * 1W is a trading-week view, not a literal seven-calendar-day slice.
-     * Keep the six most recent actual sessions (start + five sessions).
-     * The frontend requests a wider calendar window so market holidays do
-     * not shift the range incorrectly.
-     */
-    if (!isOneDay && unit === "minutes" && interval === "15" && from) {
-      const sessions = Array.from(
-        new Set(
-          (Array.isArray(data) ? data : [])
-            .map((candle) => candleTradingDate(candle))
-            .filter(Boolean),
-        ),
-      ).sort();
-
-      const selectedSessions = sessions.slice(-6);
-
-      if (selectedSessions.length) {
-        const selectedSet = new Set(selectedSessions);
-
-        data = data.filter((candle) =>
-          selectedSet.has(candleTradingDate(candle)),
-        );
-
-        rangeFrom = selectedSessions[0];
-      }
-    }
 
     if (isOneDay) {
       sessionDate = !isMarketOpen() ? latestCompletedTradingDate() : to;
@@ -6835,24 +6466,22 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       data = filterTradingSession(data, sessionDate);
     } else {
       /*
-       * Period-return baseline:
-       *
-       * Use a price at the selected range's actual starting point rather
-       * than blindly taking the first chart candle's close. This matches the
-       * previously working stock-detail calculation and handles weekends,
-       * holidays, intraday ranges, and the All range separately.
+       * Every non-1D range uses the close of the first valid trading session
+       * on/after the requested lookback date. Do not use the candle OPEN as a
+       * baseline: that can turn a normal range into a large artificial return.
+       * This also keeps all period buttons on one exchange-specific series.
        */
-      const rangeStart = await resolveRangeStartPrice(
-        key,
-        unit,
-        interval,
-        rangeFrom,
-        data,
+      const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
+      const firstClose = Number(
+        firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
       );
 
-      if (rangeStart?.close != null) {
-        baselineClose = Number(rangeStart.close);
-        baselineDate = rangeStart.tradingDate || from || null;
+      if (Number.isFinite(firstClose) && firstClose > 0) {
+        baselineClose = firstClose;
+        const firstTimestamp = Date.parse(firstCandle?.timestamp);
+        baselineDate = Number.isFinite(firstTimestamp)
+          ? indiaDate(new Date(firstTimestamp))
+          : from || null;
       }
     }
 
@@ -6903,93 +6532,6 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
     });
   } catch (err) {
     /*
-     * Closed-market 1D safety fallback.
-     *
-     * The normal path above should return the finalized 1-minute session from
-     * Upstox V3. If the provider has a transient history outage, do not leave
-     * the stock page completely blank when we already have the settled EOD
-     * snapshot in MongoDB. Return a minimal 1D price path from the stored
-     * session OHLC. This is a fallback only; real historical candles always
-     * win whenever they are available.
-     */
-    if (isOneDay && !isMarketOpen()) {
-      try {
-        const marketRow = await getMarketStockByInstrumentKey(key);
-        const closePrice = Number(
-          marketRow?.dayClose ?? marketRow?.price,
-        );
-        const openPrice = Number(
-          marketRow?.openPrice ?? closePrice,
-        );
-        const highPrice = Number(
-          marketRow?.dayHigh ?? Math.max(openPrice, closePrice),
-        );
-        const lowPrice = Number(
-          marketRow?.dayLow ?? Math.min(openPrice, closePrice),
-        );
-
-        if (
-          Number.isFinite(closePrice) &&
-          closePrice > 0 &&
-          Number.isFinite(openPrice) &&
-          openPrice > 0
-        ) {
-          const fallbackDate = latestCompletedTradingDate();
-          const fallbackCandles = [
-            {
-              timestamp: `${fallbackDate}T09:15:00+05:30`,
-              open: openPrice,
-              high: highPrice,
-              low: lowPrice,
-              close: openPrice,
-              volume: 0,
-            },
-            {
-              timestamp: `${fallbackDate}T15:30:00+05:30`,
-              open: openPrice,
-              high: highPrice,
-              low: lowPrice,
-              close: closePrice,
-              volume: Number(marketRow?.volume) || 0,
-            },
-          ];
-
-          const previous = await resolvePreviousClose(key, fallbackDate);
-          const fallbackBaseline =
-            previous?.close ?? (Number(marketRow?.previousClose) || null);
-          const fallbackBaselineDate =
-            previous?.tradingDate ?? marketRow?.previousCloseDate ?? null;
-
-          logger.warn("Using stored EOD fallback for closed 1D history", {
-            instrumentKey: key,
-            tradingDate: fallbackDate,
-            error: errorMessage(err),
-          });
-
-          return res.json({
-            success: true,
-            source: "database-eod-fallback",
-            marketOpen: false,
-            refreshed: forceRefresh,
-            sessionDate: fallbackDate,
-            baselineClose: fallbackBaseline,
-            baselineDate: fallbackBaselineDate,
-            data: {
-              candles: fallbackCandles,
-              baselineClose: fallbackBaseline,
-              baselineDate: fallbackBaselineDate,
-            },
-          });
-        }
-      } catch (fallbackError) {
-        logger.warn("Stored EOD 1D fallback failed", {
-          instrumentKey: key,
-          error: errorMessage(fallbackError),
-        });
-      }
-    }
-
-    /*
      * Keep the existing DB fallback for longer ranges. Baseline is resolved
      * independently from the first candle, so weekends/holidays are safe.
      */
@@ -6998,17 +6540,16 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
         const dbData = await getDbHistory(key, from || "2000-01-01", to);
 
         if (dbData.length) {
-          const rangeStart = await resolveRangeStartPrice(
-            key,
-            unit,
-            interval,
-            from || "2000-01-01",
-            dbData,
+          const firstCandle = dbData[0];
+          const firstClose = Number(
+            firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
           );
+          const firstTimestamp = Date.parse(firstCandle?.timestamp);
           const baselineClose =
-            rangeStart?.close != null ? Number(rangeStart.close) : null;
-          const baselineDate =
-            rangeStart?.tradingDate || from || "2000-01-01";
+            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
+          const baselineDate = Number.isFinite(firstTimestamp)
+            ? indiaDate(new Date(firstTimestamp))
+            : from || null;
 
           const payload = {
             candles: dbData,
@@ -7652,8 +7193,8 @@ async function persistClosingPrices(reason = "scheduled-settlement") {
     return { total: 0, saved: 0, skipped: true };
   }
 
-  if (!isOfficialSettlementReady()) {
-    logger.warn("EOD settlement skipped because official settlement is not ready", {
+  if (!isAfterMarketClose()) {
+    logger.warn("EOD settlement skipped because market is still open", {
       date: indiaDate(),
       reason,
     });
@@ -7750,18 +7291,8 @@ async function startup() {
 
   await initDb();
 
-  /*
-   * IMPORTANT:
-   * Never block the HTTP/WebSocket server on the all-stocks EOD reconciliation.
-   *
-   * After market close this job can process ~2,553 instruments. Previously
-   * startup awaited reconcileOnStartup() before server.listen(), which meant
-   * the Central API received ECONNREFUSED on port 3021 while the reconciliation
-   * was still running. That made the stock-detail page show a blank 1D chart
-   * even though the data service itself was starting.
-   *
-   * Start the service first, then run the repair in the background.
-   */
+  await reconcileOnStartup();
+
   server.listen(env.port, "127.0.0.1", () => {
     logger.info("detail-stock server started", {
       port: env.port,
@@ -7782,14 +7313,6 @@ async function startup() {
 
       timezone: env.timezone,
     });
-
-    setTimeout(() => {
-      reconcileOnStartup().catch((error) => {
-        logger.error("Startup close reconciliation failed", {
-          error: errorMessage(error),
-        });
-      });
-    }, 1000);
   });
 }
 
