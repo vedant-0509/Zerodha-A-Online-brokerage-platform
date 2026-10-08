@@ -516,111 +516,6 @@ async function fetchQuotes(instrumentKeys) {
 }
 
 /* =========================================================
-   OFFICIAL EOD QUOTES V3
-========================================================= */
-
-/*
- * V3 Full Market Quotes is used only for post-settlement finalization.
- * Upstox supports up to 500 instrument keys in one request.
- *
- * The response is keyed as EXCHANGE:SYMBOL (for example NSE_EQ:RELIANCE).
- */
-async function fetchOfficialCloseQuotes(instrumentKeys) {
-  const keys = uniqueKeys(instrumentKeys);
-
-  if (!keys.length) {
-    return {};
-  }
-
-  const result = {};
-  const batchSize = 500;
-
-  for (let i = 0; i < keys.length; i += batchSize) {
-    const batch = keys.slice(i, i + batchSize);
-
-    try {
-      const response = await axios.get(`${V3}/market-quote/quotes`, {
-        params: {
-          instrument_key: batch.join(","),
-        },
-        headers: headers(),
-        timeout: 20000,
-      });
-
-      const data = response.data?.data || {};
-
-      for (const [responseKey, quote] of Object.entries(data)) {
-        const normalizedKey = String(responseKey).replace(/:/, "|");
-        const instrumentToken = quote?.instrument_token
-          ? String(quote.instrument_token)
-          : null;
-        const explicitKey = quote?.instrument_key
-          ? String(quote.instrument_key)
-          : null;
-
-        const ohlc = quote?.ohlc || {};
-        const close = n(ohlc.close);
-
-        if (close === null || close <= 0) {
-          continue;
-        }
-
-        const lastPrice = n(quote?.last_price);
-        const netChange = n(quote?.net_change);
-
-        let previousClose = n(
-          quote?.prev_close_price ??
-          quote?.cp ??
-          quote?.previous_close,
-        );
-
-        if (
-          previousClose === null &&
-          lastPrice !== null &&
-          netChange !== null
-        ) {
-          previousClose = lastPrice - netChange;
-        }
-
-        const normalized = {
-          instrumentKey: instrumentToken || explicitKey || normalizedKey,
-          responseKey: normalizedKey,
-          symbol: quote?.symbol || null,
-          close,
-          open: n(ohlc.open),
-          high: n(ohlc.high),
-          low: n(ohlc.low),
-          volume: n(ohlc.volume ?? quote?.volume),
-          previousClose,
-          upperCircuit: n(quote?.upper_circuit_limit),
-          lowerCircuit: n(quote?.lower_circuit_limit),
-          lastTradeTime: n(quote?.last_trade_time),
-          timestamp: n(ohlc.ts ?? quote?.last_trade_time),
-          source: "upstox-v3-official-eod-quote",
-        };
-
-        result[normalizedKey] = normalized;
-        if (instrumentToken) result[instrumentToken] = normalized;
-        if (explicitKey) result[explicitKey] = normalized;
-      }
-    } catch (error) {
-      logger.warn("Official EOD quote batch failed", {
-        batchStart: i,
-        batchSize: batch.length,
-        error: error?.message || String(error),
-      });
-    }
-  }
-
-  logger.info("Official EOD quote collection complete", {
-    requested: keys.length,
-    aliases: Object.keys(result).length,
-  });
-
-  return result;
-}
-
-/* =========================================================
    HISTORY
 ========================================================= */
 
@@ -1093,7 +988,6 @@ module.exports = {
   /* REST Market Data */
   fetchOhlc,
   fetchQuotes,
-  fetchOfficialCloseQuotes,
   fetchHistory,
 
   /* Fundamentals & Financials */
