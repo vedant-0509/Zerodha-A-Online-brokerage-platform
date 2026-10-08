@@ -44,7 +44,7 @@ import { io } from "socket.io-client";
 const SOCKET_ORIGIN =
     process.env.REACT_APP_WS_ORIGIN ||
     process.env.REACT_APP_API_ORIGIN ||
-    "http://localhost:3000";
+    window.location.origin;
 
 const detailStockSocket = io(
     SOCKET_ORIGIN,
