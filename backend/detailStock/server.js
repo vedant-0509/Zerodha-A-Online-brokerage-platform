@@ -4095,53 +4095,6 @@
 //   process.exit(1);
 // });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
@@ -4326,7 +4279,10 @@ function dateAtISTNoon(dateString) {
 async function getFinalized1D(instrumentKey, tradingDate) {
   // MongoDB is the durable source of truth. Redis is only a fast cache.
   try {
-    const persisted = await getFinalizedDailySession(instrumentKey, tradingDate);
+    const persisted = await getFinalizedDailySession(
+      instrumentKey,
+      tradingDate,
+    );
     if (persisted?.candles?.length) {
       if (env.redisEnabled) {
         await redis.set(
@@ -4712,21 +4668,14 @@ async function get52WeekHighLow(instrumentKey, force = false) {
      * always Upstox daily history.
      */
     try {
-      const dbData = await getDbHistory(
-        instrumentKey,
-        fromDate,
-        toDate,
-      );
+      const dbData = await getDbHistory(instrumentKey, fromDate, toDate);
 
       const validDbCandles = (Array.isArray(dbData) ? dbData : []).filter(
         (candle) => {
           const high = Number(candle?.high);
           const low = Number(candle?.low);
           return (
-            Number.isFinite(high) &&
-            high > 0 &&
-            Number.isFinite(low) &&
-            low > 0
+            Number.isFinite(high) && high > 0 && Number.isFinite(low) && low > 0
           );
         },
       );
@@ -4838,7 +4787,9 @@ async function primeSnapshot(instrumentKey) {
       await cacheFinalized1D(instrumentKey, tradingDate, {
         tradingDate,
         candles,
-        closePrice: Number(official.dayClose || official.close || official.price),
+        closePrice: Number(
+          official.dayClose || official.close || official.price,
+        ),
         baselineClose: previousClose?.close ?? null,
         baselineDate: previousClose?.tradingDate ?? null,
         source: "upstox-finalized-intraday",
@@ -5903,10 +5854,13 @@ async function getFundamentalsCached(isin, force = false) {
 
         throw new Error("Upstox returned no usable financial data");
       } catch (providerError) {
-        logger.warn("Upstox financial data unavailable; using MongoDB fallback", {
-          isin: normalizedIsin,
-          error: providerError?.message || String(providerError),
-        });
+        logger.warn(
+          "Upstox financial data unavailable; using MongoDB fallback",
+          {
+            isin: normalizedIsin,
+            error: providerError?.message || String(providerError),
+          },
+        );
 
         const stored = await getStoredFundamentals(normalizedIsin);
         if (stored) {
@@ -6160,10 +6114,18 @@ async function fetchOfficialIntradaySessionWithRetry(
     }
   }
 
-  throw lastError || new Error(`Official settlement failed for ${instrumentKey}`);
+  throw (
+    lastError || new Error(`Official settlement failed for ${instrumentKey}`)
+  );
 }
 
-function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, priorSnapshot = null) {
+function buildOfficialCloseSnapshot(
+  row,
+  candles,
+  previousClose,
+  tradingDate,
+  priorSnapshot = null,
+) {
   const first = candles[0];
   const last = candles[candles.length - 1];
   const close = Number(last.close);
@@ -6217,31 +6179,31 @@ function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate, pr
     volume,
     upperCircuit: Number(
       priorSnapshot?.upperCircuit ??
-      priorSnapshot?.upperCircuitLimit ??
-      row?.upperCircuit ??
-      row?.upperCircuitLimit ??
-      NaN,
+        priorSnapshot?.upperCircuitLimit ??
+        row?.upperCircuit ??
+        row?.upperCircuitLimit ??
+        NaN,
     ),
     lowerCircuit: Number(
       priorSnapshot?.lowerCircuit ??
-      priorSnapshot?.lowerCircuitLimit ??
-      row?.lowerCircuit ??
-      row?.lowerCircuitLimit ??
-      NaN,
+        priorSnapshot?.lowerCircuitLimit ??
+        row?.lowerCircuit ??
+        row?.lowerCircuitLimit ??
+        NaN,
     ),
     upperCircuitLimit: Number(
       priorSnapshot?.upperCircuitLimit ??
-      priorSnapshot?.upperCircuit ??
-      row?.upperCircuitLimit ??
-      row?.upperCircuit ??
-      NaN,
+        priorSnapshot?.upperCircuit ??
+        row?.upperCircuitLimit ??
+        row?.upperCircuit ??
+        NaN,
     ),
     lowerCircuitLimit: Number(
       priorSnapshot?.lowerCircuitLimit ??
-      priorSnapshot?.lowerCircuit ??
-      row?.lowerCircuitLimit ??
-      row?.lowerCircuit ??
-      NaN,
+        priorSnapshot?.lowerCircuit ??
+        row?.lowerCircuitLimit ??
+        row?.lowerCircuit ??
+        NaN,
     ),
     lastTradeTime: Date.parse(last.timestamp) || null,
     timestamp: Date.now(),
@@ -6339,8 +6301,10 @@ async function reconcileAllMarketStocks(
               ...row,
               upperCircuit: officialQuote?.upperCircuit ?? row.upperCircuit,
               lowerCircuit: officialQuote?.lowerCircuit ?? row.lowerCircuit,
-              upperCircuitLimit: officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
-              lowerCircuitLimit: officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
+              upperCircuitLimit:
+                officialQuote?.upperCircuitLimit ?? row.upperCircuitLimit,
+              lowerCircuitLimit:
+                officialQuote?.lowerCircuitLimit ?? row.lowerCircuitLimit,
             },
             candles,
             previousClose,
@@ -6507,7 +6471,10 @@ upstox.setTickHandler((tick) => {
       ? {
           instrumentKey: tick.instrumentKey,
           previousClose:
-            previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
+            previous.dayClose ??
+            previous.price ??
+            previous.previousClose ??
+            null,
           previousCloseDate: previous.marketDate ?? null,
         }
       : previous),
@@ -6525,7 +6492,13 @@ upstox.setTickHandler((tick) => {
   };
 
   const carryFields = newTradingSession
-    ? ["previousClose", "previousCloseDate", "upperCircuit", "lowerCircuit", "lastTradeTime"]
+    ? [
+        "previousClose",
+        "previousCloseDate",
+        "upperCircuit",
+        "lowerCircuit",
+        "lastTradeTime",
+      ]
     : [
         "previousClose",
         "open",
@@ -7045,21 +7018,30 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       // misleading return when the first candle opens after a gap.
       if (from) {
         const previous = await resolvePreviousClose(key, from);
-        if (previous && Number.isFinite(Number(previous.close)) && Number(previous.close) > 0) {
+        if (
+          previous &&
+          Number.isFinite(Number(previous.close)) &&
+          Number(previous.close) > 0
+        ) {
           baselineClose = Number(previous.close);
           baselineDate = previous.tradingDate || null;
         }
       }
 
       // Provider fallback only when no prior official daily close is available.
+
       if (baselineClose === null) {
         const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
+
         const firstClose = Number(
           firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
         );
+
         if (Number.isFinite(firstClose) && firstClose > 0) {
           baselineClose = firstClose;
+
           const firstTimestamp = Date.parse(firstCandle?.timestamp);
+
           baselineDate = Number.isFinite(firstTimestamp)
             ? indiaDate(new Date(firstTimestamp))
             : from || null;
@@ -7126,12 +7108,27 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
           const firstClose = Number(
             firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
           );
+
           const firstTimestamp = Date.parse(firstCandle?.timestamp);
-          const baselineClose =
-            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
-          const baselineDate = Number.isFinite(firstTimestamp)
-            ? indiaDate(new Date(firstTimestamp))
-            : from || null;
+
+          const previous = from ? await resolvePreviousClose(key, from) : null;
+
+          const validPreviousClose = Number(previous?.close);
+
+          const hasPreviousClose =
+            Number.isFinite(validPreviousClose) && validPreviousClose > 0;
+
+          const baselineClose = hasPreviousClose
+            ? validPreviousClose
+            : Number.isFinite(firstClose) && firstClose > 0
+              ? firstClose
+              : null;
+
+          const baselineDate = hasPreviousClose
+            ? previous.tradingDate || null
+            : Number.isFinite(firstTimestamp)
+              ? indiaDate(new Date(firstTimestamp))
+              : from || null;
 
           const payload = {
             candles: dbData,

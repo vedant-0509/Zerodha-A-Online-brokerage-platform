@@ -2855,7 +2855,6 @@
 
 // export { StockDashboard as ShareholdingPattern };
 
-
 import React, {
   useCallback,
   useEffect,
@@ -3419,7 +3418,8 @@ export default function StockDashboard({
         initialSnapshot = unwrapResponse(snapshotResult.value.data);
 
         if (typeof initialSnapshot?.officialSettlementReady === "boolean") {
-          officialSettlementReadyRef.current = initialSnapshot.officialSettlementReady;
+          officialSettlementReadyRef.current =
+            initialSnapshot.officialSettlementReady;
           setOfficialSettlementReady(initialSnapshot.officialSettlementReady);
         }
 
@@ -3645,11 +3645,11 @@ export default function StockDashboard({
       parseHistoryTimestamp(
         Array.isArray(point)
           ? point[0]
-          : point?.timestamp ??
+          : (point?.timestamp ??
             point?.time ??
             point?.date ??
             point?.datetime ??
-            point?.dateTime,
+            point?.dateTime),
       );
 
     const mergeOfficialWithLive = (officialPoints) => {
@@ -3678,7 +3678,9 @@ export default function StockDashboard({
 
         const existingIndex = merged.findIndex((point) => {
           const timestamp = getPointTimestamp(point);
-          return Number.isFinite(timestamp) && minuteBucket(timestamp) === bucket;
+          return (
+            Number.isFinite(timestamp) && minuteBucket(timestamp) === bucket
+          );
         });
 
         if (existingIndex >= 0) merged[existingIndex] = livePoint;
@@ -3727,16 +3729,20 @@ export default function StockDashboard({
         // OHLC history while the current minute remains live.
         historicalDayHistoryRef.current = officialPoints;
 
-        if (!openNow && officialSettlementReadyRef.current && officialPoints.length) {
+        if (
+          !openNow &&
+          officialSettlementReadyRef.current &&
+          officialPoints.length
+        ) {
           const lastPoint = officialPoints[officialPoints.length - 1];
           const officialClose = Array.isArray(lastPoint)
             ? nullableNumber(lastPoint[4], lastPoint[1])
             : nullableNumber(
-                lastPoint?.close,
-                lastPoint?.c,
-                lastPoint?.price,
-                lastPoint?.ltp,
-              );
+              lastPoint?.close,
+              lastPoint?.c,
+              lastPoint?.price,
+              lastPoint?.ltp,
+            );
 
           if (officialClose !== null) {
             setSnapshot((previous) => ({
@@ -4112,10 +4118,7 @@ export default function StockDashboard({
       const { timestamp, price } = pending;
       const today = getIndiaDate();
 
-      if (
-        chartRangeRef.current !== "1D" ||
-        finalHistoryLoadedRef.current
-      ) {
+      if (chartRangeRef.current !== "1D" || finalHistoryLoadedRef.current) {
         return;
       }
 
@@ -4143,7 +4146,7 @@ export default function StockDashboard({
           const ts = parseHistoryTimestamp(
             Array.isArray(point)
               ? point[0]
-              : point?.timestamp ?? point?.time ?? point?.date,
+              : (point?.timestamp ?? point?.time ?? point?.date),
           );
           return Number.isFinite(ts) && indiaDateFromTimestamp(ts) === today;
         });
@@ -4161,8 +4164,7 @@ export default function StockDashboard({
         }
       }
 
-      const minuteTimestamp =
-        Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
+      const minuteTimestamp = Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
 
       const minuteTime = new Intl.DateTimeFormat("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -4207,10 +4209,12 @@ export default function StockDashboard({
             const ts = parseHistoryTimestamp(
               Array.isArray(point)
                 ? point[0]
-                : point?.timestamp ?? point?.time,
+                : (point?.timestamp ?? point?.time),
             );
-            return Number.isFinite(ts) &&
-              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket;
+            return (
+              Number.isFinite(ts) &&
+              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket
+            );
           });
 
           if (existingIndex >= 0) {
@@ -4228,10 +4232,10 @@ export default function StockDashboard({
 
         output.sort((a, b) => {
           const ta = parseHistoryTimestamp(
-            Array.isArray(a) ? a[0] : a?.timestamp ?? a?.time,
+            Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
           );
           const tb = parseHistoryTimestamp(
-            Array.isArray(b) ? b[0] : b?.timestamp ?? b?.time,
+            Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
           );
           return ta - tb;
         });
@@ -4375,7 +4379,10 @@ export default function StockDashboard({
     const scheduleSubscribeRetry = () => {
       if (isStale() || subscribed || subscribeRetryTimer) return;
 
-      const delay = Math.min(5000, 500 * Math.max(1, subscribeRetryAttempts + 1));
+      const delay = Math.min(
+        5000,
+        500 * Math.max(1, subscribeRetryAttempts + 1),
+      );
       subscribeRetryTimer = window.setTimeout(() => {
         subscribeRetryTimer = null;
         subscribe();
@@ -4902,16 +4909,16 @@ export default function StockDashboard({
 
   const currentDisplayPrice = useMemo(() => {
     const lastChartPrice =
-      lineChartPreparedData[lineChartPreparedData.length - 1]?.price ?? null;
+  lineChartPreparedData[lineChartPreparedData.length - 1]?.price ?? null;
 
-    // Once the market is closed, the finalized 1D close is authoritative.
-
-    if (chartRange === "1D" && !marketOpen && lastChartPrice !== null) {
+    // After market close, use the historical chart endpoint for every range.
+    // During market hours, continue using the live LTP.
+    if (!marketOpen && lastChartPrice !== null) {
       return lastChartPrice;
     }
 
     return ltp ?? lastChartPrice ?? null;
-  }, [ltp, lineChartPreparedData, chartRange, marketOpen]);
+  }, [ltp, lineChartPreparedData, marketOpen]);
 
   const displayChange = useMemo(() => {
     if (currentDisplayPrice !== null && rangeStartPrice !== null) {
