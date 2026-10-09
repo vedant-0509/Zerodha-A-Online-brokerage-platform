@@ -3925,7 +3925,7 @@ export default function StockDashboard({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [chartRange, instrumentKey, loadHistory]);
+  }, [chartRange]);
 
   /* WEBSOCKET CONNECTION & TICK HANDLING */
 
