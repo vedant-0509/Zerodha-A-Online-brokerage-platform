@@ -3523,14 +3523,6 @@ export default function StockDashboard({
 
     const mergeOfficialWithLive = (officialPoints) => {
       const official = Array.isArray(officialPoints) ? [...officialPoints] : [];
-      const officialBuckets = new Set();
-
-      for (const point of official) {
-        const ts = getPointTimestamp(point);
-        const bucket = minuteBucket(ts);
-        if (Number.isFinite(bucket)) officialBuckets.add(bucket);
-      }
-
       const provisional = provisionalLiveMinutesRef.current;
       const merged = [...official];
 
@@ -3556,11 +3548,6 @@ export default function StockDashboard({
           merged.push(livePoint);
         }
 
-        // Keep live minute points until the session is finalized. The final
-        // official 1D history replaces this in-progress buffer after settlement.
-        if (!isCurrentMinute && officialBuckets.has(bucket)) {
-          // Intentionally retain this bucket: it records the last observed tick.
-        }
       }
 
       merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
