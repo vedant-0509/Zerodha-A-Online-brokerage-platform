@@ -3911,17 +3911,11 @@ export default function StockDashboard({
 
       finalHistoryLoadedRef.current = false;
 
+      // Keep the previous finalized chart and displayed values unchanged
+      // during pre-market. The first valid tick of today's session starts the
+      // new live chart and requests fresh history if the provider has not
+      // already supplied today's candles.
       setHoverData(null);
-
-      setHistory([]);
-
-      if (!marketOpenRef.current && instrumentKey) {
-        const controller = new AbortController();
-
-        loadHistory(instrumentKey, "1D", controller.signal);
-
-        window.setTimeout(() => controller.abort(), 25000);
-      }
     };
 
     checkSession();
