@@ -98,6 +98,9 @@
 
 //   const [marketOpen, setMarketOpen] = useState(null);
 
+//   // Official same-day EOD history becomes authoritative only after settlement.
+//   const [officialSettlementReady, setOfficialSettlementReady] = useState(false);
+
 //   const [marketLoading, setMarketLoading] = useState(true);
 
 //   const [marketError, setMarketError] = useState("");
@@ -138,10 +141,20 @@
 
 //   const marketOpenRef = useRef(marketOpen);
 
+//   const officialSettlementReadyRef = useRef(false);
 //   const marketStatusKnownRef = useRef(false);
 
 //   const liveDayHistoryRef = useRef([]);
 
+//   // Official 1D REST candles are the authoritative history.
+//   // Live ticks are kept separately and only overlay the in-progress minute
+//   // (or temporarily fill a minute that REST has not published yet).
+//   const historicalDayHistoryRef = useRef([]);
+//   const provisionalLiveMinutesRef = useRef(new Map());
+//   // Date of the trading session whose live ticks are currently driving 1D.
+//   // This prevents yesterday's finalized candles from being mixed with the
+//   // first live tick of the next trading session.
+//   const liveSessionDateRef = useRef("");
 //   const hasLiveTickRef = useRef(false);
 
 //   const finalHistoryLoadedRef = useRef(false);
@@ -228,13 +241,22 @@
 //     pendingLiveTickRef.current = null;
 
 //     liveDayHistoryRef.current = [];
+//     historicalDayHistoryRef.current = [];
+//     provisionalLiveMinutesRef.current = new Map();
+//     liveSessionDateRef.current = "";
 //     hasLiveTickRef.current = false;
 //     finalHistoryLoadedRef.current = false;
+
+//     // Every newly selected stock must open on a fresh 1D chart.
+//     setChartRange("1D");
 
 //     socketHasConnectedRef.current = false;
 //     historyRequestGenerationRef.current += 1;
 
 //     marketStatusKnownRef.current = false;
+
+//     officialSettlementReadyRef.current = false;
+//     setOfficialSettlementReady(false);
 
 //     marketOpenRef.current = false;
 
@@ -247,7 +269,7 @@
 
 //       liveTickFlushTimerRef.current = null;
 //     }
-//   }, [location.key]);
+//   }, [location.key, symbol]);
 
 //   /* LOAD STOCK IDENTIFIER */
 
@@ -282,8 +304,8 @@
 
 //         setStockError(
 //           error?.response?.data?.message ||
-//           error?.message ||
-//           "Failed to load stock details.",
+//             error?.message ||
+//             "Failed to load stock details.",
 //         );
 //       } finally {
 //         if (!controller.signal.aborted) setStockLoading(false);
@@ -386,9 +408,9 @@
 //           stocks.some((stock) => {
 //             const stockKey = String(
 //               stock?.instrument_key ||
-//               stock?.instrumentKey ||
-//               stock?.instrument ||
-//               "",
+//                 stock?.instrumentKey ||
+//                 stock?.instrument ||
+//                 "",
 //             ).trim();
 
 //             return stockKey === currentKey;
@@ -523,7 +545,12 @@
 //       let initialSnapshot = null;
 
 //       if (statusResult.status === "fulfilled") {
-//         isOpen = normalizeMarketStatus(statusResult.value.data);
+//         const statusPayload = unwrapResponse(statusResult.value.data) || {};
+//         isOpen = normalizeMarketStatus(statusPayload);
+
+//         const settlementReady = Boolean(statusPayload.officialSettlementReady);
+//         officialSettlementReadyRef.current = settlementReady;
+//         setOfficialSettlementReady(settlementReady);
 
 //         marketStatusKnownRef.current = true;
 
@@ -532,6 +559,12 @@
 
 //       if (snapshotResult.status === "fulfilled") {
 //         initialSnapshot = unwrapResponse(snapshotResult.value.data);
+
+//         if (typeof initialSnapshot?.officialSettlementReady === "boolean") {
+//           officialSettlementReadyRef.current =
+//             initialSnapshot.officialSettlementReady;
+//           setOfficialSettlementReady(initialSnapshot.officialSettlementReady);
+//         }
 
 //         if (typeof initialSnapshot?.marketOpen === "boolean") {
 //           isOpen = initialSnapshot.marketOpen;
@@ -561,10 +594,14 @@
 
 //       setMarketError(
 //         error?.response?.data?.message ||
-//         error?.message ||
-//         "Unable to load market data.",
+//           error?.message ||
+//           "Unable to load market data.",
 //       );
 
+//       marketOpenRef.current = false;
+//       marketStatusKnownRef.current = true;
+//       officialSettlementReadyRef.current = false;
+//       setOfficialSettlementReady(false);
 //       setMarketOpen(false);
 //     } finally {
 //       if (!signal.aborted) setMarketLoading(false);
@@ -689,18 +726,18 @@
 //         if (financialFailed && fundamentalsFailed) {
 //           setFundamentalsError(
 //             results[2].reason?.response?.data?.message ||
-//             results[2].reason?.message ||
-//             results[0].reason?.response?.data?.message ||
-//             results[0].reason?.message ||
-//             "Unable to load company financial data.",
+//               results[2].reason?.message ||
+//               results[0].reason?.response?.data?.message ||
+//               results[0].reason?.message ||
+//               "Unable to load company financial data.",
 //           );
 //         } else if (financialFailed) {
 //           console.error(
 //             "Financials failed:",
 
 //             results[2].reason?.response?.data ||
-//             results[2].reason?.message ||
-//             results[2].reason,
+//               results[2].reason?.message ||
+//               results[2].reason,
 //           );
 //         }
 //       } finally {
@@ -731,7 +768,7 @@
 
 //     setHistoryLoading(true);
 
-//     if (range !== "1D" || force) {
+//     if (range !== "1D" || (force && !marketOpenRef.current)) {
 //       setRangeBaseline(null);
 //     }
 
@@ -749,8 +786,57 @@
 
 //     const getPointTimestamp = (point) =>
 //       parseHistoryTimestamp(
-//         Array.isArray(point) ? point[0] : (point?.timestamp ?? point?.time),
+//         Array.isArray(point)
+//           ? point[0]
+//           : (point?.timestamp ??
+//               point?.time ??
+//               point?.date ??
+//               point?.datetime ??
+//               point?.dateTime),
 //       );
+
+//     const mergeOfficialWithLive = (officialPoints) => {
+//       const official = Array.isArray(officialPoints) ? [...officialPoints] : [];
+//       const officialBuckets = new Set();
+
+//       for (const point of official) {
+//         const ts = getPointTimestamp(point);
+//         const bucket = minuteBucket(ts);
+//         if (Number.isFinite(bucket)) officialBuckets.add(bucket);
+//       }
+
+//       const provisional = provisionalLiveMinutesRef.current;
+//       const merged = [...official];
+
+//       for (const [bucket, livePoint] of provisional.entries()) {
+//         if (!Number.isFinite(bucket) || !livePoint) continue;
+
+//         // Once REST has an official candle for a minute, the official candle
+//         // wins. The only exception is the current in-progress minute, where
+//         // the WebSocket LTP is the freshest value.
+//         const currentMinute = minuteBucket(Date.now());
+//         const isCurrentMinute = bucket === currentMinute;
+
+//         if (officialBuckets.has(bucket) && !isCurrentMinute) {
+//           provisional.delete(bucket);
+//           continue;
+//         }
+
+//         const existingIndex = merged.findIndex((point) => {
+//           const ts = getPointTimestamp(point);
+//           return Number.isFinite(ts) && minuteBucket(ts) === bucket;
+//         });
+
+//         if (existingIndex >= 0) {
+//           merged[existingIndex] = livePoint;
+//         } else {
+//           merged.push(livePoint);
+//         }
+//       }
+
+//       merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
+//       return merged;
+//     };
 
 //     try {
 //       const response = await axios.get(ENDPOINTS.history(key, params), {
@@ -781,52 +867,56 @@
 //       const normalized = normalizeHistory(response.data, range);
 
 //       if (range === "1D") {
-//         const historicalPoints = Array.isArray(normalized) ? normalized : [];
+//         const officialPoints = Array.isArray(normalized) ? normalized : [];
+//         const openNow = Boolean(marketOpenRef.current);
 
-//         if (marketOpenRef.current && !force) {
-//           const existingLivePoints = Array.isArray(liveDayHistoryRef.current)
-//             ? liveDayHistoryRef.current
-//             : [];
+//         // Keep official REST candles separate from live overlays. This is the
+//         // key accuracy fix: completed minutes are never replaced by arbitrary
+//         // WebSocket ticks, so the chart stays aligned with official 1-minute
+//         // OHLC history while the current minute remains live.
+//         historicalDayHistoryRef.current = officialPoints;
 
-//           const merged = [...historicalPoints];
+//         if (
+//           !openNow &&
+//           officialSettlementReadyRef.current &&
+//           officialPoints.length
+//         ) {
+//           const lastPoint = officialPoints[officialPoints.length - 1];
+//           const officialClose = Array.isArray(lastPoint)
+//             ? nullableNumber(lastPoint[4], lastPoint[1])
+//             : nullableNumber(
+//                 lastPoint?.close,
+//                 lastPoint?.c,
+//                 lastPoint?.price,
+//                 lastPoint?.ltp,
+//               );
 
-//           for (const livePoint of existingLivePoints) {
-//             const liveTimestamp = getPointTimestamp(livePoint);
-//             if (!Number.isFinite(liveTimestamp)) continue;
-
-//             const liveBucket = minuteBucket(liveTimestamp);
-//             let existingIndex = -1;
-
-//             for (let i = 0; i < merged.length; i += 1) {
-//               const historyTimestamp = getPointTimestamp(merged[i]);
-
-//               if (
-//                 Number.isFinite(historyTimestamp) &&
-//                 minuteBucket(historyTimestamp) === liveBucket
-//               ) {
-//                 existingIndex = i;
-//                 break;
-//               }
-//             }
-
-//             if (existingIndex !== -1) {
-//               merged[existingIndex] = livePoint;
-//             } else {
-//               merged.push(livePoint);
-//             }
+//           if (officialClose !== null) {
+//             setSnapshot((previous) => ({
+//               ...(previous || {}),
+//               ltp: officialClose,
+//               price: officialClose,
+//               dayClose: officialClose,
+//               marketOpen: false,
+//               marketStatus: "CLOSED",
+//               source: "upstox-finalized-intraday",
+//               officialSettlementReady: true,
+//             }));
 //           }
+//         }
 
-//           merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
-
+//         if (openNow) {
+//           const merged = mergeOfficialWithLive(officialPoints);
 //           liveDayHistoryRef.current = merged;
-//           hasLiveTickRef.current = merged.length > 0;
+//           hasLiveTickRef.current = provisionalLiveMinutesRef.current.size > 0;
 //           finalHistoryLoadedRef.current = false;
-//           setHistory([...merged]);
+//           setHistory(merged);
 //         } else {
-//           finalHistoryLoadedRef.current = true;
-//           liveDayHistoryRef.current = historicalPoints;
+//           provisionalLiveMinutesRef.current = new Map();
+//           liveDayHistoryRef.current = officialPoints;
 //           hasLiveTickRef.current = false;
-//           setHistory(historicalPoints);
+//           finalHistoryLoadedRef.current = true;
+//           setHistory(officialPoints);
 //         }
 
 //         return;
@@ -938,64 +1028,60 @@
 //   useEffect(() => {
 //     if (!instrumentKey) return;
 
-//     /*
+//     if (chartRange === "1D") {
+//       if (!marketStatusKnownRef.current) return;
 
-//      * Wait until real market status is known.
-
-//      * Once known, ALWAYS load 1D history.
-
-//      *
-
-//      * During market hours:
-
-//      *   historical 1-minute candles
-
-//      *   +
-
-//      *   WebSocket live ticks
-
-//      *
-
-//      * After market close:
-
-//      *   finalized official 1D history
-
-//      */
-
-//     if (chartRange === "1D" && !marketStatusKnownRef.current) {
-//       return;
+//       // Keep the just-finished live/provisional chart visible from 15:30
+//       // through 15:45. Official history takes over only after settlement.
+//       if (!marketOpen && !officialSettlementReadyRef.current) return;
 //     }
 
 //     const controller = new AbortController();
 
-//     loadHistory(instrumentKey, chartRange, controller.signal);
+//     // First 1D load after Search -> Stock bypasses Redis once, preventing a
+//     // stale intraday cache from producing the old flat/stale chart.
+//     const forceFreshOpen1D =
+//       chartRange === "1D" &&
+//       Boolean(marketOpen) &&
+//       historicalDayHistoryRef.current.length === 0;
 
-//     return () => {
-//       controller.abort();
-//     };
-//   }, [instrumentKey, chartRange, marketOpen, loadHistory]);
+//     loadHistory(instrumentKey, chartRange, controller.signal, {
+//       force: forceFreshOpen1D,
+//     });
+
+//     return () => controller.abort();
+//   }, [
+//     instrumentKey,
+//     chartRange,
+//     marketOpen,
+//     officialSettlementReady,
+//     loadHistory,
+//   ]);
 
 //   const wasMarketOpenRef = useRef(marketOpen);
 
 //   useEffect(() => {
 //     const wasOpen = wasMarketOpenRef.current;
-
 //     wasMarketOpenRef.current = marketOpen;
 
 //     if (chartRange !== "1D" || !instrumentKey) return;
 
-//     // OPEN -> CLOSED: replace temporary live chart with official 1D history.
-
-//     if (wasOpen && !marketOpen) {
+//     // 15:30 only changes market state. Keep the live/provisional chart.
+//     // At 15:45, officialSettlementReady becomes true and the main history
+//     // effect replaces it with finalized official candles.
+//     if (wasOpen && !marketOpen && officialSettlementReadyRef.current) {
 //       const controller = new AbortController();
-
 //       finalHistoryLoadedRef.current = false;
-
 //       loadHistory(instrumentKey, "1D", controller.signal, { force: true });
-
 //       return () => controller.abort();
 //     }
-//   }, [marketOpen, chartRange, instrumentKey, loadHistory]);
+//   }, [
+//     marketOpen,
+//     officialSettlementReady,
+//     chartRange,
+//     instrumentKey,
+//     loadHistory,
+//   ]);
 
 //   /*
 
@@ -1018,16 +1104,21 @@
 
 //         if (!alive) return;
 
-//         const isOpen = normalizeMarketStatus(response.data);
+//         const statusPayload = unwrapResponse(response.data) || {};
+//         const isOpen = normalizeMarketStatus(statusPayload);
+//         const settlementReady = Boolean(statusPayload.officialSettlementReady);
 
 //         marketStatusKnownRef.current = true;
-
 //         marketOpenRef.current = Boolean(isOpen);
 
 //         if (isOpen) {
 //           finalHistoryLoadedRef.current = false;
+//           officialSettlementReadyRef.current = false;
+//         } else {
+//           officialSettlementReadyRef.current = settlementReady;
 //         }
 
+//         setOfficialSettlementReady(Boolean(settlementReady));
 //         setMarketOpen(Boolean(isOpen));
 //       } catch (error) {
 //         if (!alive || axios.isCancel(error) || error?.code === "ERR_CANCELED") {
@@ -1050,6 +1141,29 @@
 //       window.clearInterval(intervalId);
 //     };
 //   }, [instrumentKey]);
+
+//   /*
+//    * While the market is open, refresh official 1-minute candles once per
+//    * minute. This replaces provisional/live minute points with provider OHLC
+//    * as soon as the completed candle is available, while preserving the
+//    * current minute's live LTP overlay.
+//    */
+
+//   useEffect(() => {
+//     if (!instrumentKey || chartRange !== "1D" || !marketOpen) return;
+
+//     const refreshOfficial1D = () => {
+//       const controller = new AbortController();
+//       loadHistory(instrumentKey, "1D", controller.signal, { force: false });
+//       window.setTimeout(() => controller.abort(), 25000);
+//     };
+
+//     const intervalId = window.setInterval(refreshOfficial1D, 60 * 1000);
+
+//     return () => {
+//       window.clearInterval(intervalId);
+//     };
+//   }, [instrumentKey, chartRange, marketOpen, loadHistory]);
 
 //   /*
 
@@ -1075,8 +1189,12 @@
 
 //       pendingLiveTickRef.current = null;
 
+//       // Keep the finalized previous-session chart visible until the first
+//       // valid live tick of the new session arrives. That matches the desired
+//       // "persist until next tick" behavior.
 //       liveDayHistoryRef.current = [];
-
+//       provisionalLiveMinutesRef.current = new Map();
+//       liveSessionDateRef.current = "";
 //       hasLiveTickRef.current = false;
 
 //       finalHistoryLoadedRef.current = false;
@@ -1111,6 +1229,8 @@
 //     let alive = true;
 
 //     let subscribed = false;
+//     let subscribeRetryTimer = null;
+//     let subscribeRetryAttempts = 0;
 
 //     const generation = ++wsGenerationRef.current;
 
@@ -1140,16 +1260,10 @@
 //       if (!pending || isStale()) return;
 
 //       pendingLiveTickRef.current = null;
-
 //       lastLiveTickRef.current = Date.now();
 
 //       const { timestamp, price } = pending;
-
 //       const today = getIndiaDate();
-
-//       // Once official post-close history has been loaded, never let a late
-
-//       // WebSocket tick overwrite it.
 
 //       if (
 //         chartRangeRef.current !== "1D" ||
@@ -1167,10 +1281,40 @@
 //         return;
 //       }
 
-//       /*
-//        * 1D LIVE CHART
-//        * Keep exactly one chart point per market minute.
-//        */
+//       // The first tick of a new trading day starts a new 1D session.
+//       // Do not mix yesterday's finalized candles with today's live stream.
+//       if (liveSessionDateRef.current !== today) {
+//         liveSessionDateRef.current = today;
+//         lastLiveTickRef.current = 0;
+//         pendingLiveTickRef.current = null;
+//         provisionalLiveMinutesRef.current = new Map();
+//         hasLiveTickRef.current = false;
+
+//         const officialPoints = Array.isArray(historicalDayHistoryRef.current)
+//           ? historicalDayHistoryRef.current
+//           : [];
+//         const hasTodayHistory = officialPoints.some((point) => {
+//           const ts = parseHistoryTimestamp(
+//             Array.isArray(point)
+//               ? point[0]
+//               : (point?.timestamp ?? point?.time ?? point?.date),
+//           );
+//           return Number.isFinite(ts) && indiaDateFromTimestamp(ts) === today;
+//         });
+
+//         if (!hasTodayHistory) {
+//           historicalDayHistoryRef.current = [];
+//           liveDayHistoryRef.current = [];
+//           setHistory([]);
+
+//           // Fetch today's official 1-minute candles once, then merge the
+//           // current live tick on top of them.
+//           const controller = new AbortController();
+//           loadHistory(instrumentKey, "1D", controller.signal, { force: true });
+//           window.setTimeout(() => controller.abort(), 25000);
+//         }
+//       }
+
 //       const minuteTimestamp = Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
 
 //       const minuteTime = new Intl.DateTimeFormat("en-IN", {
@@ -1188,73 +1332,69 @@
 //         close: price,
 //       };
 
+//       const provisional = provisionalLiveMinutesRef.current;
+//       const existing = provisional.get(minuteTimestamp);
+
+//       if (
+//         existing &&
+//         Number.isFinite(Number(existing.tickTimestamp)) &&
+//         timestamp < Number(existing.tickTimestamp)
+//       ) {
+//         return;
+//       }
+
+//       provisional.set(minuteTimestamp, newPoint);
 //       hasLiveTickRef.current = true;
 
-//       liveDayHistoryRef.current = (() => {
-//         const current = Array.isArray(liveDayHistoryRef.current)
-//           ? [...liveDayHistoryRef.current]
-//           : [];
+//       const official = Array.isArray(historicalDayHistoryRef.current)
+//         ? historicalDayHistoryRef.current
+//         : [];
 
-//         const getMinuteTimestamp = (point) => {
-//           const pointTimestamp = parseHistoryTimestamp(
-//             Array.isArray(point) ? point[0] : (point?.timestamp ?? point?.time),
-//           );
+//       const merged = (() => {
+//         const output = [...official];
+//         const currentMinute = minuteTimestamp;
 
-//           if (!Number.isFinite(pointTimestamp)) return NaN;
+//         for (const [bucket, livePoint] of provisional.entries()) {
+//           const isCurrentMinute = bucket === currentMinute;
+//           const existingIndex = output.findIndex((point) => {
+//             const ts = parseHistoryTimestamp(
+//               Array.isArray(point)
+//                 ? point[0]
+//                 : (point?.timestamp ?? point?.time),
+//             );
+//             return (
+//               Number.isFinite(ts) &&
+//               Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket
+//             );
+//           });
 
-//           return Math.floor(pointTimestamp / (60 * 1000)) * (60 * 1000);
-//         };
-
-//         const getTickTimestamp = (point) => {
-//           const value = Number(point?.tickTimestamp);
-//           return Number.isFinite(value) ? value : getMinuteTimestamp(point);
-//         };
-
-//         const existingIndex = current.findIndex(
-//           (point) => getMinuteTimestamp(point) === minuteTimestamp,
-//         );
-
-//         if (existingIndex !== -1) {
-//           const existing = current[existingIndex];
-//           const existingTickTimestamp = getTickTimestamp(existing);
-
-//           if (
-//             Number.isFinite(existingTickTimestamp) &&
-//             timestamp < existingTickTimestamp
-//           ) {
-//             return current;
+//           if (existingIndex >= 0) {
+//             if (isCurrentMinute) {
+//               output[existingIndex] = livePoint;
+//             }
+//             continue;
 //           }
 
-//           const updated = [...current];
-//           updated[existingIndex] = {
-//             ...(existing &&
-//               typeof existing === "object" &&
-//               !Array.isArray(existing)
-//               ? existing
-//               : {}),
-//             ...newPoint,
-//           };
-
-//           updated.sort((a, b) => getMinuteTimestamp(a) - getMinuteTimestamp(b));
-//           return updated;
+//           // The provider can lag by one minute. Keep a provisional point until
+//           // the next history refresh supplies the official candle.
+//           output.push(livePoint);
 //         }
 
-//         const lastPoint = current[current.length - 1];
-//         const lastMinuteTimestamp = getMinuteTimestamp(lastPoint);
+//         output.sort((a, b) => {
+//           const ta = parseHistoryTimestamp(
+//             Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
+//           );
+//           const tb = parseHistoryTimestamp(
+//             Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
+//           );
+//           return ta - tb;
+//         });
 
-//         if (
-//           Number.isFinite(lastMinuteTimestamp) &&
-//           minuteTimestamp < lastMinuteTimestamp
-//         ) {
-//           return current;
-//         }
-
-//         const updated = [...current, newPoint];
-//         updated.sort((a, b) => getMinuteTimestamp(a) - getMinuteTimestamp(b));
-//         return updated;
+//         return output;
 //       })();
 
-//       setHistory([...liveDayHistoryRef.current]);
+//       liveDayHistoryRef.current = merged;
+//       setHistory(merged);
 //     };
 
 //     const applyLiveData = (data) => {
@@ -1365,6 +1505,8 @@
 
 //       if (isOpen) {
 //         finalHistoryLoadedRef.current = false;
+//         officialSettlementReadyRef.current = false;
+//         setOfficialSettlementReady(false);
 //       }
 
 //       setMarketOpen(isOpen);
@@ -1379,8 +1521,28 @@
 //       }));
 //     };
 
+//     const scheduleSubscribeRetry = () => {
+//       if (isStale() || subscribed || subscribeRetryTimer) return;
+
+//       const delay = Math.min(
+//         5000,
+//         500 * Math.max(1, subscribeRetryAttempts + 1),
+//       );
+//       subscribeRetryTimer = window.setTimeout(() => {
+//         subscribeRetryTimer = null;
+//         subscribe();
+//       }, delay);
+//     };
+
 //     const subscribe = () => {
-//       if (isStale() || subscribed || !detailStockSocket?.connected) return;
+//       if (isStale() || subscribed) return;
+
+//       if (!detailStockSocket?.connected) {
+//         scheduleSubscribeRetry();
+//         return;
+//       }
+
+//       subscribeRetryAttempts += 1;
 
 //       detailStockSocket.emit(
 //         "detailStock:subscribe",
@@ -1400,14 +1562,17 @@
 //           if (!ack?.success) {
 //             subscribed = false;
 
-//             setMarketError(
-//               ack?.message || "Unable to subscribe to live market data.",
-//             );
-
+//             // The Render central gateway can connect to Detail Stock a moment
+//             // after the browser socket. Retry the subscription instead of
+//             // leaving the 1D chart stuck on its initial state until a tab
+//             // switch/re-render happens.
+//             scheduleSubscribeRetry();
 //             return;
 //           }
 
+//           subscribeRetryAttempts = 0;
 //           subscribed = true;
+//           setMarketError("");
 
 //           if (ack.snapshot) applyLiveData(ack.snapshot);
 
@@ -1416,7 +1581,11 @@
 
 //             marketOpenRef.current = ack.marketOpen;
 
-//             if (ack.marketOpen) finalHistoryLoadedRef.current = false;
+//             if (ack.marketOpen) {
+//               finalHistoryLoadedRef.current = false;
+//               officialSettlementReadyRef.current = false;
+//               setOfficialSettlementReady(false);
+//             }
 
 //             setMarketOpen(ack.marketOpen);
 //           }
@@ -1466,6 +1635,11 @@
 
 //     return () => {
 //       alive = false;
+
+//       if (subscribeRetryTimer) {
+//         window.clearTimeout(subscribeRetryTimer);
+//         subscribeRetryTimer = null;
+//       }
 
 //       if (liveTickFlushTimerRef.current)
 //         window.clearInterval(liveTickFlushTimerRef.current);
@@ -1567,39 +1741,39 @@
 //     const keys =
 //       kind === "low"
 //         ? [
-//           "week52Low",
+//             "week52Low",
 
-//           "week_52_low",
+//             "week_52_low",
 
-//           "yearLow",
+//             "yearLow",
 
-//           "fiftyTwoWeekLow",
+//             "fiftyTwoWeekLow",
 
-//           "fifty_two_week_low",
+//             "fifty_two_week_low",
 
-//           "52WeekLow",
+//             "52WeekLow",
 
-//           "52_week_low",
+//             "52_week_low",
 
-//           "fiftyTwoWeekLowPrice",
-//         ]
+//             "fiftyTwoWeekLowPrice",
+//           ]
 //         : [
-//           "week52High",
+//             "week52High",
 
-//           "week_52_high",
+//             "week_52_high",
 
-//           "yearHigh",
+//             "yearHigh",
 
-//           "fiftyTwoWeekHigh",
+//             "fiftyTwoWeekHigh",
 
-//           "fifty_two_week_high",
+//             "fifty_two_week_high",
 
-//           "52WeekHigh",
+//             "52WeekHigh",
 
-//           "52_week_high",
+//             "52_week_high",
 
-//           "fiftyTwoWeekHighPrice",
-//         ];
+//             "fiftyTwoWeekHighPrice",
+//           ];
 
 //     for (const source of sources) {
 //       if (!source || typeof source !== "object") continue;
@@ -1670,14 +1844,14 @@
 //         } else if (item && typeof item === "object") {
 //           rawTimestamp = parseHistoryTimestamp(
 //             item.timestamp ??
-//             item.time ??
-//             item.date ??
-//             item.datetime ??
-//             item.dateTime ??
-//             item.ts ??
-//             item.epoch ??
-//             item.t ??
-//             item.ltt,
+//               item.time ??
+//               item.date ??
+//               item.datetime ??
+//               item.dateTime ??
+//               item.ts ??
+//               item.epoch ??
+//               item.t ??
+//               item.ltt,
 //           );
 
 //           openPrice = nullableNumber(item.open, item.openPrice, item.o);
@@ -1708,23 +1882,23 @@
 //         const timeStr = dateObj
 //           ? chartRange === "1D" || chartRange === "1W"
 //             ? new Intl.DateTimeFormat("en-IN", {
-//               timeZone: "Asia/Kolkata",
+//                 timeZone: "Asia/Kolkata",
 
-//               hour: "2-digit",
+//                 hour: "2-digit",
 
-//               minute: "2-digit",
+//                 minute: "2-digit",
 
-//               hour12: true,
-//             }).format(dateObj)
+//                 hour12: true,
+//               }).format(dateObj)
 //             : new Intl.DateTimeFormat("en-IN", {
-//               timeZone: "Asia/Kolkata",
+//                 timeZone: "Asia/Kolkata",
 
-//               day: "2-digit",
+//                 day: "2-digit",
 
-//               month: "short",
+//                 month: "short",
 
-//               year: "numeric",
-//             }).format(dateObj)
+//                 year: "numeric",
+//               }).format(dateObj)
 //           : "—";
 
 //         return {
@@ -1882,10 +2056,11 @@
 //     const lastChartPrice =
 //       lineChartPreparedData[lineChartPreparedData.length - 1]?.price ?? null;
 
-//     // Once the market is closed, the finalized 1D close is authoritative.
-
-//     if (chartRange === "1D" && !marketOpen && lastChartPrice !== null) {
-//       return lastChartPrice;
+//     // During the closed/finalized session, the official snapshot close is
+//     // authoritative for the displayed 1D value. During market hours, the
+//     // live LTP remains authoritative.
+//     if (chartRange === "1D" && !marketOpen) {
+//       return ltp ?? lastChartPrice ?? null;
 //     }
 
 //     return ltp ?? lastChartPrice ?? null;
@@ -2316,9 +2491,9 @@
 //   const financialRows = useMemo(() => {
 //     const rows = normalizeFinancialRows(
 //       financialData ||
-//       fundamentalData?.incomeStatement ||
-//       fundamentalData?.income_statement ||
-//       fundamentalData,
+//         fundamentalData?.incomeStatement ||
+//         fundamentalData?.income_statement ||
+//         fundamentalData,
 //     );
 
 //     if (rows?.length) return rows;
@@ -2543,8 +2718,8 @@
 //       } else {
 //         setOrderMessage(
 //           err?.response?.data?.message ||
-//           err?.message ||
-//           "Failed to place simulated order.",
+//             err?.message ||
+//             "Failed to place simulated order.",
 //         );
 //       }
 //     } finally {
@@ -2679,51 +2854,6 @@
 // }
 
 // export { StockDashboard as ShareholdingPattern };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 import React, {
   useCallback,
@@ -3288,7 +3418,8 @@ export default function StockDashboard({
         initialSnapshot = unwrapResponse(snapshotResult.value.data);
 
         if (typeof initialSnapshot?.officialSettlementReady === "boolean") {
-          officialSettlementReadyRef.current = initialSnapshot.officialSettlementReady;
+          officialSettlementReadyRef.current =
+            initialSnapshot.officialSettlementReady;
           setOfficialSettlementReady(initialSnapshot.officialSettlementReady);
         }
 
@@ -3514,45 +3645,66 @@ export default function StockDashboard({
       parseHistoryTimestamp(
         Array.isArray(point)
           ? point[0]
-          : point?.timestamp ??
+          : (point?.timestamp ??
             point?.time ??
             point?.date ??
             point?.datetime ??
-            point?.dateTime,
+            point?.dateTime),
       );
 
+
     const mergeOfficialWithLive = (officialPoints) => {
-      const official = Array.isArray(officialPoints) ? [...officialPoints] : [];
+      const official = Array.isArray(officialPoints)
+        ? [...officialPoints]
+        : [];
+
+      const officialBuckets = new Set();
+
+      for (const point of official) {
+        const timestamp = getPointTimestamp(point);
+        const bucket = minuteBucket(timestamp);
+
+        if (Number.isFinite(bucket)) {
+          officialBuckets.add(bucket);
+        }
+      }
+
       const provisional = provisionalLiveMinutesRef.current;
       const merged = [...official];
+      const currentMinute = minuteBucket(Date.now());
 
       for (const [bucket, livePoint] of provisional.entries()) {
         if (!Number.isFinite(bucket) || !livePoint) continue;
 
-        // The 1D live chart uses the last WebSocket tick observed in each
-        // minute. Keep that tick as the completed minute's plotted value;
-        // REST OHLC candles must not replace it during the session.
-        const currentMinute = minuteBucket(Date.now());
-        const isCurrentMinute = bucket === currentMinute;
+        // Official history wins for completed minutes.
+        if (officialBuckets.has(bucket) && bucket !== currentMinute) {
+          provisional.delete(bucket);
+          continue;
+        }
 
+        // Only the current minute should prefer the live WebSocket value.
         const existingIndex = merged.findIndex((point) => {
-          const ts = getPointTimestamp(point);
-          return Number.isFinite(ts) && minuteBucket(ts) === bucket;
+          const timestamp = getPointTimestamp(point);
+          return (
+            Number.isFinite(timestamp) &&
+            minuteBucket(timestamp) === bucket
+          );
         });
 
         if (existingIndex >= 0) {
-          // Prefer the live last-tick value for the current minute and for
-          // completed minute buckets that were observed over the socket.
           merged[existingIndex] = livePoint;
         } else {
           merged.push(livePoint);
         }
-
       }
 
-      merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
+      merged.sort(
+        (a, b) => getPointTimestamp(a) - getPointTimestamp(b),
+      );
+
       return merged;
     };
+
 
     try {
       const response = await axios.get(ENDPOINTS.history(key, params), {
@@ -3592,16 +3744,20 @@ export default function StockDashboard({
         // OHLC history while the current minute remains live.
         historicalDayHistoryRef.current = officialPoints;
 
-        if (!openNow && officialSettlementReadyRef.current && officialPoints.length) {
+        if (
+          !openNow &&
+          officialSettlementReadyRef.current &&
+          officialPoints.length
+        ) {
           const lastPoint = officialPoints[officialPoints.length - 1];
           const officialClose = Array.isArray(lastPoint)
             ? nullableNumber(lastPoint[4], lastPoint[1])
             : nullableNumber(
-                lastPoint?.close,
-                lastPoint?.c,
-                lastPoint?.price,
-                lastPoint?.ltp,
-              );
+              lastPoint?.close,
+              lastPoint?.c,
+              lastPoint?.price,
+              lastPoint?.ltp,
+            );
 
           if (officialClose !== null) {
             setSnapshot((previous) => ({
@@ -3911,17 +4067,10 @@ export default function StockDashboard({
 
       finalHistoryLoadedRef.current = false;
 
+      // Keep the previous finalized chart and displayed values untouched
+      // throughout pre-market. The first valid tick of today's session will
+      // start the new chart and request today's history if it is missing.
       setHoverData(null);
-
-      setHistory([]);
-
-      if (!marketOpenRef.current && instrumentKey) {
-        const controller = new AbortController();
-
-        loadHistory(instrumentKey, "1D", controller.signal);
-
-        window.setTimeout(() => controller.abort(), 25000);
-      }
     };
 
     checkSession();
@@ -3931,7 +4080,7 @@ export default function StockDashboard({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [chartRange, instrumentKey, loadHistory]);
+  }, [chartRange]);
 
   /* WEBSOCKET CONNECTION & TICK HANDLING */
 
@@ -3977,10 +4126,7 @@ export default function StockDashboard({
       const { timestamp, price } = pending;
       const today = getIndiaDate();
 
-      if (
-        chartRangeRef.current !== "1D" ||
-        finalHistoryLoadedRef.current
-      ) {
+      if (chartRangeRef.current !== "1D" || finalHistoryLoadedRef.current) {
         return;
       }
 
@@ -4008,7 +4154,7 @@ export default function StockDashboard({
           const ts = parseHistoryTimestamp(
             Array.isArray(point)
               ? point[0]
-              : point?.timestamp ?? point?.time ?? point?.date,
+              : (point?.timestamp ?? point?.time ?? point?.date),
           );
           return Number.isFinite(ts) && indiaDateFromTimestamp(ts) === today;
         });
@@ -4026,8 +4172,7 @@ export default function StockDashboard({
         }
       }
 
-      const minuteTimestamp =
-        Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
+      const minuteTimestamp = Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
 
       const minuteTime = new Intl.DateTimeFormat("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -4072,10 +4217,12 @@ export default function StockDashboard({
             const ts = parseHistoryTimestamp(
               Array.isArray(point)
                 ? point[0]
-                : point?.timestamp ?? point?.time,
+                : (point?.timestamp ?? point?.time),
             );
-            return Number.isFinite(ts) &&
-              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket;
+            return (
+              Number.isFinite(ts) &&
+              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket
+            );
           });
 
           if (existingIndex >= 0) {
@@ -4093,10 +4240,10 @@ export default function StockDashboard({
 
         output.sort((a, b) => {
           const ta = parseHistoryTimestamp(
-            Array.isArray(a) ? a[0] : a?.timestamp ?? a?.time,
+            Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
           );
           const tb = parseHistoryTimestamp(
-            Array.isArray(b) ? b[0] : b?.timestamp ?? b?.time,
+            Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
           );
           return ta - tb;
         });
@@ -4240,7 +4387,10 @@ export default function StockDashboard({
     const scheduleSubscribeRetry = () => {
       if (isStale() || subscribed || subscribeRetryTimer) return;
 
-      const delay = Math.min(5000, 500 * Math.max(1, subscribeRetryAttempts + 1));
+      const delay = Math.min(
+        5000,
+        500 * Math.max(1, subscribeRetryAttempts + 1),
+      );
       subscribeRetryTimer = window.setTimeout(() => {
         subscribeRetryTimer = null;
         subscribe();
@@ -4635,7 +4785,25 @@ export default function StockDashboard({
       .sort((a, b) => a.rawTimestamp - b.rawTimestamp);
 
     if (chartRange !== "1D") {
-      return parsed;
+      const baseline = nullableNumber(rangeBaseline);
+      if (!parsed.length || baseline === null || baseline <= 0) return parsed;
+
+      // Anchor the historical line at the same official prior-session close
+      // used by the range return calculation. This keeps the chart and the
+      // displayed return aligned without overlaying live ticks on this range.
+      const first = parsed[0];
+      if (Math.abs(first.price - baseline) < 1e-8) return parsed;
+
+      return [
+        {
+          price: baseline,
+          openPrice: baseline,
+          rawTimestamp: first.rawTimestamp - 1,
+          time: "Period start",
+          isBaseline: true,
+        },
+        ...parsed,
+      ];
     }
 
     const baseline = marketOpen

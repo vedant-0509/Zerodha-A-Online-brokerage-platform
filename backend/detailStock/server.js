@@ -30,6 +30,8 @@
 //   initDb,
 //   close: closeDb,
 //   saveDailyClose,
+//   getFinalizedDailySession,
+//   hasFinalizedDailySession,
 //   getPreviousStoredClose,
 //   getDbHistory,
 //   getMarketStockInstruments,
@@ -47,6 +49,7 @@
 //   isAfterMarketClose,
 //   indiaDate,
 //   marketStatus,
+//   isOfficialSettlementReady,
 // } = require("./market");
 
 // const app = express();
@@ -149,7 +152,13 @@
 // }
 
 // function historyKey(key, unit, interval, from, to) {
-//   return `${HISTORY_PREFIX}${key}:${unit}:${interval}:${from || ""}:${to}`;
+//   // Prevent a pre-close cache from surviving into the finalized session.
+//   // The same closed-session key is reusable overnight until the next session.
+//   const sessionState = isMarketOpen()
+//     ? `open:${indiaDate()}`
+//     : `closed:${latestCompletedTradingDate()}`;
+
+//   return `${HISTORY_PREFIX}${key}:${unit}:${interval}:${from || ""}:${to}:${sessionState}`;
 // }
 
 // function finalized1DKey(instrumentKey, tradingDate) {
@@ -171,6 +180,30 @@
 // }
 
 // async function getFinalized1D(instrumentKey, tradingDate) {
+//   // MongoDB is the durable source of truth. Redis is only a fast cache.
+//   try {
+//     const persisted = await getFinalizedDailySession(
+//       instrumentKey,
+//       tradingDate,
+//     );
+//     if (persisted?.candles?.length) {
+//       if (env.redisEnabled) {
+//         await redis.set(
+//           finalized1DKey(instrumentKey, tradingDate),
+//           JSON.stringify(persisted),
+//           { EX: 3 * 24 * 60 * 60 },
+//         );
+//       }
+//       return persisted;
+//     }
+//   } catch (err) {
+//     logger.warn("Finalized 1D MongoDB read failed", {
+//       instrumentKey,
+//       tradingDate,
+//       error: errorMessage(err),
+//     });
+//   }
+
 //   if (!env.redisEnabled) return null;
 
 //   try {
@@ -538,21 +571,14 @@
 //      * always Upstox daily history.
 //      */
 //     try {
-//       const dbData = await getDbHistory(
-//         instrumentKey,
-//         fromDate,
-//         toDate,
-//       );
+//       const dbData = await getDbHistory(instrumentKey, fromDate, toDate);
 
 //       const validDbCandles = (Array.isArray(dbData) ? dbData : []).filter(
 //         (candle) => {
 //           const high = Number(candle?.high);
 //           const low = Number(candle?.low);
 //           return (
-//             Number.isFinite(high) &&
-//             high > 0 &&
-//             Number.isFinite(low) &&
-//             low > 0
+//             Number.isFinite(high) && high > 0 && Number.isFinite(low) && low > 0
 //           );
 //         },
 //       );
@@ -598,46 +624,163 @@
 //   const context = await getInstrumentContext(instrumentKey);
 
 //   const today = indiaDate();
-
 //   const marketOpen = isMarketOpen();
+//   const settlementReady = isOfficialSettlementReady();
+//   const latestFinalizedDate = latestCompletedTradingDate();
 
-//   const existing = await getSnapshot(instrumentKey);
+//   let existing = await getSnapshot(instrumentKey);
 
-//   const existingIsFresh =
-//     existing?.marketDate === today &&
-//     (marketOpen
-//       ? existing?.marketStatus !== "CLOSED"
-//       : existing?.marketStatus === "CLOSED" &&
-//         existing?.source === "upstox-close-reconciliation");
+//   const finalizedSources = new Set([
+//     "upstox-close-reconciliation",
+//     "upstox-finalized-intraday",
+//     "upstox-finalized-history",
+//     "upstox-official-eod-quote",
+//   ]);
 
-//   if (existing && existingIsFresh) {
+//   const existingIsFinalized =
+//     !marketOpen &&
+//     existing?.marketDate === latestFinalizedDate &&
+//     existing?.marketStatus === "CLOSED" &&
+//     finalizedSources.has(existing?.source);
+
+//   // After the 15-minute settlement window, an official 1D candle pull is
+//   // authoritative even when the background all-stocks settlement job has not
+//   // reached this stock yet. This makes a user clicking a stock immediately
+//   // after 15:45 see the official close, not a provisional quote.
+//   if (!marketOpen && settlementReady && !existingIsFinalized) {
+//     try {
+//       const tradingDate = latestCompletedTradingDate();
+//       const candles = await fetchOfficialIntradaySession(
+//         instrumentKey,
+//         tradingDate,
+//       );
+//       const previousClose = await resolvePreviousClose(
+//         instrumentKey,
+//         tradingDate,
+//       );
+
+//       const row = {
+//         instrument_key: instrumentKey,
+//         symbol: context?.symbol || context?.marketRow?.symbol || null,
+//         name: context?.name || context?.marketRow?.name || null,
+//         master_exchange:
+//           context?.exchange || context?.marketRow?.master_exchange || null,
+//         master_segment:
+//           context?.segment || context?.marketRow?.master_segment || null,
+//         exchange: context?.exchange || null,
+//         segment: context?.segment || null,
+//         sector: context?.marketRow?.sector || null,
+//       };
+
+//       const official = buildOfficialCloseSnapshot(
+//         row,
+//         candles,
+//         previousClose,
+//         tradingDate,
+//         existing,
+//       );
+
+//       official.finalizedAt = new Date().toISOString();
+//       official.officialSettlementReady = true;
+//       official.settlementStatus = "finalized";
+//       official.candles = candles;
+
+//       await saveDailyClose(official, tradingDate);
+//       await cacheSnapshot(official);
+
+//       await cacheFinalized1D(instrumentKey, tradingDate, {
+//         tradingDate,
+//         candles,
+//         closePrice: Number(
+//           official.dayClose || official.close || official.price,
+//         ),
+//         baselineClose: previousClose?.close ?? null,
+//         baselineDate: previousClose?.tradingDate ?? null,
+//         source: "upstox-finalized-intraday",
+//         finalizedAt: official.finalizedAt,
+//       });
+
+//       return official;
+//     } catch (error) {
+//       logger.warn("Per-stock official settlement fetch failed", {
+//         instrumentKey,
+//         error: errorMessage(error),
+//       });
+//       // Fall through to a fresh quote so the detail page still has a usable
+//       // snapshot while the scheduled reconciliation retries the official pull.
+//     }
+//   }
+
+//   if (existingIsFinalized) {
+//     const hasUpper = Number.isFinite(Number(existing.upperCircuit));
+//     const hasLower = Number.isFinite(Number(existing.lowerCircuit));
+
+//     if (!hasUpper || !hasLower) {
+//       try {
+//         const quote = await upstox.fetchOhlc(instrumentKey);
+
+//         existing = {
+//           ...existing,
+//           upperCircuit:
+//             quote?.upperCircuit ??
+//             quote?.upperCircuitLimit ??
+//             existing.upperCircuit ??
+//             null,
+//           lowerCircuit:
+//             quote?.lowerCircuit ??
+//             quote?.lowerCircuitLimit ??
+//             existing.lowerCircuit ??
+//             null,
+//           upperCircuitLimit:
+//             quote?.upperCircuitLimit ??
+//             quote?.upperCircuit ??
+//             existing.upperCircuitLimit ??
+//             null,
+//           lowerCircuitLimit:
+//             quote?.lowerCircuitLimit ??
+//             quote?.lowerCircuit ??
+//             existing.lowerCircuitLimit ??
+//             null,
+//         };
+
+//         await cacheSnapshot(existing);
+//       } catch (error) {
+//         logger.warn("Circuit limit refresh failed", {
+//           instrumentKey,
+//           error: errorMessage(error),
+//         });
+//       }
+//     }
+
+//     existing.officialSettlementReady = settlementReady;
 //     return existing;
 //   }
 
+//   // OPEN market (or a non-finalized post-close window): never reuse a stale
+//   // same-day cache. Fetch a fresh Upstox quote, then let WebSocket ticks own
+//   // the live price.
 //   const snapshot = await upstox.fetchOhlc(instrumentKey);
 
 //   if (context) {
 //     snapshot.symbol = context.symbol;
-
 //     snapshot.name = context.name;
-
 //     snapshot.exchange = context.exchange;
-
 //     snapshot.segment = context.segment;
-
 //     snapshot.isin = context.isin;
-
 //     snapshot.sector = context.marketRow?.sector || null;
 //   }
 
 //   snapshot.marketDate = today;
-
 //   snapshot.marketOpen = marketOpen;
-
 //   snapshot.marketStatus = marketOpen ? "OPEN" : "CLOSED";
+//   snapshot.officialSettlementReady = settlementReady;
+
+//   // A closed-but-not-yet-finalized snapshot is explicitly provisional.
+//   if (!marketOpen && !settlementReady) {
+//     snapshot.source = "upstox-provisional-close";
+//   }
 
 //   await enrichWithStoredPreviousClose(snapshot);
-
 //   await cacheSnapshot(snapshot);
 
 //   return snapshot;
@@ -1455,8 +1598,8 @@
 
 //   const source =
 //     financialRows.length ||
-//     fundamentals.revenue !== null ||
-//     fundamentals.netProfit !== null
+//       fundamentals.revenue !== null ||
+//       fundamentals.netProfit !== null
 //       ? "mongodb"
 //       : "mongodb-partial";
 
@@ -1615,10 +1758,13 @@
 
 //         throw new Error("Upstox returned no usable financial data");
 //       } catch (providerError) {
-//         logger.warn("Upstox financial data unavailable; using MongoDB fallback", {
-//           isin: normalizedIsin,
-//           error: providerError?.message || String(providerError),
-//         });
+//         logger.warn(
+//           "Upstox financial data unavailable; using MongoDB fallback",
+//           {
+//             isin: normalizedIsin,
+//             error: providerError?.message || String(providerError),
+//           },
+//         );
 
 //         const stored = await getStoredFundamentals(normalizedIsin);
 //         if (stored) {
@@ -1677,6 +1823,220 @@
 // /* =========================================================
 //    OFFICIAL INTRADAY SETTLEMENT
 // ========================================================= */
+
+// function indiaMinutesOfDay(date = new Date()) {
+//   const parts = new Intl.DateTimeFormat("en-GB", {
+//     timeZone: "Asia/Kolkata",
+//     hour: "2-digit",
+//     minute: "2-digit",
+//     hourCycle: "h23",
+//   }).formatToParts(date);
+//   const values = Object.fromEntries(
+//     parts.map((part) => [part.type, part.value]),
+//   );
+//   return Number(values.hour || 0) * 60 + Number(values.minute || 0);
+// }
+
+// function candleTradingDate(candle) {
+//   const timestamp = Date.parse(candle?.timestamp);
+//   return Number.isFinite(timestamp) ? indiaDate(new Date(timestamp)) : null;
+// }
+
+// function candleOpen(candle) {
+//   const value = Number(candle?.open ?? candle?.o);
+//   return Number.isFinite(value) && value > 0 ? value : null;
+// }
+
+// function candleClose(candle) {
+//   const value = Number(candle?.close ?? candle?.c ?? candle?.price);
+//   return Number.isFinite(value) && value > 0 ? value : null;
+// }
+
+// function currentISTMarketMinutes() {
+//   const parts = new Intl.DateTimeFormat("en-GB", {
+//     timeZone: "Asia/Kolkata",
+//     hour: "2-digit",
+//     minute: "2-digit",
+//     hourCycle: "h23",
+//   }).formatToParts(new Date());
+//   const values = Object.fromEntries(
+//     parts.map((part) => [part.type, part.value]),
+//   );
+//   const minutes = Number(values.hour || 0) * 60 + Number(values.minute || 0);
+//   return Math.max(9 * 60 + 15, Math.min(15 * 60 + 30, minutes));
+// }
+
+// function istMinutesFromTimestamp(timestamp) {
+//   const ts = Date.parse(timestamp);
+//   if (!Number.isFinite(ts)) return null;
+//   const parts = new Intl.DateTimeFormat("en-GB", {
+//     timeZone: "Asia/Kolkata",
+//     hour: "2-digit",
+//     minute: "2-digit",
+//     hourCycle: "h23",
+//   }).formatToParts(new Date(ts));
+//   const values = Object.fromEntries(
+//     parts.map((part) => [part.type, part.value]),
+//   );
+//   return Number(values.hour || 0) * 60 + Number(values.minute || 0);
+// }
+
+// function nearestTradingCandle(candles, targetDate, targetMinutes) {
+//   const rows = (Array.isArray(candles) ? candles : [])
+//     .filter(
+//       (candle) =>
+//         candleTradingDate(candle) === targetDate &&
+//         candleClose(candle) !== null,
+//     )
+//     .sort((a, b) => {
+//       const am = istMinutesFromTimestamp(a.timestamp);
+//       const bm = istMinutesFromTimestamp(b.timestamp);
+//       return (
+//         Math.abs((am ?? 0) - targetMinutes) -
+//         Math.abs((bm ?? 0) - targetMinutes)
+//       );
+//     });
+
+//   return rows[0] || null;
+// }
+
+// async function resolveRangeStartPrice(
+//   instrumentKey,
+//   unit,
+//   interval,
+//   from,
+//   data,
+// ) {
+//   if (!from) return null;
+
+//   try {
+//     /*
+//      * The period-return number is not the OHLC OPEN of the first daily/weekly
+//      * candle. It is the market price around the same clock time at the start
+//      * of the selected period. This is why the earlier versions could be off
+//      * by a few rupees even when the chart itself looked correct.
+//      *
+//      * Upstox V3 supports minute history from Jan-2022. For intervals above
+//      * 15 minutes, a quarter-sized request is allowed, so a 30-minute candle
+//      * is enough to resolve the reference point for 3M/6M/1Y/3Y when the
+//      * starting date is inside the provider's intraday history.
+//      */
+//     const today = indiaDate();
+//     const targetMinutes = currentISTMarketMinutes();
+//     const yearsSince2022 = Number(from.slice(0, 4)) >= 2022;
+
+//     // The All range begins at 2000 in the UI, but the return anchor is the
+//     // last quoted price immediately before that boundary. For Reliance this
+//     // is the Dec-1999 close (19.84), which is also why using the Jan-2000
+//     // monthly OPEN produced a large All-range mismatch.
+//     if (unit === "months" && from === "2000-01-01") {
+//       const previousWindowFrom = shiftIndiaDate(from, -62);
+//       const previousCandles = await upstox.fetchHistory(
+//         instrumentKey,
+//         "months",
+//         "1",
+//         from,
+//         previousWindowFrom,
+//       );
+//       const previousRows = (
+//         Array.isArray(previousCandles) ? previousCandles : []
+//       )
+//         .filter(
+//           (candle) =>
+//             candleTradingDate(candle) < from && candleClose(candle) !== null,
+//         )
+//         .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+//       const previous = previousRows[previousRows.length - 1];
+//       if (previous) {
+//         return {
+//           close: candleClose(previous),
+//           tradingDate: candleTradingDate(previous),
+//           source: "upstox-pre-range-close",
+//         };
+//       }
+//     }
+
+//     if (yearsSince2022) {
+//       const intradayInterval =
+//         unit === "minutes"
+//           ? Math.max(1, Math.min(Number(interval) || 5, 15))
+//           : from >= shiftIndiaDate(today, -31)
+//             ? 5
+//             : 30;
+
+//       // Ask for a small window beginning at the range start. Upstox requires
+//       // to_date >= from_date; the previous implementation got this direction
+//       // wrong for the short-range lookup.
+//       const intradayTo = shiftIndiaDate(from, 3);
+//       const intradayCandles = await upstox.fetchHistory(
+//         instrumentKey,
+//         "minutes",
+//         String(intradayInterval),
+//         intradayTo,
+//         from,
+//       );
+
+//       // If the exact calendar start is a holiday/weekend, use the first
+//       // trading session on/after the requested start date.
+//       const valid = (Array.isArray(intradayCandles) ? intradayCandles : [])
+//         .filter((candle) => candleClose(candle) !== null)
+//         .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+//       if (valid.length) {
+//         const firstTradingDate = candleTradingDate(valid[0]);
+//         const sameDay = nearestTradingCandle(
+//           valid,
+//           firstTradingDate,
+//           targetMinutes,
+//         );
+//         if (sameDay) {
+//           return {
+//             close: candleClose(sameDay),
+//             tradingDate: firstTradingDate,
+//             source: `upstox-period-start-${intradayInterval}m-same-time`,
+//           };
+//         }
+//       }
+//     }
+
+//     /*
+//      * For dates before the intraday provider window, use the first plotted
+//      * candle's OPEN. This is the closest stable equivalent to the start-time
+//      * price and is also what our long-range chart already plots.
+//      */
+//     const rows = (Array.isArray(data) ? data : [])
+//       .filter((candle) => {
+//         const date = candleTradingDate(candle);
+//         return date && date >= from;
+//       })
+//       .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+//     const first = rows[0];
+//     const open = candleOpen(first);
+//     const close = candleClose(first);
+
+//     if (open !== null || close !== null) {
+//       return {
+//         close: open ?? close,
+//         tradingDate: candleTradingDate(first),
+//         source:
+//           open !== null
+//             ? "upstox-range-start-open"
+//             : "upstox-range-start-close",
+//       };
+//     }
+//   } catch (err) {
+//     logger.warn("Range start price resolution failed", {
+//       instrumentKey,
+//       unit,
+//       interval,
+//       from,
+//       error: errorMessage(err),
+//     });
+//   }
+
+//   return null;
+// }
 
 // async function resolvePreviousClose(instrumentKey, beforeDate) {
 //   if (!beforeDate) return null;
@@ -1805,18 +2165,18 @@
 //       const raw =
 //         candidateDate === indiaDate()
 //           ? await upstox.fetchHistory(
-//               instrumentKey,
-//               "minutes",
-//               "1",
-//               candidateDate,
-//             )
+//             instrumentKey,
+//             "minutes",
+//             "1",
+//             candidateDate,
+//           )
 //           : await upstox.fetchHistory(
-//               instrumentKey,
-//               "minutes",
-//               "1",
-//               candidateDate,
-//               shiftIndiaDate(candidateDate, -7),
-//             );
+//             instrumentKey,
+//             "minutes",
+//             "1",
+//             candidateDate,
+//             shiftIndiaDate(candidateDate, -7),
+//           );
 
 //       const candles = filterTradingSession(raw, candidateDate);
 
@@ -1842,11 +2202,48 @@
 
 //   throw new Error(
 //     `No official 1-minute candles available for ${instrumentKey} on or before ${requestedDate}` +
-//       (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
+//     (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
 //   );
 // }
 
-// function buildOfficialCloseSnapshot(row, candles, previousClose, tradingDate) {
+// async function fetchOfficialIntradaySessionWithRetry(
+//   instrumentKey,
+//   tradingDate,
+//   attempts = 3,
+// ) {
+//   let lastError = null;
+
+//   for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+//     try {
+//       return await fetchOfficialIntradaySession(instrumentKey, tradingDate);
+//     } catch (error) {
+//       lastError = error;
+//       if (attempt >= attempts) break;
+
+//       const delayMs = Math.min(5000, 1000 * attempt);
+//       logger.warn("Official intraday settlement retry", {
+//         instrumentKey,
+//         tradingDate,
+//         attempt,
+//         nextRetryMs: delayMs,
+//         error: errorMessage(error),
+//       });
+//       await new Promise((resolve) => setTimeout(resolve, delayMs));
+//     }
+//   }
+
+//   throw (
+//     lastError || new Error(`Official settlement failed for ${instrumentKey}`)
+//   );
+// }
+
+// function buildOfficialCloseSnapshot(
+//   row,
+//   candles,
+//   previousClose,
+//   tradingDate,
+//   priorSnapshot = null,
+// ) {
 //   const first = candles[0];
 //   const last = candles[candles.length - 1];
 //   const close = Number(last.close);
@@ -1898,12 +2295,43 @@
 //     high: highs.length ? Math.max(...highs) : Number(first.high),
 //     low: lows.length ? Math.min(...lows) : Number(first.low),
 //     volume,
+//     upperCircuit: Number(
+//       priorSnapshot?.upperCircuit ??
+//       priorSnapshot?.upperCircuitLimit ??
+//       row?.upperCircuit ??
+//       row?.upperCircuitLimit ??
+//       NaN,
+//     ),
+//     lowerCircuit: Number(
+//       priorSnapshot?.lowerCircuit ??
+//       priorSnapshot?.lowerCircuitLimit ??
+//       row?.lowerCircuit ??
+//       row?.lowerCircuitLimit ??
+//       NaN,
+//     ),
+//     upperCircuitLimit: Number(
+//       priorSnapshot?.upperCircuitLimit ??
+//       priorSnapshot?.upperCircuit ??
+//       row?.upperCircuitLimit ??
+//       row?.upperCircuit ??
+//       NaN,
+//     ),
+//     lowerCircuitLimit: Number(
+//       priorSnapshot?.lowerCircuitLimit ??
+//       priorSnapshot?.lowerCircuit ??
+//       row?.lowerCircuitLimit ??
+//       row?.lowerCircuit ??
+//       NaN,
+//     ),
 //     lastTradeTime: Date.parse(last.timestamp) || null,
 //     timestamp: Date.now(),
 //     marketDate: tradingDate,
 //     marketOpen: false,
 //     marketStatus: "CLOSED",
 //     source: "upstox-finalized-intraday",
+//     settlementStatus: "finalized",
+//     officialSettlementReady: true,
+//     finalizedAt: new Date().toISOString(),
 //   };
 // }
 
@@ -1926,53 +2354,125 @@
 //       logger.warn("No market stocks available for official settlement", {
 //         reason,
 //         tradingDate: targetTradingDate,
-//         database: "mongodb",
 //       });
 //       return { total: 0, saved: 0 };
 //     }
+
+//     let officialQuotes = {};
+//     try {
+//       officialQuotes = await upstox.fetchOfficialCloseQuotes(
+//         rows.map((row) => row.instrument_key),
+//       );
+//     } catch (error) {
+//       logger.error("Official EOD quote fetch failed", {
+//         reason,
+//         tradingDate: targetTradingDate,
+//         error: errorMessage(error),
+//       });
+//     }
+
+//     const findOfficialQuote = (row) => {
+//       const direct = officialQuotes?.[row.instrument_key];
+//       if (direct) return direct;
+//       const segment = row.master_segment || row.segment || "NSE_EQ";
+//       const symbol = row.tradingSymbol || row.symbol || "";
+//       return officialQuotes?.[`${segment}|${symbol}`] || null;
+//     };
+
+//     logger.info("Official EOD quote batch received", {
+//       reason,
+//       tradingDate: targetTradingDate,
+//       requested: rows.length,
+//       received: Object.keys(officialQuotes || {}).length,
+//     });
 
 //     const batchSize = Math.max(1, Number(env.closeBatchSize) || 5);
 //     let saved = 0;
 
 //     for (let i = 0; i < rows.length; i += batchSize) {
 //       const batch = rows.slice(i, i + batchSize);
-
 //       const results = await Promise.allSettled(
 //         batch.map(async (row) => {
 //           const key = row.instrument_key;
-//           if (!validKey(key)) {
-//             throw new Error("Invalid instrument key");
+//           if (!validKey(key)) throw new Error("Invalid instrument key");
+
+//           const existing = await getSnapshot(key);
+//           const quote = findOfficialQuote(row);
+
+//           if (quote?.close != null && Number(quote.close) > 0) {
+//             const close = Number(quote.close);
+//             const previous = Number(quote.previousClose);
+//             const previousClose =
+//               Number.isFinite(previous) && previous > 0
+//                 ? {
+//                   close: previous,
+//                   tradingDate: previousTradingDate(
+//                     dateAtISTNoon(targetTradingDate),
+//                   ),
+//                   source: "upstox-v3-official-eod-quote",
+//                 }
+//                 : await resolvePreviousClose(key, targetTradingDate);
+
+//             const candle = {
+//               timestamp: `${targetTradingDate}T15:30:00+05:30`,
+//               open: Number(quote.open ?? close),
+//               high: Number(quote.high ?? close),
+//               low: Number(quote.low ?? close),
+//               close,
+//               volume: Number(quote.volume ?? 0),
+//             };
+
+//             const snapshot = buildOfficialCloseSnapshot(
+//               {
+//                 ...row,
+//                 upperCircuit: quote.upperCircuit ?? row.upperCircuit,
+//                 lowerCircuit: quote.lowerCircuit ?? row.lowerCircuit,
+//                 upperCircuitLimit:
+//                   quote.upperCircuitLimit ?? row.upperCircuitLimit,
+//                 lowerCircuitLimit:
+//                   quote.lowerCircuitLimit ?? row.lowerCircuitLimit,
+//               },
+//               [candle],
+//               previousClose,
+//               targetTradingDate,
+//               { ...(existing || {}), ...(quote || {}) },
+//             );
+
+//             snapshot.source = "upstox-official-eod-quote";
+//             snapshot.settlementStatus = "finalized";
+//             snapshot.officialSettlementReady = true;
+//             snapshot.candles = [];
+
+//             await saveDailyClose(snapshot, targetTradingDate);
+//             await cacheSnapshot(snapshot);
+
+//             if (subscribers.has(key)) {
+//               io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
+//             }
+
+//             return;
 //           }
 
-//           const cached = await getFinalized1D(key, targetTradingDate);
-//           const hasClose = await hasDailyCloseForDate(key, targetTradingDate);
-
-//           if (cached && hasClose) {
-//             return { skipped: true };
-//           }
-
-//           // The settlement job owns the final official pull. If a cache was
-//           // seeded by a client immediately after close, use it only together
-//           // with a persisted close; otherwise fetch fresh official data.
-//           const candles =
-//             cached?.candles?.length && hasClose
-//               ? cached.candles
-//               : await fetchOfficialIntradaySession(key, targetTradingDate);
-
+//           // Per-stock fallback only when the batch did not return this symbol.
+//           const candles = await fetchOfficialIntradaySessionWithRetry(
+//             key,
+//             targetTradingDate,
+//             3,
+//           );
 //           const previousClose = await resolvePreviousClose(
 //             key,
 //             targetTradingDate,
 //           );
-
 //           const snapshot = buildOfficialCloseSnapshot(
 //             row,
 //             candles,
 //             previousClose,
 //             targetTradingDate,
+//             existing,
 //           );
+//           snapshot.candles = candles;
 
 //           await saveDailyClose(snapshot, targetTradingDate);
-
 //           await cacheFinalized1D(key, targetTradingDate, {
 //             tradingDate: targetTradingDate,
 //             candles,
@@ -1982,14 +2482,11 @@
 //             source: "upstox-finalized-intraday",
 //             finalizedAt: new Date().toISOString(),
 //           });
-
 //           await cacheSnapshot(snapshot);
 
 //           if (subscribers.has(key)) {
 //             io.to(`stock:${key}`).emit("detailStock:snapshot", snapshot);
 //           }
-
-//           return { skipped: false };
 //         }),
 //       );
 
@@ -2012,17 +2509,14 @@
 //       }
 //     }
 
-//     logger.info("Official 1D settlement complete", {
+//     logger.info("Official EOD settlement complete", {
 //       reason,
 //       tradingDate: targetTradingDate,
 //       total: rows.length,
 //       saved,
 //     });
 
-//     return {
-//       total: rows.length,
-//       saved,
-//     };
+//     return { total: rows.length, saved };
 //   })();
 
 //   try {
@@ -2031,7 +2525,6 @@
 //     closingSyncPromise = null;
 //   }
 // }
-
 // /* =========================================================
 //    STARTUP RECONCILIATION
 // ========================================================= */
@@ -2113,15 +2606,31 @@
 //     return;
 //   }
 
+//   const today = indiaDate();
 //   const previous = snapshots.get(tick.instrumentKey) || {};
+//   const newTradingSession =
+//     previous.marketDate !== today || previous.marketStatus === "CLOSED";
 
+//   // Never carry yesterday's day OHLC/volume into the new session. The first
+//   // valid tick owns the new session state; previousClose intentionally comes
+//   // from the finalized prior session when the feed does not provide it.
 //   const snapshot = {
-//     ...previous,
+//     ...(newTradingSession
+//       ? {
+//         instrumentKey: tick.instrumentKey,
+//         previousClose:
+//           previous.dayClose ??
+//           previous.price ??
+//           previous.previousClose ??
+//           null,
+//         previousCloseDate: previous.marketDate ?? null,
+//       }
+//       : previous),
 //     ...tick,
 
 //     instrumentKey: tick.instrumentKey,
 
-//     marketDate: indiaDate(),
+//     marketDate: today,
 
 //     marketOpen: true,
 
@@ -2130,16 +2639,26 @@
 //     source: "upstox-websocket",
 //   };
 
-//   for (const field of [
-//     "previousClose",
-//     "open",
-//     "high",
-//     "low",
-//     "volume",
-//     "upperCircuit",
-//     "lowerCircuit",
-//     "lastTradeTime",
-//   ]) {
+//   const carryFields = newTradingSession
+//     ? [
+//       "previousClose",
+//       "previousCloseDate",
+//       "upperCircuit",
+//       "lowerCircuit",
+//       "lastTradeTime",
+//     ]
+//     : [
+//       "previousClose",
+//       "open",
+//       "high",
+//       "low",
+//       "volume",
+//       "upperCircuit",
+//       "lowerCircuit",
+//       "lastTradeTime",
+//     ];
+
+//   for (const field of carryFields) {
 //     if (snapshot[field] == null && previous[field] != null) {
 //       snapshot[field] = previous[field];
 //     }
@@ -2175,7 +2694,7 @@
 // ========================================================= */
 
 // io.on("connection", (socket) => {
-//   socket.on("detailStock:subscribe", async (payload, ack = () => {}) => {
+//   socket.on("detailStock:subscribe", async (payload, ack = () => { }) => {
 //     const key = payload?.instrumentKey;
 
 //     if (!validKey(key)) {
@@ -2287,7 +2806,7 @@
 //     }
 //   });
 
-//   socket.on("detailStock:unsubscribe", async (payload, ack = () => {}) => {
+//   socket.on("detailStock:unsubscribe", async (payload, ack = () => { }) => {
 //     const key = payload?.instrumentKey;
 
 //     if (!validKey(key)) {
@@ -2566,7 +3085,7 @@
 //       if (finalized?.candles?.length) {
 //         return res.json({
 //           success: true,
-//           source: "redis-finalized-1d",
+//           source: "finalized-1d",
 //           marketOpen: false,
 //           sessionDate,
 //           baselineClose: finalized.baselineClose ?? null,
@@ -2606,12 +3125,34 @@
 //       }
 //     }
 
-//     let data;
+//     // Initialize the complete history response contract before any provider
+//     // call. The old implementation left these variables undefined and, more
+//     // importantly, never fetched the requested non-1D candle series.
+//     let data = [];
+//     let baselineClose = null;
+//     let baselineDate = null;
+//     let sessionDate = null;
 
-//     if (isOneDay && !isMarketOpen()) {
-//       const sessionDate = latestCompletedTradingDate();
-//       data = await fetchOfficialIntradaySession(key, sessionDate);
+//     if (isOneDay) {
+//       sessionDate = latestCompletedTradingDate();
+
+//       if (!isMarketOpen()) {
+//         // After close, use the official finalized session candles.
+//         data = await fetchOfficialIntradaySession(key, sessionDate);
+//       } else {
+//         // During market hours V3 intraday history supplies completed candles;
+//         // the WebSocket separately overlays the current live minute.
+//         data = await upstox.fetchHistory(key, "minutes", "1", indiaDate());
+//       }
+
+//       const previousClose = await resolvePreviousClose(key, sessionDate);
+//       if (previousClose?.close != null) {
+//         baselineClose = Number(previousClose.close);
+//         baselineDate = previousClose.tradingDate || null;
+//       }
 //     } else {
+//       // Fetch the actual requested historical series first. Without this
+//       // call, 1W/1M/3M/6M/1Y/3Y/5Y/All received an empty data variable.
 //       data = await upstox.fetchHistory(
 //         key,
 //         unit,
@@ -2619,41 +3160,18 @@
 //         to,
 //         from || undefined,
 //       );
-//     }
 
-//     let baselineClose = null;
-//     let baselineDate = null;
-//     let sessionDate = null;
-
-//     if (isOneDay) {
-//       sessionDate = !isMarketOpen() ? latestCompletedTradingDate() : to;
-
-//       const previous = await resolvePreviousClose(key, sessionDate);
-
-//       baselineClose = previous?.close ?? null;
-//       baselineDate = previous?.tradingDate ?? null;
-
-//       data = filterTradingSession(data, sessionDate);
-//     } else {
-//       /*
-//        * Match the range-return convention used by the stock detail UI: the
-//        * selected period starts at the first trading candle inside the range,
-//        * and its opening price is the starting value. This is why a 1W range
-//        * beginning on a trading day can differ from the prior-day-close
-//        * convention. It also makes All work by using the first available
-//        * historical candle rather than looking for a date before 2000.
-//        */
-//       const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-//       const firstOpen = Number(
-//         firstCandle?.open ?? firstCandle?.openPrice ?? firstCandle?.price,
+//       const rangeStart = await resolveRangeStartPrice(
+//         key,
+//         unit,
+//         interval,
+//         from,
+//         data,
 //       );
 
-//       if (Number.isFinite(firstOpen) && firstOpen > 0) {
-//         baselineClose = firstOpen;
-//         const firstTimestamp = Date.parse(firstCandle?.timestamp);
-//         baselineDate = Number.isFinite(firstTimestamp)
-//           ? indiaDate(new Date(firstTimestamp))
-//           : from || null;
+//       if (rangeStart?.close != null) {
+//         baselineClose = Number(rangeStart.close);
+//         baselineDate = rangeStart.tradingDate || from || null;
 //       }
 //     }
 
@@ -2713,12 +3231,12 @@
 
 //         if (dbData.length) {
 //           const firstCandle = dbData[0];
-//           const firstOpen = Number(
-//             firstCandle?.open ?? firstCandle?.openPrice ?? firstCandle?.price,
+//           const firstClose = Number(
+//             firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
 //           );
 //           const firstTimestamp = Date.parse(firstCandle?.timestamp);
 //           const baselineClose =
-//             Number.isFinite(firstOpen) && firstOpen > 0 ? firstOpen : null;
+//             Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
 //           const baselineDate = Number.isFinite(firstTimestamp)
 //             ? indiaDate(new Date(firstTimestamp))
 //             : from || null;
@@ -2846,7 +3364,19 @@
 //   }
 
 //   try {
-//     const profile = await upstox.getProfile(isin);
+//     let profile = await upstox.getProfile(isin);
+
+//     // The dedicated Upstox company-profile endpoint is authoritative. If it
+//     // returns an empty object, reuse the already-supported fundamentals path
+//     // so a transient profile response cannot erase a valid company profile.
+//     if (
+//       !profile ||
+//       typeof profile !== "object" ||
+//       !Object.keys(profile).length
+//     ) {
+//       const fundamentals = await getFundamentalsCached(isin);
+//       profile = fundamentals?.profile || {};
+//     }
 
 //     return res.json({
 //       success: true,
@@ -3305,8 +3835,8 @@
 
 //       const status =
 //         Number.isInteger(err?.httpStatus) &&
-//         err.httpStatus >= 400 &&
-//         err.httpStatus < 500
+//           err.httpStatus >= 400 &&
+//           err.httpStatus < 500
 //           ? err.httpStatus
 //           : 500;
 
@@ -3365,11 +3895,14 @@
 //     return { total: 0, saved: 0, skipped: true };
 //   }
 
-//   if (!isAfterMarketClose()) {
-//     logger.warn("EOD settlement skipped because market is still open", {
-//       date: indiaDate(),
-//       reason,
-//     });
+//   if (!isOfficialSettlementReady()) {
+//     logger.warn(
+//       "EOD settlement skipped because official settlement is not ready",
+//       {
+//         date: indiaDate(),
+//         reason,
+//       },
+//     );
 //     return { total: 0, saved: 0, skipped: true };
 //   }
 
@@ -3463,8 +3996,10 @@
 
 //   await initDb();
 
-//   await reconcileOnStartup();
-
+//   /*
+//    * Bind the Detail Stock service before the potentially long all-stock
+//    * reconciliation. This prevents Central API 502/ECONNREFUSED during startup.
+//    */
 //   server.listen(env.port, "127.0.0.1", () => {
 //     logger.info("detail-stock server started", {
 //       port: env.port,
@@ -3485,6 +4020,14 @@
 
 //       timezone: env.timezone,
 //     });
+
+//     setTimeout(() => {
+//       reconcileOnStartup().catch((error) => {
+//         logger.error("Startup close reconciliation failed", {
+//           error: errorMessage(error),
+//         });
+//       });
+//     }, 1000);
 //   });
 // }
 
@@ -3505,25 +4048,25 @@
 //     for (const key of upstox.getSubscribed()) {
 //       await upstox.unsubscribe(key, true);
 //     }
-//   } catch {}
+//   } catch { }
 
 //   try {
 //     io.close();
-//   } catch {}
+//   } catch { }
 
 //   try {
 //     server.close();
-//   } catch {}
+//   } catch { }
 
 //   try {
 //     await closeDb();
-//   } catch {}
+//   } catch { }
 
 //   try {
 //     if (env.redisEnabled) {
 //       await redis.quit();
 //     }
-//   } catch {}
+//   } catch { }
 
 //   process.exit(0);
 // }
@@ -3551,6 +4094,31 @@
 
 //   process.exit(1);
 // });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -5175,8 +5743,8 @@ async function getStoredFundamentals(isin) {
 
   const source =
     financialRows.length ||
-    fundamentals.revenue !== null ||
-    fundamentals.netProfit !== null
+      fundamentals.revenue !== null ||
+      fundamentals.netProfit !== null
       ? "mongodb"
       : "mongodb-partial";
 
@@ -5525,18 +6093,18 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
       const raw =
         candidateDate === indiaDate()
           ? await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-            )
+            instrumentKey,
+            "minutes",
+            "1",
+            candidateDate,
+          )
           : await upstox.fetchHistory(
-              instrumentKey,
-              "minutes",
-              "1",
-              candidateDate,
-              shiftIndiaDate(candidateDate, -7),
-            );
+            instrumentKey,
+            "minutes",
+            "1",
+            candidateDate,
+            shiftIndiaDate(candidateDate, -7),
+          );
 
       const candles = filterTradingSession(raw, candidateDate);
 
@@ -5562,7 +6130,7 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
 
   throw new Error(
     `No official 1-minute candles available for ${instrumentKey} on or before ${requestedDate}` +
-      (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
+    (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
   );
 }
 
@@ -5937,11 +6505,11 @@ upstox.setTickHandler((tick) => {
   const snapshot = {
     ...(newTradingSession
       ? {
-          instrumentKey: tick.instrumentKey,
-          previousClose:
-            previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
-          previousCloseDate: previous.marketDate ?? null,
-        }
+        instrumentKey: tick.instrumentKey,
+        previousClose:
+          previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
+        previousCloseDate: previous.marketDate ?? null,
+      }
       : previous),
     ...tick,
 
@@ -5959,15 +6527,15 @@ upstox.setTickHandler((tick) => {
   const carryFields = newTradingSession
     ? ["previousClose", "previousCloseDate", "upperCircuit", "lowerCircuit", "lastTradeTime"]
     : [
-        "previousClose",
-        "open",
-        "high",
-        "low",
-        "volume",
-        "upperCircuit",
-        "lowerCircuit",
-        "lastTradeTime",
-      ];
+      "previousClose",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "upperCircuit",
+      "lowerCircuit",
+      "lastTradeTime",
+    ];
 
   for (const field of carryFields) {
     if (snapshot[field] == null && previous[field] != null) {
@@ -6005,7 +6573,7 @@ upstox.setTickHandler((tick) => {
 ========================================================= */
 
 io.on("connection", (socket) => {
-  socket.on("detailStock:subscribe", async (payload, ack = () => {}) => {
+  socket.on("detailStock:subscribe", async (payload, ack = () => { }) => {
     const key = payload?.instrumentKey;
 
     if (!validKey(key)) {
@@ -6117,7 +6685,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("detailStock:unsubscribe", async (payload, ack = () => {}) => {
+  socket.on("detailStock:unsubscribe", async (payload, ack = () => { }) => {
     const key = payload?.instrumentKey;
 
     if (!validKey(key)) {
@@ -6423,6 +6991,7 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
         if (
           parsed &&
           !Array.isArray(parsed) &&
+          parsed.baselineVersion === 2 &&
           Object.prototype.hasOwnProperty.call(parsed, "baselineClose")
         ) {
           return res.json({
@@ -6451,12 +7020,15 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       );
     }
 
+
     let baselineClose = null;
     let baselineDate = null;
     let sessionDate = null;
 
     if (isOneDay) {
-      sessionDate = !isMarketOpen() ? latestCompletedTradingDate() : to;
+      sessionDate = !isMarketOpen()
+        ? latestCompletedTradingDate()
+        : to;
 
       const previous = await resolvePreviousClose(key, sessionDate);
 
@@ -6465,30 +7037,123 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
       data = filterTradingSession(data, sessionDate);
     } else {
-      /*
-       * Every non-1D range uses the close of the first valid trading session
-       * on/after the requested lookback date. Do not use the candle OPEN as a
-       * baseline: that can turn a normal range into a large artificial return.
-       * This also keeps all period buttons on one exchange-specific series.
-       */
-      const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
-      const firstClose = Number(
-        firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
-      );
+      // Use the last official daily close strictly before the selected range.
+      const candleTimestamp = (candle) => {
+        const raw = Array.isArray(candle)
+          ? candle[0]
+          : candle?.timestamp ??
+          candle?.time ??
+          candle?.date ??
+          candle?.datetime;
 
-      if (Number.isFinite(firstClose) && firstClose > 0) {
-        baselineClose = firstClose;
-        const firstTimestamp = Date.parse(firstCandle?.timestamp);
-        baselineDate = Number.isFinite(firstTimestamp)
+        if (
+          typeof raw === "number" ||
+          (typeof raw === "string" && /^\d+$/.test(raw))
+        ) {
+          const numeric = Number(raw);
+
+          if (Number.isFinite(numeric)) {
+            return numeric < 1e11 ? numeric * 1000 : numeric;
+          }
+        }
+
+        const parsed = Date.parse(raw);
+        return Number.isFinite(parsed) ? parsed : NaN;
+      };
+
+      const candleClose = (candle) => {
+        const raw = Array.isArray(candle)
+          ? candle[4] ?? candle[1]
+          : candle?.close ?? candle?.c ?? candle?.price;
+
+        const value = Number(raw);
+        return Number.isFinite(value) && value > 0 ? value : null;
+      };
+
+      const findPreviousDailyClose = async (date) => {
+        const candles = await upstox.fetchHistory(
+          key,
+          "days",
+          "1",
+          shiftIndiaDate(date, -1),
+          shiftIndiaDate(date, -15),
+        );
+
+        const candidates = (Array.isArray(candles) ? candles : [])
+          .map((candle) => ({
+            close: candleClose(candle),
+            timestamp: candleTimestamp(candle),
+          }))
+          .filter(
+            (candle) =>
+              candle.close !== null &&
+              Number.isFinite(candle.timestamp) &&
+              indiaDate(new Date(candle.timestamp)) < date,
+          )
+          .sort((a, b) => a.timestamp - b.timestamp);
+
+        return candidates[candidates.length - 1] || null;
+      };
+
+      if (from) {
+        try {
+          const previous = await findPreviousDailyClose(from);
+
+          if (previous) {
+            baselineClose = previous.close;
+            baselineDate = indiaDate(new Date(previous.timestamp));
+          }
+        } catch (baselineError) {
+          logger.warn("Historical range baseline lookup failed", {
+            instrumentKey: key,
+            from,
+            error: errorMessage(baselineError),
+          });
+        }
+      }
+
+      // Fallback for ranges older than the provider's available history.
+      if (baselineClose === null && Array.isArray(data) && data.length) {
+        const firstCandle = data[0];
+        const firstTimestamp = candleTimestamp(firstCandle);
+        const firstDate = Number.isFinite(firstTimestamp)
           ? indiaDate(new Date(firstTimestamp))
-          : from || null;
+          : null;
+
+        if (firstDate) {
+          try {
+            const previous = await findPreviousDailyClose(firstDate);
+
+            if (previous) {
+              baselineClose = previous.close;
+              baselineDate = indiaDate(new Date(previous.timestamp));
+            }
+          } catch (baselineError) {
+            logger.warn("Available-history baseline lookup failed", {
+              instrumentKey: key,
+              firstDate,
+              error: errorMessage(baselineError),
+            });
+          }
+        }
+
+        // Last resort only if no earlier official close is available.
+        if (baselineClose === null) {
+          const firstClose = candleClose(firstCandle);
+
+          if (firstClose !== null) {
+            baselineClose = firstClose;
+            baselineDate = firstDate || from || null;
+          }
+        }
       }
     }
-
+    
     const payload = {
       candles: Array.isArray(data) ? data : [],
       baselineClose,
       baselineDate,
+      baselineVersion: 2,
       source: "upstox",
     };
 
@@ -6541,20 +7206,59 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
         if (dbData.length) {
           const firstCandle = dbData[0];
-          const firstClose = Number(
-            firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
-          );
           const firstTimestamp = Date.parse(firstCandle?.timestamp);
-          const baselineClose =
-            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
-          const baselineDate = Number.isFinite(firstTimestamp)
-            ? indiaDate(new Date(firstTimestamp))
-            : from || null;
+          let baselineClose = null;
+          let baselineDate = null;
+
+          if (from) {
+            try {
+              const priorDaily = await upstox.fetchHistory(
+                key,
+                "days",
+                "1",
+                shiftIndiaDate(from, -1),
+                shiftIndiaDate(from, -15),
+              );
+              const candidates = (Array.isArray(priorDaily) ? priorDaily : [])
+                .filter((candle) => {
+                  const timestamp = Date.parse(candle?.timestamp);
+                  return Number.isFinite(timestamp) &&
+                    indiaDate(new Date(timestamp)) < from &&
+                    Number(candle?.close) > 0;
+                })
+                .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+              const previous = candidates[candidates.length - 1];
+              if (previous) {
+                baselineClose = Number(previous.close);
+                baselineDate = indiaDate(new Date(previous.timestamp));
+              }
+            } catch (baselineError) {
+              logger.warn("Database range baseline lookup failed", {
+                instrumentKey: key,
+                from,
+                error: errorMessage(baselineError),
+              });
+            }
+          }
+
+          // If Upstox daily history is unavailable, fall back to the first
+          // database candle rather than returning an empty baseline.
+          if (baselineClose === null) {
+            const firstClose = Number(
+              firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+            );
+            baselineClose =
+              Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
+            baselineDate = Number.isFinite(firstTimestamp)
+              ? indiaDate(new Date(firstTimestamp))
+              : from || null;
+          }
 
           const payload = {
             candles: dbData,
             baselineClose,
             baselineDate,
+            baselineVersion: 2,
             source: "database",
           };
 
@@ -7133,8 +7837,8 @@ app.post(
 
       const status =
         Number.isInteger(err?.httpStatus) &&
-        err.httpStatus >= 400 &&
-        err.httpStatus < 500
+          err.httpStatus >= 400 &&
+          err.httpStatus < 500
           ? err.httpStatus
           : 500;
 
@@ -7333,25 +8037,25 @@ async function shutdown(signal) {
     for (const key of upstox.getSubscribed()) {
       await upstox.unsubscribe(key, true);
     }
-  } catch {}
+  } catch { }
 
   try {
     io.close();
-  } catch {}
+  } catch { }
 
   try {
     server.close();
-  } catch {}
+  } catch { }
 
   try {
     await closeDb();
-  } catch {}
+  } catch { }
 
   try {
     if (env.redisEnabled) {
       await redis.quit();
     }
-  } catch {}
+  } catch { }
 
   process.exit(0);
 }
