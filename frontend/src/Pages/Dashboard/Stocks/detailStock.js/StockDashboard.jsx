@@ -3537,16 +3537,11 @@ export default function StockDashboard({
       for (const [bucket, livePoint] of provisional.entries()) {
         if (!Number.isFinite(bucket) || !livePoint) continue;
 
-        // Once REST has an official candle for a minute, the official candle
-        // wins. The only exception is the current in-progress minute, where
-        // the WebSocket LTP is the freshest value.
+        // The 1D live chart uses the last WebSocket tick observed in each
+        // minute. Keep that tick as the completed minute's plotted value;
+        // REST OHLC candles must not replace it during the session.
         const currentMinute = minuteBucket(Date.now());
         const isCurrentMinute = bucket === currentMinute;
-
-        if (officialBuckets.has(bucket) && !isCurrentMinute) {
-          provisional.delete(bucket);
-          continue;
-        }
 
         const existingIndex = merged.findIndex((point) => {
           const ts = getPointTimestamp(point);
@@ -3554,9 +3549,17 @@ export default function StockDashboard({
         });
 
         if (existingIndex >= 0) {
+          // Prefer the live last-tick value for the current minute and for
+          // completed minute buckets that were observed over the socket.
           merged[existingIndex] = livePoint;
         } else {
           merged.push(livePoint);
+        }
+
+        // Keep live minute points until the session is finalized. The final
+        // official 1D history replaces this in-progress buffer after settlement.
+        if (!isCurrentMinute && officialBuckets.has(bucket)) {
+          // Intentionally retain this bucket: it records the last observed tick.
         }
       }
 
@@ -3989,7 +3992,6 @@ export default function StockDashboard({
 
       if (
         chartRangeRef.current !== "1D" ||
-        !marketOpenRef.current ||
         finalHistoryLoadedRef.current
       ) {
         return;
@@ -4090,14 +4092,15 @@ export default function StockDashboard({
           });
 
           if (existingIndex >= 0) {
-            if (isCurrentMinute) {
-              output[existingIndex] = livePoint;
-            }
+            // For every minute observed through WebSocket, the last tick of
+            // that minute is the chart value. Do not replace a completed
+            // live bucket with the provider's OHLC close during the session.
+            output[existingIndex] = livePoint;
             continue;
           }
 
-          // The provider can lag by one minute. Keep a provisional point until
-          // the next history refresh supplies the official candle.
+          // Upstox history can lag behind the live stream. Keep the last tick
+          // for each minute until official end-of-day settlement arrives.
           output.push(livePoint);
         }
 
@@ -4228,6 +4231,10 @@ export default function StockDashboard({
         finalHistoryLoadedRef.current = false;
         officialSettlementReadyRef.current = false;
         setOfficialSettlementReady(false);
+      } else if (marketOpenRef.current) {
+        // Flush the last valid in-session tick before freezing the provisional
+        // chart while the official closing price is being published.
+        commitPendingTick();
       }
 
       setMarketOpen(isOpen);
