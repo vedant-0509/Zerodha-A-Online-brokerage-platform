@@ -4209,21 +4209,22 @@ export default function StockDashboard({
       if (typeof data.marketOpen !== "boolean") return;
 
       const isOpen = data.marketOpen;
+      const wasOpen = marketOpenRef.current;
 
       marketStatusKnownRef.current = true;
-
-      marketOpenRef.current = isOpen;
 
       if (isOpen) {
         finalHistoryLoadedRef.current = false;
         officialSettlementReadyRef.current = false;
         setOfficialSettlementReady(false);
-      } else if (marketOpenRef.current) {
+      } else if (wasOpen) {
         // Flush the last valid in-session tick before freezing the provisional
         // chart while the official closing price is being published.
+        // Check the previous status before updating the ref below.
         commitPendingTick();
       }
 
+      marketOpenRef.current = isOpen;
       setMarketOpen(isOpen);
 
       setSnapshot((prev) => ({
