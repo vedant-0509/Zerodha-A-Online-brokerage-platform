@@ -2855,6 +2855,7 @@
 
 // export { StockDashboard as ShareholdingPattern };
 
+
 import React, {
   useCallback,
   useEffect,
@@ -3418,8 +3419,7 @@ export default function StockDashboard({
         initialSnapshot = unwrapResponse(snapshotResult.value.data);
 
         if (typeof initialSnapshot?.officialSettlementReady === "boolean") {
-          officialSettlementReadyRef.current =
-            initialSnapshot.officialSettlementReady;
+          officialSettlementReadyRef.current = initialSnapshot.officialSettlementReady;
           setOfficialSettlementReady(initialSnapshot.officialSettlementReady);
         }
 
@@ -3645,28 +3645,21 @@ export default function StockDashboard({
       parseHistoryTimestamp(
         Array.isArray(point)
           ? point[0]
-          : (point?.timestamp ??
+          : point?.timestamp ??
             point?.time ??
             point?.date ??
             point?.datetime ??
-            point?.dateTime),
+            point?.dateTime,
       );
 
-
     const mergeOfficialWithLive = (officialPoints) => {
-      const official = Array.isArray(officialPoints)
-        ? [...officialPoints]
-        : [];
-
+      const official = Array.isArray(officialPoints) ? [...officialPoints] : [];
       const officialBuckets = new Set();
 
       for (const point of official) {
         const timestamp = getPointTimestamp(point);
         const bucket = minuteBucket(timestamp);
-
-        if (Number.isFinite(bucket)) {
-          officialBuckets.add(bucket);
-        }
+        if (Number.isFinite(bucket)) officialBuckets.add(bucket);
       }
 
       const provisional = provisionalLiveMinutesRef.current;
@@ -3676,35 +3669,25 @@ export default function StockDashboard({
       for (const [bucket, livePoint] of provisional.entries()) {
         if (!Number.isFinite(bucket) || !livePoint) continue;
 
-        // Official history wins for completed minutes.
+        // REST candles are authoritative for completed minutes. Keep the live
+        // WebSocket value only for the current minute; discard stale overlays.
         if (officialBuckets.has(bucket) && bucket !== currentMinute) {
           provisional.delete(bucket);
           continue;
         }
 
-        // Only the current minute should prefer the live WebSocket value.
         const existingIndex = merged.findIndex((point) => {
           const timestamp = getPointTimestamp(point);
-          return (
-            Number.isFinite(timestamp) &&
-            minuteBucket(timestamp) === bucket
-          );
+          return Number.isFinite(timestamp) && minuteBucket(timestamp) === bucket;
         });
 
-        if (existingIndex >= 0) {
-          merged[existingIndex] = livePoint;
-        } else {
-          merged.push(livePoint);
-        }
+        if (existingIndex >= 0) merged[existingIndex] = livePoint;
+        else merged.push(livePoint);
       }
 
-      merged.sort(
-        (a, b) => getPointTimestamp(a) - getPointTimestamp(b),
-      );
-
+      merged.sort((a, b) => getPointTimestamp(a) - getPointTimestamp(b));
       return merged;
     };
-
 
     try {
       const response = await axios.get(ENDPOINTS.history(key, params), {
@@ -3744,20 +3727,16 @@ export default function StockDashboard({
         // OHLC history while the current minute remains live.
         historicalDayHistoryRef.current = officialPoints;
 
-        if (
-          !openNow &&
-          officialSettlementReadyRef.current &&
-          officialPoints.length
-        ) {
+        if (!openNow && officialSettlementReadyRef.current && officialPoints.length) {
           const lastPoint = officialPoints[officialPoints.length - 1];
           const officialClose = Array.isArray(lastPoint)
             ? nullableNumber(lastPoint[4], lastPoint[1])
             : nullableNumber(
-              lastPoint?.close,
-              lastPoint?.c,
-              lastPoint?.price,
-              lastPoint?.ltp,
-            );
+                lastPoint?.close,
+                lastPoint?.c,
+                lastPoint?.price,
+                lastPoint?.ltp,
+              );
 
           if (officialClose !== null) {
             setSnapshot((previous) => ({
@@ -4067,10 +4046,17 @@ export default function StockDashboard({
 
       finalHistoryLoadedRef.current = false;
 
-      // Keep the previous finalized chart and displayed values untouched
-      // throughout pre-market. The first valid tick of today's session will
-      // start the new chart and request today's history if it is missing.
       setHoverData(null);
+
+      setHistory([]);
+
+      if (!marketOpenRef.current && instrumentKey) {
+        const controller = new AbortController();
+
+        loadHistory(instrumentKey, "1D", controller.signal);
+
+        window.setTimeout(() => controller.abort(), 25000);
+      }
     };
 
     checkSession();
@@ -4080,7 +4066,7 @@ export default function StockDashboard({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [chartRange]);
+  }, [chartRange, instrumentKey, loadHistory]);
 
   /* WEBSOCKET CONNECTION & TICK HANDLING */
 
@@ -4126,7 +4112,10 @@ export default function StockDashboard({
       const { timestamp, price } = pending;
       const today = getIndiaDate();
 
-      if (chartRangeRef.current !== "1D" || finalHistoryLoadedRef.current) {
+      if (
+        chartRangeRef.current !== "1D" ||
+        finalHistoryLoadedRef.current
+      ) {
         return;
       }
 
@@ -4154,7 +4143,7 @@ export default function StockDashboard({
           const ts = parseHistoryTimestamp(
             Array.isArray(point)
               ? point[0]
-              : (point?.timestamp ?? point?.time ?? point?.date),
+              : point?.timestamp ?? point?.time ?? point?.date,
           );
           return Number.isFinite(ts) && indiaDateFromTimestamp(ts) === today;
         });
@@ -4172,7 +4161,8 @@ export default function StockDashboard({
         }
       }
 
-      const minuteTimestamp = Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
+      const minuteTimestamp =
+        Math.floor(timestamp / (60 * 1000)) * (60 * 1000);
 
       const minuteTime = new Intl.DateTimeFormat("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -4217,12 +4207,10 @@ export default function StockDashboard({
             const ts = parseHistoryTimestamp(
               Array.isArray(point)
                 ? point[0]
-                : (point?.timestamp ?? point?.time),
+                : point?.timestamp ?? point?.time,
             );
-            return (
-              Number.isFinite(ts) &&
-              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket
-            );
+            return Number.isFinite(ts) &&
+              Math.floor(ts / (60 * 1000)) * (60 * 1000) === bucket;
           });
 
           if (existingIndex >= 0) {
@@ -4240,10 +4228,10 @@ export default function StockDashboard({
 
         output.sort((a, b) => {
           const ta = parseHistoryTimestamp(
-            Array.isArray(a) ? a[0] : (a?.timestamp ?? a?.time),
+            Array.isArray(a) ? a[0] : a?.timestamp ?? a?.time,
           );
           const tb = parseHistoryTimestamp(
-            Array.isArray(b) ? b[0] : (b?.timestamp ?? b?.time),
+            Array.isArray(b) ? b[0] : b?.timestamp ?? b?.time,
           );
           return ta - tb;
         });
@@ -4387,10 +4375,7 @@ export default function StockDashboard({
     const scheduleSubscribeRetry = () => {
       if (isStale() || subscribed || subscribeRetryTimer) return;
 
-      const delay = Math.min(
-        5000,
-        500 * Math.max(1, subscribeRetryAttempts + 1),
-      );
+      const delay = Math.min(5000, 500 * Math.max(1, subscribeRetryAttempts + 1));
       subscribeRetryTimer = window.setTimeout(() => {
         subscribeRetryTimer = null;
         subscribe();
@@ -4785,25 +4770,7 @@ export default function StockDashboard({
       .sort((a, b) => a.rawTimestamp - b.rawTimestamp);
 
     if (chartRange !== "1D") {
-      const baseline = nullableNumber(rangeBaseline);
-      if (!parsed.length || baseline === null || baseline <= 0) return parsed;
-
-      // Anchor the historical line at the same official prior-session close
-      // used by the range return calculation. This keeps the chart and the
-      // displayed return aligned without overlaying live ticks on this range.
-      const first = parsed[0];
-      if (Math.abs(first.price - baseline) < 1e-8) return parsed;
-
-      return [
-        {
-          price: baseline,
-          openPrice: baseline,
-          rawTimestamp: first.rawTimestamp - 1,
-          time: "Period start",
-          isBaseline: true,
-        },
-        ...parsed,
-      ];
+      return parsed;
     }
 
     const baseline = marketOpen

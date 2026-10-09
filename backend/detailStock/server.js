@@ -5743,8 +5743,8 @@ async function getStoredFundamentals(isin) {
 
   const source =
     financialRows.length ||
-      fundamentals.revenue !== null ||
-      fundamentals.netProfit !== null
+    fundamentals.revenue !== null ||
+    fundamentals.netProfit !== null
       ? "mongodb"
       : "mongodb-partial";
 
@@ -6093,18 +6093,18 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
       const raw =
         candidateDate === indiaDate()
           ? await upstox.fetchHistory(
-            instrumentKey,
-            "minutes",
-            "1",
-            candidateDate,
-          )
+              instrumentKey,
+              "minutes",
+              "1",
+              candidateDate,
+            )
           : await upstox.fetchHistory(
-            instrumentKey,
-            "minutes",
-            "1",
-            candidateDate,
-            shiftIndiaDate(candidateDate, -7),
-          );
+              instrumentKey,
+              "minutes",
+              "1",
+              candidateDate,
+              shiftIndiaDate(candidateDate, -7),
+            );
 
       const candles = filterTradingSession(raw, candidateDate);
 
@@ -6130,7 +6130,7 @@ async function fetchOfficialIntradaySession(instrumentKey, tradingDate) {
 
   throw new Error(
     `No official 1-minute candles available for ${instrumentKey} on or before ${requestedDate}` +
-    (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
+      (lastProviderError ? `: ${errorMessage(lastProviderError)}` : ""),
   );
 }
 
@@ -6505,11 +6505,11 @@ upstox.setTickHandler((tick) => {
   const snapshot = {
     ...(newTradingSession
       ? {
-        instrumentKey: tick.instrumentKey,
-        previousClose:
-          previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
-        previousCloseDate: previous.marketDate ?? null,
-      }
+          instrumentKey: tick.instrumentKey,
+          previousClose:
+            previous.dayClose ?? previous.price ?? previous.previousClose ?? null,
+          previousCloseDate: previous.marketDate ?? null,
+        }
       : previous),
     ...tick,
 
@@ -6527,15 +6527,15 @@ upstox.setTickHandler((tick) => {
   const carryFields = newTradingSession
     ? ["previousClose", "previousCloseDate", "upperCircuit", "lowerCircuit", "lastTradeTime"]
     : [
-      "previousClose",
-      "open",
-      "high",
-      "low",
-      "volume",
-      "upperCircuit",
-      "lowerCircuit",
-      "lastTradeTime",
-    ];
+        "previousClose",
+        "open",
+        "high",
+        "low",
+        "volume",
+        "upperCircuit",
+        "lowerCircuit",
+        "lastTradeTime",
+      ];
 
   for (const field of carryFields) {
     if (snapshot[field] == null && previous[field] != null) {
@@ -6573,7 +6573,7 @@ upstox.setTickHandler((tick) => {
 ========================================================= */
 
 io.on("connection", (socket) => {
-  socket.on("detailStock:subscribe", async (payload, ack = () => { }) => {
+  socket.on("detailStock:subscribe", async (payload, ack = () => {}) => {
     const key = payload?.instrumentKey;
 
     if (!validKey(key)) {
@@ -6685,7 +6685,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("detailStock:unsubscribe", async (payload, ack = () => { }) => {
+  socket.on("detailStock:unsubscribe", async (payload, ack = () => {}) => {
     const key = payload?.instrumentKey;
 
     if (!validKey(key)) {
@@ -6991,7 +6991,6 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
         if (
           parsed &&
           !Array.isArray(parsed) &&
-          parsed.baselineVersion === 2 &&
           Object.prototype.hasOwnProperty.call(parsed, "baselineClose")
         ) {
           return res.json({
@@ -7020,15 +7019,12 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
       );
     }
 
-
     let baselineClose = null;
     let baselineDate = null;
     let sessionDate = null;
 
     if (isOneDay) {
-      sessionDate = !isMarketOpen()
-        ? latestCompletedTradingDate()
-        : to;
+      sessionDate = !isMarketOpen() ? latestCompletedTradingDate() : to;
 
       const previous = await resolvePreviousClose(key, sessionDate);
 
@@ -7037,123 +7033,44 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
       data = filterTradingSession(data, sessionDate);
     } else {
-      // Use the last official daily close strictly before the selected range.
-      const candleTimestamp = (candle) => {
-        const raw = Array.isArray(candle)
-          ? candle[0]
-          : candle?.timestamp ??
-          candle?.time ??
-          candle?.date ??
-          candle?.datetime;
-
-        if (
-          typeof raw === "number" ||
-          (typeof raw === "string" && /^\d+$/.test(raw))
-        ) {
-          const numeric = Number(raw);
-
-          if (Number.isFinite(numeric)) {
-            return numeric < 1e11 ? numeric * 1000 : numeric;
-          }
-        }
-
-        const parsed = Date.parse(raw);
-        return Number.isFinite(parsed) ? parsed : NaN;
-      };
-
-      const candleClose = (candle) => {
-        const raw = Array.isArray(candle)
-          ? candle[4] ?? candle[1]
-          : candle?.close ?? candle?.c ?? candle?.price;
-
-        const value = Number(raw);
-        return Number.isFinite(value) && value > 0 ? value : null;
-      };
-
-      const findPreviousDailyClose = async (date) => {
-        const candles = await upstox.fetchHistory(
-          key,
-          "days",
-          "1",
-          shiftIndiaDate(date, -1),
-          shiftIndiaDate(date, -15),
-        );
-
-        const candidates = (Array.isArray(candles) ? candles : [])
-          .map((candle) => ({
-            close: candleClose(candle),
-            timestamp: candleTimestamp(candle),
-          }))
-          .filter(
-            (candle) =>
-              candle.close !== null &&
-              Number.isFinite(candle.timestamp) &&
-              indiaDate(new Date(candle.timestamp)) < date,
-          )
-          .sort((a, b) => a.timestamp - b.timestamp);
-
-        return candidates[candidates.length - 1] || null;
-      };
-
+      /*
+       * Every non-1D range uses the close of the first valid trading session
+       * on/after the requested lookback date. Do not use the candle OPEN as a
+       * baseline: that can turn a normal range into a large artificial return.
+       * This also keeps all period buttons on one exchange-specific series.
+       */
+      // Period performance is measured against the last official close before
+      // the requested range, not the first candle inside the range. This is
+      // how chart sites typically calculate 1W/1M/3M/etc change and avoids a
+      // misleading return when the first candle opens after a gap.
       if (from) {
-        try {
-          const previous = await findPreviousDailyClose(from);
-
-          if (previous) {
-            baselineClose = previous.close;
-            baselineDate = indiaDate(new Date(previous.timestamp));
-          }
-        } catch (baselineError) {
-          logger.warn("Historical range baseline lookup failed", {
-            instrumentKey: key,
-            from,
-            error: errorMessage(baselineError),
-          });
+        const previous = await resolvePreviousClose(key, from);
+        if (previous && Number.isFinite(Number(previous.close)) && Number(previous.close) > 0) {
+          baselineClose = Number(previous.close);
+          baselineDate = previous.tradingDate || null;
         }
       }
 
-      // Fallback for ranges older than the provider's available history.
-      if (baselineClose === null && Array.isArray(data) && data.length) {
-        const firstCandle = data[0];
-        const firstTimestamp = candleTimestamp(firstCandle);
-        const firstDate = Number.isFinite(firstTimestamp)
-          ? indiaDate(new Date(firstTimestamp))
-          : null;
-
-        if (firstDate) {
-          try {
-            const previous = await findPreviousDailyClose(firstDate);
-
-            if (previous) {
-              baselineClose = previous.close;
-              baselineDate = indiaDate(new Date(previous.timestamp));
-            }
-          } catch (baselineError) {
-            logger.warn("Available-history baseline lookup failed", {
-              instrumentKey: key,
-              firstDate,
-              error: errorMessage(baselineError),
-            });
-          }
-        }
-
-        // Last resort only if no earlier official close is available.
-        if (baselineClose === null) {
-          const firstClose = candleClose(firstCandle);
-
-          if (firstClose !== null) {
-            baselineClose = firstClose;
-            baselineDate = firstDate || from || null;
-          }
+      // Provider fallback only when no prior official daily close is available.
+      if (baselineClose === null) {
+        const firstCandle = Array.isArray(data) && data.length ? data[0] : null;
+        const firstClose = Number(
+          firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+        );
+        if (Number.isFinite(firstClose) && firstClose > 0) {
+          baselineClose = firstClose;
+          const firstTimestamp = Date.parse(firstCandle?.timestamp);
+          baselineDate = Number.isFinite(firstTimestamp)
+            ? indiaDate(new Date(firstTimestamp))
+            : from || null;
         }
       }
     }
-    
+
     const payload = {
       candles: Array.isArray(data) ? data : [],
       baselineClose,
       baselineDate,
-      baselineVersion: 2,
       source: "upstox",
     };
 
@@ -7206,59 +7123,20 @@ app.get("/api/detail-stock/history/:instrumentKey", async (req, res) => {
 
         if (dbData.length) {
           const firstCandle = dbData[0];
+          const firstClose = Number(
+            firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
+          );
           const firstTimestamp = Date.parse(firstCandle?.timestamp);
-          let baselineClose = null;
-          let baselineDate = null;
-
-          if (from) {
-            try {
-              const priorDaily = await upstox.fetchHistory(
-                key,
-                "days",
-                "1",
-                shiftIndiaDate(from, -1),
-                shiftIndiaDate(from, -15),
-              );
-              const candidates = (Array.isArray(priorDaily) ? priorDaily : [])
-                .filter((candle) => {
-                  const timestamp = Date.parse(candle?.timestamp);
-                  return Number.isFinite(timestamp) &&
-                    indiaDate(new Date(timestamp)) < from &&
-                    Number(candle?.close) > 0;
-                })
-                .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-              const previous = candidates[candidates.length - 1];
-              if (previous) {
-                baselineClose = Number(previous.close);
-                baselineDate = indiaDate(new Date(previous.timestamp));
-              }
-            } catch (baselineError) {
-              logger.warn("Database range baseline lookup failed", {
-                instrumentKey: key,
-                from,
-                error: errorMessage(baselineError),
-              });
-            }
-          }
-
-          // If Upstox daily history is unavailable, fall back to the first
-          // database candle rather than returning an empty baseline.
-          if (baselineClose === null) {
-            const firstClose = Number(
-              firstCandle?.close ?? firstCandle?.c ?? firstCandle?.price,
-            );
-            baselineClose =
-              Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
-            baselineDate = Number.isFinite(firstTimestamp)
-              ? indiaDate(new Date(firstTimestamp))
-              : from || null;
-          }
+          const baselineClose =
+            Number.isFinite(firstClose) && firstClose > 0 ? firstClose : null;
+          const baselineDate = Number.isFinite(firstTimestamp)
+            ? indiaDate(new Date(firstTimestamp))
+            : from || null;
 
           const payload = {
             candles: dbData,
             baselineClose,
             baselineDate,
-            baselineVersion: 2,
             source: "database",
           };
 
@@ -7837,8 +7715,8 @@ app.post(
 
       const status =
         Number.isInteger(err?.httpStatus) &&
-          err.httpStatus >= 400 &&
-          err.httpStatus < 500
+        err.httpStatus >= 400 &&
+        err.httpStatus < 500
           ? err.httpStatus
           : 500;
 
@@ -8037,25 +7915,25 @@ async function shutdown(signal) {
     for (const key of upstox.getSubscribed()) {
       await upstox.unsubscribe(key, true);
     }
-  } catch { }
+  } catch {}
 
   try {
     io.close();
-  } catch { }
+  } catch {}
 
   try {
     server.close();
-  } catch { }
+  } catch {}
 
   try {
     await closeDb();
-  } catch { }
+  } catch {}
 
   try {
     if (env.redisEnabled) {
       await redis.quit();
     }
-  } catch { }
+  } catch {}
 
   process.exit(0);
 }
