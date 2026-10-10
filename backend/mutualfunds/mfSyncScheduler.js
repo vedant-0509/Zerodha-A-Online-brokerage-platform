@@ -223,28 +223,7 @@ function getScheduledMinutes() {
   );
 }
 
-function isPastScheduledTimeToday(now = new Date()) {
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-US",
-      {
-        timeZone: MF_SYNC_TIMEZONE,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }
-    ).formatToParts(now);
 
-  const hour = Number(
-    parts.find((part) => part.type === "hour")?.value || 0
-  );
-
-  const minute = Number(
-    parts.find((part) => part.type === "minute")?.value || 0
-  );
-
-  return hour * 60 + minute >= getScheduledMinutes();
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -351,16 +330,10 @@ async function runPipeline(
     }
 
     /*
-     * Phase 5 startup recovery:
-     *
-     * Before 23:15:
-     *   wait for scheduled run.
-     *
-     * After 23:15:
-     *   repair today's incomplete sync.
-     *
-     * SUCCESS is the only state that prevents
-     * another daily provider call.
+     * Startup recovery compares the persisted daily-sync success
+     * timestamp to the latest weekday whose scheduled run was due.
+     * It catches up missed runs on weekends as well as weekdays, while
+     * skipping recovery after that expected run has succeeded.
      */
     if (
       startup &&
