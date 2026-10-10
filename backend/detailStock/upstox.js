@@ -3,6 +3,7 @@ const Upstox = require("upstox-js-sdk");
 
 const env = require("./env");
 const logger = require("./logger");
+const { normalizeCircuitValue } = require("./circuitLimits");
 
 const V2 = "https://api.upstox.com/v2";
 const V3 = "https://api.upstox.com/v3";
@@ -66,15 +67,6 @@ function n(value, fallback = null) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function circuitNumber(value, fallback = null) {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
-
 function headers() {
   return {
     Accept: "application/json",
@@ -127,9 +119,9 @@ function normalizeFeed(instrumentKey, feed) {
 
   const volume = n(daily.vol ?? daily.volume ?? extended.vtt ?? extended.tv ?? root?.volume,);
 
-  const upperCircuit = circuitNumber(extended.uc ?? extended.upperCircuit ?? root?.upperCircuit);
+  const upperCircuit = normalizeCircuitValue(extended.uc ?? extended.upperCircuit ?? root?.upperCircuit);
 
-  const lowerCircuit = circuitNumber(extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit);
+  const lowerCircuit = normalizeCircuitValue(extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit);
 
   const yearHigh = n(extended.yh ?? extended.yearHigh ?? root?.yearHigh);
   const yearLow = n(extended.yl ?? extended.yearLow ?? root?.yearLow);
@@ -442,13 +434,13 @@ function normalizeQuote(instrumentKey, quote) {
       ? (change / previousClose) * 100
       : null;
 
-  const upperCircuit = circuitNumber(
+  const upperCircuit = normalizeCircuitValue(
     quote?.upper_circuit_limit ??
       quote?.upperCircuitLimit ??
       quote?.upperCircuit ??
       quote?.upper_limit,
   );
-  const lowerCircuit = circuitNumber(
+  const lowerCircuit = normalizeCircuitValue(
     quote?.lower_circuit_limit ??
       quote?.lowerCircuitLimit ??
       quote?.lowerCircuit ??
