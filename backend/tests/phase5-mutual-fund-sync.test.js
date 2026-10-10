@@ -116,7 +116,12 @@ test(
 
         assert.match(
             source,
-            /isPastScheduledTimeToday/
+            /shouldRecoverStartupSync/
+        );
+
+        assert.match(
+            source,
+            /getSyncStatus/
         );
 
         assert.match(
@@ -135,6 +140,11 @@ test(
         assert.doesNotMatch(
             source,
             /hasAttemptedToday\(/
+        );
+
+        assert.doesNotMatch(
+            source,
+            /!isPastScheduledTimeToday\(/
         );
 
         assert.match(
