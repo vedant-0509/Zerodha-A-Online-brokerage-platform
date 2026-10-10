@@ -4,7 +4,6 @@ services:
   - type: cron
     name: mutual-funds-nav-sync
     runtime: docker
-    plan: free
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     dockerCommand: node mutualfunds/cron-runner.js
