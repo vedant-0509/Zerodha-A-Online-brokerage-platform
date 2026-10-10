@@ -2868,6 +2868,7 @@ import { useLocation, useParams } from "react-router-dom";
 import axios from "axios";
 
 import detailStockSocket from "./detailStockWebSocketConnection";
+import { notifyDashboardDataChanged } from "../../../../utils/dashboardRequestCache";
 
 import {
   ENDPOINTS,
@@ -3334,6 +3335,7 @@ export default function StockDashboard({
         );
 
         setIsWatchlisted(false);
+        notifyDashboardDataChanged("watchlist", "stock-detail");
 
         console.log("Removed from watchlist:", instrumentKey);
       } else {
@@ -3356,6 +3358,7 @@ export default function StockDashboard({
         );
 
         setIsWatchlisted(true);
+        notifyDashboardDataChanged("watchlist", "stock-detail");
 
         console.log("Added to watchlist:", instrumentKey);
       }
@@ -5551,6 +5554,7 @@ export default function StockDashboard({
         setOrderMessage(
           `Success: ${orderType} order completed for ${executedQuantity} shares at ₹${executedPrice.toFixed(2)}.`,
         );
+        notifyDashboardDataChanged("trade", "stock-detail");
 
         setQuantity("");
 
