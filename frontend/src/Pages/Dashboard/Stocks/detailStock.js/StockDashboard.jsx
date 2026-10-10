@@ -1401,36 +1401,36 @@
 //       if (isStale() || !belongsToStock(data)) return;
 
 //       setSnapshot((previous) => {
-        const prior = previous || {};
-        const merged = { ...prior, ...data };
+//         const prior = previous || {};
+//         const merged = { ...prior, ...data };
 
         // Upstox ticks can omit circuit bands. Do not let missing/null/zero
         // fields overwrite valid limits from the REST quote or prior snapshot.
-        const upperCircuit = firstPositiveCircuitValue(
-          data.upperCircuit,
-          data.upperCircuitLimit,
-          data.upperLimit,
-          prior.upperCircuit,
-          prior.upperCircuitLimit,
-          prior.upperLimit,
-        );
-        const lowerCircuit = firstPositiveCircuitValue(
-          data.lowerCircuit,
-          data.lowerCircuitLimit,
-          data.lowerLimit,
-          prior.lowerCircuit,
-          prior.lowerCircuitLimit,
-          prior.lowerLimit,
-        );
+//         const upperCircuit = firstPositiveCircuitValue(
+//           data.upperCircuit,
+//           data.upperCircuitLimit,
+//           data.upperLimit,
+//           prior.upperCircuit,
+//           prior.upperCircuitLimit,
+//           prior.upperLimit,
+//         );
+//         const lowerCircuit = firstPositiveCircuitValue(
+//           data.lowerCircuit,
+//           data.lowerCircuitLimit,
+//           data.lowerLimit,
+//           prior.lowerCircuit,
+//           prior.lowerCircuitLimit,
+//           prior.lowerLimit,
+//         );
 
-        return {
-          ...merged,
-          upperCircuit,
-          upperCircuitLimit: upperCircuit,
-          lowerCircuit,
-          lowerCircuitLimit: lowerCircuit,
-        };
-      });
+//         return {
+//           ...merged,
+//           upperCircuit,
+//           upperCircuitLimit: upperCircuit,
+//           lowerCircuit,
+//           lowerCircuitLimit: lowerCircuit,
+//         };
+//       });
 
 //       if (typeof data.marketOpen === "boolean") {
 //         marketStatusKnownRef.current = true;
@@ -4292,7 +4292,37 @@ export default function StockDashboard({
     const applyLiveData = (data) => {
       if (isStale() || !belongsToStock(data)) return;
 
-      setSnapshot((previous) => ({ ...(previous || {}), ...data }));
+      setSnapshot((previous) => {
+        const prior = previous || {};
+        const merged = { ...prior, ...data };
+
+        // Upstox ticks can omit circuit bands. Do not let missing/null/zero
+        // fields overwrite valid limits from the REST quote or prior snapshot.
+        const upperCircuit = firstPositiveCircuitValue(
+          data.upperCircuit,
+          data.upperCircuitLimit,
+          data.upperLimit,
+          prior.upperCircuit,
+          prior.upperCircuitLimit,
+          prior.upperLimit,
+        );
+        const lowerCircuit = firstPositiveCircuitValue(
+          data.lowerCircuit,
+          data.lowerCircuitLimit,
+          data.lowerLimit,
+          prior.lowerCircuit,
+          prior.lowerCircuitLimit,
+          prior.lowerLimit,
+        );
+
+        return {
+          ...merged,
+          upperCircuit,
+          upperCircuitLimit: upperCircuit,
+          lowerCircuit,
+          lowerCircuitLimit: lowerCircuit,
+        };
+      });
 
       if (typeof data.marketOpen === "boolean") {
         marketStatusKnownRef.current = true;
