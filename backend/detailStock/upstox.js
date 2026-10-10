@@ -62,14 +62,17 @@ function safeJson(data) {
 }
 
 function n(value, fallback = null) {
-  // Number(null) and Number("") both produce 0, which turns missing market
-  // fields (especially circuit limits) into false zero values.
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function circuitNumber(value, fallback = null) {
   if (value === null || value === undefined || value === "") {
     return fallback;
   }
 
   const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
+  return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
 function headers() {
@@ -124,9 +127,9 @@ function normalizeFeed(instrumentKey, feed) {
 
   const volume = n(daily.vol ?? daily.volume ?? extended.vtt ?? extended.tv ?? root?.volume,);
 
-  const upperCircuit = n(extended.uc ?? extended.upperCircuit ?? root?.upperCircuit,);
+  const upperCircuit = circuitNumber(extended.uc ?? extended.upperCircuit ?? root?.upperCircuit);
 
-  const lowerCircuit = n(extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit,);
+  const lowerCircuit = circuitNumber(extended.lc ?? extended.lowerCircuit ?? root?.lowerCircuit);
 
   const yearHigh = n(extended.yh ?? extended.yearHigh ?? root?.yearHigh);
   const yearLow = n(extended.yl ?? extended.yearLow ?? root?.yearLow);
@@ -439,13 +442,13 @@ function normalizeQuote(instrumentKey, quote) {
       ? (change / previousClose) * 100
       : null;
 
-  const upperCircuit = n(
+  const upperCircuit = circuitNumber(
     quote?.upper_circuit_limit ??
       quote?.upperCircuitLimit ??
       quote?.upperCircuit ??
       quote?.upper_limit,
   );
-  const lowerCircuit = n(
+  const lowerCircuit = circuitNumber(
     quote?.lower_circuit_limit ??
       quote?.lowerCircuitLimit ??
       quote?.lowerCircuit ??
