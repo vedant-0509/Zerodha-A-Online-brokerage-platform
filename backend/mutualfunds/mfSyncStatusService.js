@@ -60,21 +60,34 @@ async function getAllSyncStatuses() {
     );
 }
 
+function toIndiaDateString(value) {
+  const date = toDate(value);
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 async function hasTodaysSyncSucceeded(syncName) {
   const document = await findSyncStatus(syncName);
 
-  if (!document) {
+  if (!document || document.status !== "SUCCESS") {
     return false;
   }
 
-  if (document.status !== "SUCCESS") {
-    return false;
-  }
+  const today = toIndiaDateString(new Date());
+  const successDate = toIndiaDateString(
+    document.lastSuccessAt || document.lastSuccessDate
+  );
 
-  const today = new Date().toISOString().slice(0, 10);
-  const successDate = toDateString(document.lastSuccessDate);
-
-  return successDate === today;
+  return Boolean(successDate) && successDate === today;
 }
 
 async function hasAttemptedToday(syncName) {
@@ -84,8 +97,8 @@ async function hasAttemptedToday(syncName) {
     return false;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const attemptDate = toDateString(document.lastAttemptDate);
+  const today = toIndiaDateString(new Date());
+  const attemptDate = toIndiaDateString(document.lastAttemptDate);
 
   return (
     attemptDate === today &&
