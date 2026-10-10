@@ -19,7 +19,7 @@ async function main() {
       `[MF CRON] Starting scheduled NAV sync at ${new Date().toISOString()}.`
     );
 
-    const result = await runDailySyncIfNeeded("render-cron");
+    const result = await runDailySyncIfNeeded("render-cron", { scheduled: true });
 
     if (!result?.success) {
       exitCode = 1;
