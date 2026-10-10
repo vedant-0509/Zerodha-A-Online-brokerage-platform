@@ -62,6 +62,12 @@ function safeJson(data) {
 }
 
 function n(value, fallback = null) {
+  // Number(null) and Number("") both produce 0, which turns missing market
+  // fields (especially circuit limits) into false zero values.
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -433,8 +439,18 @@ function normalizeQuote(instrumentKey, quote) {
       ? (change / previousClose) * 100
       : null;
 
-  const upperCircuit = n(quote?.upper_circuit_limit);
-  const lowerCircuit = n(quote?.lower_circuit_limit);
+  const upperCircuit = n(
+    quote?.upper_circuit_limit ??
+      quote?.upperCircuitLimit ??
+      quote?.upperCircuit ??
+      quote?.upper_limit,
+  );
+  const lowerCircuit = n(
+    quote?.lower_circuit_limit ??
+      quote?.lowerCircuitLimit ??
+      quote?.lowerCircuit ??
+      quote?.lower_limit,
+  );
 
   return {
     instrumentKey,
