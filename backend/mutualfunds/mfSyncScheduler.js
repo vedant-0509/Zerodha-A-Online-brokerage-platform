@@ -343,6 +343,25 @@ async function runPipeline(
       }
     }
 
+    if (alreadyComplete && startup && MF_SYNC_STARTUP_RECOVERY) {
+      const dailyStatus = await getSyncStatus(DAILY_SYNC_NAME);
+      const recovery = shouldRecoverStartupSync(
+        dailyStatus,
+        new Date(),
+        {
+          scheduleMinuteOfDay: getScheduledMinutes(),
+          timeZone: MF_SYNC_TIMEZONE,
+        }
+      );
+
+      if (recovery.shouldRun) {
+        console.log(
+          `[MF SYNC] startup: today's earlier success does not cover expected scheduled run ${recovery.expectedDate}; running catch-up.`
+        );
+        alreadyComplete = false;
+      }
+    }
+
     if (alreadyComplete) {
       console.log(
         `[MF SYNC] ${reason}: today's complete sync already exists. No provider call.`
