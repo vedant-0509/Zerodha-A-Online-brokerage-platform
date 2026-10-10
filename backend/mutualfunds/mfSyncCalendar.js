@@ -75,9 +75,10 @@ function getLatestExpectedScheduleDate(
 }
 
 /**
- * Recovery is unnecessary only if the persisted daily pipeline succeeded
- * on or after the most recent expected weekday. Use lastSuccessAt first
- * because it records the actual completion instant.
+ * Recovery is unnecessary only when a successful pipeline covers the
+ * latest expected scheduled run. If success happened on that expected date,
+ * it must be at/after the scheduled cutoff; a later-date recovery also counts.
+ * Use lastSuccessAt first because it records the actual completion instant.
  */
 function shouldRecoverStartupSync(
   status,
