@@ -24,6 +24,7 @@ const {
 
 const {
   shouldRecoverStartupSync,
+  didSucceedAfterScheduledTime,
 } = require("./mfSyncCalendar");
 
 const NAV_SYNC_NAME = "mf_nav_sync";
@@ -311,10 +312,36 @@ async function runPipeline(
      * Check whether today's complete sync
      * already succeeded.
      */
-    const alreadyComplete =
+    let alreadyComplete =
       await hasTodaysSyncSucceeded(
         DAILY_SYNC_NAME
       );
+
+    /*
+     * A startup catch-up can succeed earlier in the day, before the
+     * official NAV report is updated. The dedicated 23:15 IST cron must
+     * still run unless today's success occurred at/after the scheduled
+     * cutoff. This prevents an early catch-up from suppressing the normal
+     * end-of-day refresh.
+     */
+    if (alreadyComplete && scheduled) {
+      const dailyStatus = await getSyncStatus(DAILY_SYNC_NAME);
+      const scheduledRunAlreadySucceeded = didSucceedAfterScheduledTime(
+        dailyStatus,
+        new Date(),
+        {
+          scheduleMinuteOfDay: getScheduledMinutes(),
+          timeZone: MF_SYNC_TIMEZONE,
+        }
+      );
+
+      if (!scheduledRunAlreadySucceeded) {
+        console.log(
+          `[MF SYNC] ${reason}: a sync succeeded earlier today, before the ${MF_SYNC_CRON} cutoff; continuing with the scheduled refresh.`
+        );
+        alreadyComplete = false;
+      }
+    }
 
     if (alreadyComplete) {
       console.log(
@@ -324,8 +351,7 @@ async function runPipeline(
       return {
         success: true,
         skipped: true,
-        reason:
-          "already-complete-today",
+        reason: "already-complete-today",
       };
     }
 
@@ -799,13 +825,16 @@ function stopMFScheduler() {
 */
 
 async function runDailySyncIfNeeded(
-  reason = "manual"
+  reason = "manual",
+  {
+    scheduled = false,
+  } = {}
 ) {
   return runPipeline(
     reason,
     {
       startup: false,
-      scheduled: false,
+      scheduled,
     }
   );
 }
