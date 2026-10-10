@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  normalizeCircuitValue,
   validCircuitLimit,
   withCircuitLimits,
 } = require("../detailStock/circuitLimits");
@@ -15,6 +16,14 @@ test("missing and invalid circuit limits are not converted to zero", () => {
 test("positive numeric and numeric-string circuit limits are accepted", () => {
   assert.equal(validCircuitLimit(125.5), true);
   assert.equal(validCircuitLimit("125.5"), true);
+});
+
+test("provider parser never turns absent or zero circuit fields into zero", () => {
+  assert.equal(normalizeCircuitValue(null), null);
+  assert.equal(normalizeCircuitValue(""), null);
+  assert.equal(normalizeCircuitValue(0), null);
+  assert.equal(normalizeCircuitValue("0"), null);
+  assert.equal(normalizeCircuitValue("132.75"), 132.75);
 });
 
 test("fresh provider circuit values take priority over cached values", () => {
