@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   getLatestExpectedScheduleDate,
   shouldRecoverStartupSync,
+  didSucceedAfterScheduledTime,
 } = require("../mutualfunds/mfSyncCalendar");
 
 const TZ = "Asia/Kolkata";
@@ -104,4 +105,47 @@ test("startup before Monday's scheduled time does not rerun a successful Friday 
 
   assert.equal(recovery.expectedDate, "2026-10-09");
   assert.equal(recovery.shouldRun, false);
+});
+
+test("Friday success before 23:15 does not hide a missed scheduled run", () => {
+  const recovery = shouldRecoverStartupSync(
+    {
+      status: "SUCCESS",
+      last_success_at: new Date("2026-10-09T14:30:00.000Z"),
+    },
+    new Date("2026-10-10T06:00:00.000Z"),
+    options,
+  );
+
+  assert.equal(recovery.expectedDate, "2026-10-09");
+  assert.equal(recovery.lastSuccessDate, "2026-10-09");
+  assert.equal(recovery.shouldRun, true);
+});
+
+test("an early same-day success does not suppress the scheduled refresh", () => {
+  assert.equal(
+    didSucceedAfterScheduledTime(
+      {
+        status: "SUCCESS",
+        last_success_at: new Date("2026-10-09T14:30:00.000Z"),
+      },
+      new Date("2026-10-09T17:46:00.000Z"),
+      options,
+    ),
+    false,
+  );
+});
+
+test("a successful run at or after 23:15 IST satisfies the scheduled cutoff", () => {
+  assert.equal(
+    didSucceedAfterScheduledTime(
+      {
+        status: "SUCCESS",
+        last_success_at: new Date("2026-10-09T17:46:00.000Z"),
+      },
+      new Date("2026-10-09T17:50:00.000Z"),
+      options,
+    ),
+    true,
+  );
 });
