@@ -468,11 +468,17 @@ async function syncLatestNAV() {
             }
           );
 
-        if (result.matchedCount === 1) {
-          updated += 1;
-        } else {
-          unchanged += 1;
+        if (result.matchedCount !== 1) {
+          failed += 1;
+
+          console.error(
+            `[MF NAV] schemeCode=${fund.schemeCode}: MongoDB update matched ${result.matchedCount} active documents; expected exactly 1. Check the stored schemeCode type and duplicate active scheme records.`
+          );
+
+          continue;
         }
+
+        updated += 1;
 
         if (isNewDate) {
           newNavDays += 1;
