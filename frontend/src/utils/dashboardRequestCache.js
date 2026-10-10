@@ -6,6 +6,29 @@ const inflight = new Map();
 
 const CACHE_DEFAULT_TTL = 30 * 1000; // 30 seconds
 
+/**
+ * Force the next dashboard read to hit the API instead of this in-memory cache.
+ */
+export function invalidateDashboardCache() {
+    clearAllCache();
+}
+
+/**
+ * Notify mounted portfolio screens after a successful trade/watchlist mutation.
+ * type: "trade", "watchlist", or "all".
+ */
+export function notifyDashboardDataChanged(type = "all", source = null) {
+    clearAllCache();
+
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(
+            new CustomEvent("dashboard:data-changed", {
+                detail: { type, source },
+            }),
+        );
+    }
+}
+
 /* =========================================================
    USER SCOPE
    Prevent cached private data from being shared between users.
