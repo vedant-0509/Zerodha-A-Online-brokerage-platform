@@ -1400,7 +1400,37 @@
 //     const applyLiveData = (data) => {
 //       if (isStale() || !belongsToStock(data)) return;
 
-//       setSnapshot((previous) => ({ ...(previous || {}), ...data }));
+//       setSnapshot((previous) => {
+        const prior = previous || {};
+        const merged = { ...prior, ...data };
+
+        // Upstox ticks can omit circuit bands. Do not let missing/null/zero
+        // fields overwrite valid limits from the REST quote or prior snapshot.
+        const upperCircuit = firstPositiveCircuitValue(
+          data.upperCircuit,
+          data.upperCircuitLimit,
+          data.upperLimit,
+          prior.upperCircuit,
+          prior.upperCircuitLimit,
+          prior.upperLimit,
+        );
+        const lowerCircuit = firstPositiveCircuitValue(
+          data.lowerCircuit,
+          data.lowerCircuitLimit,
+          data.lowerLimit,
+          prior.lowerCircuit,
+          prior.lowerCircuitLimit,
+          prior.lowerLimit,
+        );
+
+        return {
+          ...merged,
+          upperCircuit,
+          upperCircuitLimit: upperCircuit,
+          lowerCircuit,
+          lowerCircuitLimit: lowerCircuit,
+        };
+      });
 
 //       if (typeof data.marketOpen === "boolean") {
 //         marketStatusKnownRef.current = true;
@@ -2868,6 +2898,7 @@ import { useLocation, useParams } from "react-router-dom";
 import axios from "axios";
 
 import detailStockSocket from "./detailStockWebSocketConnection";
+import { notifyDashboardDataChanged } from "../../../../utils/dashboardRequestCache";
 
 import {
   ENDPOINTS,
@@ -2906,6 +2937,15 @@ import {
   normalizeMarketStatus,
   normalizeAbout,
 } from "./utils/normalizers";
+
+function firstPositiveCircuitValue(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+}
 
 /* UI Components */
 
@@ -3334,6 +3374,7 @@ export default function StockDashboard({
         );
 
         setIsWatchlisted(false);
+        notifyDashboardDataChanged("watchlist", "stock-detail");
 
         console.log("Removed from watchlist:", instrumentKey);
       } else {
@@ -3356,6 +3397,7 @@ export default function StockDashboard({
         );
 
         setIsWatchlisted(true);
+        notifyDashboardDataChanged("watchlist", "stock-detail");
 
         console.log("Added to watchlist:", instrumentKey);
       }
@@ -5551,6 +5593,7 @@ export default function StockDashboard({
         setOrderMessage(
           `Success: ${orderType} order completed for ${executedQuantity} shares at ₹${executedPrice.toFixed(2)}.`,
         );
+        notifyDashboardDataChanged("trade", "stock-detail");
 
         setQuantity("");
 

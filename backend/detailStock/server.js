@@ -3937,6 +3937,7 @@ const env = require("./env");
 const logger = require("./logger");
 const { redis, connectRedis } = require("./redis");
 const upstox = require("./upstox");
+const { validCircuitLimit, withCircuitLimits } = require("./circuitLimits");
 const { getStockFinancials } = upstox;
 
 const { simulateOrder } = require("./simulatedOrderService");
@@ -4605,6 +4606,22 @@ async function primeSnapshot(instrumentKey) {
       official.settlementStatus = "finalized";
       official.candles = candles;
 
+      // Circuit limits do not come from OHLC candles. Enrich the finalized
+      // post-market snapshot from the latest provider quote before persisting it.
+      try {
+        const officialQuote = await upstox.fetchOhlc(instrumentKey);
+        Object.assign(
+          official,
+          withCircuitLimits(official, officialQuote, context, existing),
+        );
+      } catch (quoteError) {
+        Object.assign(official, withCircuitLimits(official, null, context, existing));
+        logger.warn("Post-market circuit limit enrichment failed", {
+          instrumentKey,
+          error: errorMessage(quoteError),
+        });
+      }
+
       await saveDailyClose(official, tradingDate);
       await cacheSnapshot(official);
 
@@ -4632,44 +4649,20 @@ async function primeSnapshot(instrumentKey) {
   }
 
   if (existingIsFinalized) {
-    const hasUpper = Number.isFinite(Number(existing.upperCircuit));
-    const hasLower = Number.isFinite(Number(existing.lowerCircuit));
-
-    if (!hasUpper || !hasLower) {
-      try {
-        const quote = await upstox.fetchOhlc(instrumentKey);
-
-        existing = {
-          ...existing,
-          upperCircuit:
-            quote?.upperCircuit ??
-            quote?.upperCircuitLimit ??
-            existing.upperCircuit ??
-            null,
-          lowerCircuit:
-            quote?.lowerCircuit ??
-            quote?.lowerCircuitLimit ??
-            existing.lowerCircuit ??
-            null,
-          upperCircuitLimit:
-            quote?.upperCircuitLimit ??
-            quote?.upperCircuit ??
-            existing.upperCircuitLimit ??
-            null,
-          lowerCircuitLimit:
-            quote?.lowerCircuitLimit ??
-            quote?.lowerCircuit ??
-            existing.lowerCircuitLimit ??
-            null,
-        };
-
-        await cacheSnapshot(existing);
-      } catch (error) {
-        logger.warn("Circuit limit refresh failed", {
-          instrumentKey,
-          error: errorMessage(error),
-        });
-      }
+    // A valid limit cached from yesterday may already be stale before today's
+    // session. Try a fresh quote on every pre-market/post-market snapshot read.
+    try {
+      const quote = await upstox.fetchOhlc(instrumentKey);
+      existing = withCircuitLimits(existing, quote, context, existing);
+      await cacheSnapshot(existing);
+    } catch (error) {
+      // Keep any valid stored limits if the provider is temporarily unavailable.
+      existing = withCircuitLimits(existing, null, context, existing);
+      logger.warn("Circuit limit refresh failed", {
+        instrumentKey,
+        error: errorMessage(error),
+      });
+      await cacheSnapshot(existing);
     }
 
     existing.officialSettlementReady = settlementReady;
@@ -4694,6 +4687,11 @@ async function primeSnapshot(instrumentKey) {
   snapshot.marketOpen = marketOpen;
   snapshot.marketStatus = marketOpen ? "OPEN" : "CLOSED";
   snapshot.officialSettlementReady = settlementReady;
+
+  // During pre-market, live market hours, and the provisional post-market
+  // window, use the fresh Upstox quote first and only fall back to valid
+  // stored limits when that quote does not include a limit.
+  Object.assign(snapshot, withCircuitLimits(snapshot, null, context, existing));
 
   // A closed-but-not-yet-finalized snapshot is explicitly provisional.
   if (!marketOpen && !settlementReady) {
