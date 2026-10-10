@@ -314,9 +314,12 @@
 
 
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import {
+    invalidateDashboardCache,
+} from "../../../../utils/dashboardRequestCache";
 
 const API_URL = "/api/orders";
 
@@ -326,6 +329,7 @@ export default function OrdersSection1() {
     const [loading, setLoading] = useState(true);
 
     const [error, setError] = useState("");
+    const [refreshing, setRefreshing] = useState(false);
 
     const [typeFilter, setTypeFilter] = useState("ALL");
 
@@ -354,9 +358,22 @@ export default function OrdersSection1() {
         fetchOrders();
     }, []);
 
-    async function fetchOrders() {
+    useEffect(() => {
+        const handleDashboardChange = (event) => {
+            const { type, source } = event.detail || {};
+            if (!["trade", "all"].includes(type) || source === "orders") return;
+
+            invalidateDashboardCache();
+            fetchOrders({ silent: true, force: true });
+        };
+
+        window.addEventListener("dashboard:data-changed", handleDashboardChange);
+        return () => window.removeEventListener("dashboard:data-changed", handleDashboardChange);
+    }, []);
+
+    async function fetchOrders({ silent = false, force = false } = {}) {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             setError("");
 
             const token = localStorage.getItem("token");
@@ -371,7 +388,8 @@ export default function OrdersSection1() {
 
 
             /* API REQUEST */
-            const response = await axios.get(API_URL, {
+            const url = force ? `${API_URL}?__refresh=${Date.now()}` : API_URL;
+            const response = await axios.get(url, {
                 headers: {
                     Authorization: `Bearer ${token}`,
                 },
@@ -394,7 +412,18 @@ export default function OrdersSection1() {
             setError(error.response?.data?.message || "Unable to load orders.");
 
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    }
+
+    async function refreshOrders() {
+        if (refreshing) return;
+        setRefreshing(true);
+        invalidateDashboardCache();
+        try {
+            await fetchOrders({ silent: true, force: true });
+        } finally {
+            setRefreshing(false);
         }
     }
 
@@ -491,6 +520,18 @@ export default function OrdersSection1() {
             {/*FILTERS*/}
 
             <div className="filters">
+                <button
+                    type="button"
+                    onClick={refreshOrders}
+                    disabled={refreshing}
+                    aria-label="Refresh orders"
+                    title="Refresh orders"
+                    style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "9px 13px", border: "1px solid #ddd", borderRadius: "9px", background: "#fff", color: "#424242", cursor: refreshing ? "wait" : "pointer", opacity: refreshing ? 0.7 : 1 }}
+                >
+                    <RefreshCw size={16} />
+                    {refreshing ? "Refreshing..." : "Refresh"}
+                </button>
+
                 {/* ORDER TYPE */}
                 <div className="orders-filter-dropdown" ref={openDropdown === "type" ? dropdownRef : null}>
                     <button
