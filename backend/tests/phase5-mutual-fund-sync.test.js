@@ -241,6 +241,29 @@ test(
 
 
 test(
+    "Phase 5 source: separate Render cron can own the schedule without disabling startup recovery",
+    () => {
+        const source = read("server.js");
+
+        assert.match(
+            source,
+            /MF_SYNC_EXTERNAL_CRON_ONLY/
+        );
+
+        assert.match(
+            source,
+            /In-process schedule disabled/
+        );
+
+        assert.match(
+            source,
+            /runStartupSync\(\)/
+        );
+    }
+);
+
+
+test(
     "Phase 5 MongoDB: sync monitoring documents exist",
     async () => {
         const { db, close } = await getMongo();
