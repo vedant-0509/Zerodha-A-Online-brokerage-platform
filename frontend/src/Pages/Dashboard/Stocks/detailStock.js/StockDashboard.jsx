@@ -1400,7 +1400,37 @@
 //     const applyLiveData = (data) => {
 //       if (isStale() || !belongsToStock(data)) return;
 
-//       setSnapshot((previous) => ({ ...(previous || {}), ...data }));
+//       setSnapshot((previous) => {
+        const prior = previous || {};
+        const merged = { ...prior, ...data };
+
+        // Upstox ticks can omit circuit bands. Do not let missing/null/zero
+        // fields overwrite valid limits from the REST quote or prior snapshot.
+        const upperCircuit = firstPositiveCircuitValue(
+          data.upperCircuit,
+          data.upperCircuitLimit,
+          data.upperLimit,
+          prior.upperCircuit,
+          prior.upperCircuitLimit,
+          prior.upperLimit,
+        );
+        const lowerCircuit = firstPositiveCircuitValue(
+          data.lowerCircuit,
+          data.lowerCircuitLimit,
+          data.lowerLimit,
+          prior.lowerCircuit,
+          prior.lowerCircuitLimit,
+          prior.lowerLimit,
+        );
+
+        return {
+          ...merged,
+          upperCircuit,
+          upperCircuitLimit: upperCircuit,
+          lowerCircuit,
+          lowerCircuitLimit: lowerCircuit,
+        };
+      });
 
 //       if (typeof data.marketOpen === "boolean") {
 //         marketStatusKnownRef.current = true;
@@ -2907,6 +2937,15 @@ import {
   normalizeMarketStatus,
   normalizeAbout,
 } from "./utils/normalizers";
+
+function firstPositiveCircuitValue(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+}
 
 /* UI Components */
 
