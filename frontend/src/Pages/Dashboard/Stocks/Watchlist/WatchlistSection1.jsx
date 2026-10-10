@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import axios from "axios";
 import SearchModal from "../SearchModal";
+import {
+    invalidateDashboardCache,
+    notifyDashboardDataChanged,
+} from "../../../../utils/dashboardRequestCache";
 
 export default function WatchlistSection1() {
     const [stocks, setStocks] = useState([]);
@@ -9,6 +14,7 @@ export default function WatchlistSection1() {
     const [searchOpen, setSearchOpen] = useState(false);
     const [error, setError] = useState("");
     const [editMode, setEditMode] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
 
     // =====================================================
     // GET LOGGED-IN USER
@@ -16,6 +22,19 @@ export default function WatchlistSection1() {
 
     useEffect(() => {
         loadUser();
+    }, []);
+
+    useEffect(() => {
+        const handleDashboardChange = (event) => {
+            const { type, source } = event.detail || {};
+            if (!["watchlist", "all"].includes(type) || source === "watchlist") return;
+
+            invalidateDashboardCache();
+            fetchWatchlist({ silent: true, force: true });
+        };
+
+        window.addEventListener("dashboard:data-changed", handleDashboardChange);
+        return () => window.removeEventListener("dashboard:data-changed", handleDashboardChange);
     }, []);
 
     async function loadUser() {
@@ -55,14 +74,15 @@ export default function WatchlistSection1() {
     // FETCH WATCHLIST
     // =====================================================
 
-    async function fetchWatchlist() {
+    async function fetchWatchlist({ silent = false, force = false } = {}) {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             setError("");
 
             const token = localStorage.getItem("token");
 
-            const res = await axios.get("/api/watchlist", {
+            const url = force ? `/api/watchlist?__refresh=${Date.now()}` : "/api/watchlist";
+            const res = await axios.get(url, {
                 headers: token
                     ? { Authorization: `Bearer ${token}` }
                     : {},
@@ -74,7 +94,18 @@ export default function WatchlistSection1() {
 
             setError(err.response?.data?.message || "Unable to fetch watchlist");
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    }
+
+    async function refreshWatchlist() {
+        if (refreshing) return;
+        setRefreshing(true);
+        invalidateDashboardCache();
+        try {
+            await fetchWatchlist({ silent: true, force: true });
+        } finally {
+            setRefreshing(false);
         }
     }
 
@@ -110,8 +141,8 @@ export default function WatchlistSection1() {
 
             if (res.data?.success) {
                 setSearchOpen(false);
-
-                await fetchWatchlist();
+                notifyDashboardDataChanged("watchlist", "watchlist");
+                await fetchWatchlist({ force: true });
             }
         } catch (err) {
             console.error("Add Stock Error:", err);
@@ -157,8 +188,9 @@ export default function WatchlistSection1() {
                 },
             );
 
-            // Refresh after delete
-            await fetchWatchlist();
+            // Refresh this list and notify other mounted watchlist views.
+            notifyDashboardDataChanged("watchlist", "watchlist");
+            await fetchWatchlist({ force: true });
         } catch (err) {
             console.error("Remove Stock Error:", err);
 
@@ -240,7 +272,18 @@ export default function WatchlistSection1() {
 
                 {/* ACTIONS */}
 
-                <div style={{ display: "flex", gap: "12px", }}  className="btnonclick">
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", }} className="btnonclick">
+                    <button
+                        type="button"
+                        onClick={refreshWatchlist}
+                        disabled={refreshing}
+                        aria-label="Refresh watchlist"
+                        title="Refresh watchlist"
+                        style={{ height: "50px", padding: "0 15px", display: "inline-flex", alignItems: "center", gap: "8px", border: "1px solid #ddd", borderRadius: "9px", cursor: refreshing ? "wait" : "pointer", fontSize: "15px", color: "#424242", background: "#fff", opacity: refreshing ? 0.7 : 1 }}
+                    >
+                        <RefreshCw size={16} />
+                        {refreshing ? "Refreshing..." : "Refresh"}
+                    </button>
                     <button onClick={() => setSearchOpen(true)} style={{ height: "50px", padding: "0 15px", border: "1px solid #ddd", borderRadius: "9px", cursor: "pointer", fontSize: "15px", color: "#424242", }}>
                         <i className="fa-solid fa-plus" /> Add stocks
                     </button>
