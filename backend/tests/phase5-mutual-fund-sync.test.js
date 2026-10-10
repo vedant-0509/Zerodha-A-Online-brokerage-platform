@@ -218,6 +218,29 @@ test(
 // =========================================================
 
 test(
+    "Phase 5 source: unmatched NAV updates are counted as failures, not unchanged",
+    () => {
+        const source = read("mfSyncService.js");
+
+        assert.match(
+            source,
+            /result\.matchedCount !== 1/
+        );
+
+        assert.match(
+            source,
+            /failed \+= 1/
+        );
+
+        assert.match(
+            source,
+            /Check the stored schemeCode type and duplicate active scheme records/
+        );
+    }
+);
+
+
+test(
     "Phase 5 MongoDB: sync monitoring documents exist",
     async () => {
         const { db, close } = await getMongo();
