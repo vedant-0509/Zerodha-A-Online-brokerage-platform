@@ -620,7 +620,7 @@
 //    PRIME SNAPSHOT
 // ========================================================= */
 
-async function primeSnapshot(instrumentKey) {
+// async function primeSnapshot(instrumentKey) {
 //   const context = await getInstrumentContext(instrumentKey);
 
 //   const today = indiaDate();
