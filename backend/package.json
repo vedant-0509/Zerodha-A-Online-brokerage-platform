@@ -25,7 +25,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/phase4-order-safety.test.js"
+    "test": "node --test tests/phase4-order-safety.test.js tests/mf-sync-calendar.test.js"
   },
   "keywords": [],
   "author": "",

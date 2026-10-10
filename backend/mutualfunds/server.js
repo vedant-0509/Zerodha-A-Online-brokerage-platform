@@ -24,6 +24,8 @@ const {
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
+const EXTERNAL_CRON_ONLY =
+  String(process.env.MF_SYNC_EXTERNAL_CRON_ONLY || "false").toLowerCase() === "true";
 
 app.use(requestContext);
 app.use(helmet());
@@ -75,8 +77,16 @@ async function startServer() {
           'Database: MongoDB',
         );
 
-        startMFScheduler();
+        if (EXTERNAL_CRON_ONLY) {
+          console.log(
+            "[MF SERVER] In-process schedule disabled; external scheduler owns the 23:15 IST weekday run.",
+          );
+        } else {
+          startMFScheduler();
+        }
 
+        // Startup recovery remains enabled even when the separate Render
+        // Cron Job owns the regular daily schedule.
         runStartupSync();
       },
     );

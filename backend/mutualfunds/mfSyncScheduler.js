@@ -15,11 +15,17 @@ const {
 } = require("./mfRatingRiskService");
 
 const {
+  getSyncStatus,
   hasTodaysSyncSucceeded,
   markRunning,
   markSuccess,
   markFailed,
 } = require("./mfSyncStatusService");
+
+const {
+  shouldRecoverStartupSync,
+  didSucceedAfterScheduledTime,
+} = require("./mfSyncCalendar");
 
 const NAV_SYNC_NAME = "mf_nav_sync";
 const DAILY_SYNC_NAME = "mf_daily_sync";
@@ -218,42 +224,7 @@ function getScheduledMinutes() {
   );
 }
 
-function isPastScheduledTimeToday() {
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-US",
-      {
-        timeZone:
-          MF_SYNC_TIMEZONE,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }
-    ).formatToParts(
-      new Date()
-    );
 
-  const hour =
-    Number(
-      parts.find(
-        (part) =>
-          part.type === "hour"
-      )?.value || 0
-    ) % 24;
-
-  const minute =
-    Number(
-      parts.find(
-        (part) =>
-          part.type === "minute"
-      )?.value || 0
-    );
-
-  return (
-    hour * 60 + minute >=
-    getScheduledMinutes()
-  );
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -341,10 +312,55 @@ async function runPipeline(
      * Check whether today's complete sync
      * already succeeded.
      */
-    const alreadyComplete =
+    let alreadyComplete =
       await hasTodaysSyncSucceeded(
         DAILY_SYNC_NAME
       );
+
+    /*
+     * A startup catch-up can succeed earlier in the day, before the
+     * official NAV report is updated. The dedicated 23:15 IST cron must
+     * still run unless today's success occurred at/after the scheduled
+     * cutoff. This prevents an early catch-up from suppressing the normal
+     * end-of-day refresh.
+     */
+    if (alreadyComplete && scheduled) {
+      const dailyStatus = await getSyncStatus(DAILY_SYNC_NAME);
+      const scheduledRunAlreadySucceeded = didSucceedAfterScheduledTime(
+        dailyStatus,
+        new Date(),
+        {
+          scheduleMinuteOfDay: getScheduledMinutes(),
+          timeZone: MF_SYNC_TIMEZONE,
+        }
+      );
+
+      if (!scheduledRunAlreadySucceeded) {
+        console.log(
+          `[MF SYNC] ${reason}: a sync succeeded earlier today, before the ${MF_SYNC_CRON} cutoff; continuing with the scheduled refresh.`
+        );
+        alreadyComplete = false;
+      }
+    }
+
+    if (alreadyComplete && startup && MF_SYNC_STARTUP_RECOVERY) {
+      const dailyStatus = await getSyncStatus(DAILY_SYNC_NAME);
+      const recovery = shouldRecoverStartupSync(
+        dailyStatus,
+        new Date(),
+        {
+          scheduleMinuteOfDay: getScheduledMinutes(),
+          timeZone: MF_SYNC_TIMEZONE,
+        }
+      );
+
+      if (recovery.shouldRun) {
+        console.log(
+          `[MF SYNC] startup: today's earlier success does not cover expected scheduled run ${recovery.expectedDate}; running catch-up.`
+        );
+        alreadyComplete = false;
+      }
+    }
 
     if (alreadyComplete) {
       console.log(
@@ -354,38 +370,47 @@ async function runPipeline(
       return {
         success: true,
         skipped: true,
-        reason:
-          "already-complete-today",
+        reason: "already-complete-today",
       };
     }
 
     /*
-     * Phase 5 startup recovery:
-     *
-     * Before 23:15:
-     *   wait for scheduled run.
-     *
-     * After 23:15:
-     *   repair today's incomplete sync.
-     *
-     * SUCCESS is the only state that prevents
-     * another daily provider call.
+     * Startup recovery compares the persisted daily-sync success
+     * timestamp to the latest weekday whose scheduled run was due.
+     * It catches up missed runs on weekends as well as weekdays, while
+     * skipping recovery after that expected run has succeeded.
      */
     if (
       startup &&
-      MF_SYNC_STARTUP_RECOVERY &&
-      !isPastScheduledTimeToday()
+      MF_SYNC_STARTUP_RECOVERY
     ) {
-      console.log(
-        "[MF SYNC] startup: before scheduled time; waiting for 23:15 run."
+      const dailyStatus = await getSyncStatus(DAILY_SYNC_NAME);
+      const recovery = shouldRecoverStartupSync(
+        dailyStatus,
+        new Date(),
+        {
+          scheduleMinuteOfDay: getScheduledMinutes(),
+          timeZone: MF_SYNC_TIMEZONE,
+        }
       );
 
-      return {
-        success: true,
-        skipped: true,
-        reason:
-          "waiting-for-schedule",
-      };
+      if (!recovery.shouldRun) {
+        console.log(
+          `[MF SYNC] startup: latest expected sync date ${recovery.expectedDate} is already successful (last success ${recovery.lastSuccessDate}); catch-up not needed.`
+        );
+
+        return {
+          success: true,
+          skipped: true,
+          reason: "startup-sync-current",
+          expectedDate: recovery.expectedDate,
+          lastSuccessDate: recovery.lastSuccessDate,
+        };
+      }
+
+      console.log(
+        `[MF SYNC] startup: catch-up required for expected sync date ${recovery.expectedDate}; last successful run date is ${recovery.lastSuccessDate || "unknown"}.`
+      );
     }
 
     if (
@@ -819,13 +844,16 @@ function stopMFScheduler() {
 */
 
 async function runDailySyncIfNeeded(
-  reason = "manual"
+  reason = "manual",
+  {
+    scheduled = false,
+  } = {}
 ) {
   return runPipeline(
     reason,
     {
       startup: false,
-      scheduled: false,
+      scheduled,
     }
   );
 }

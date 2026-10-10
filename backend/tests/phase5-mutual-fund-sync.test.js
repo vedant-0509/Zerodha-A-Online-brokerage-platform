@@ -116,7 +116,12 @@ test(
 
         assert.match(
             source,
-            /isPastScheduledTimeToday/
+            /shouldRecoverStartupSync/
+        );
+
+        assert.match(
+            source,
+            /getSyncStatus/
         );
 
         assert.match(
@@ -135,6 +140,11 @@ test(
         assert.doesNotMatch(
             source,
             /hasAttemptedToday\(/
+        );
+
+        assert.doesNotMatch(
+            source,
+            /!isPastScheduledTimeToday\(/
         );
 
         assert.match(
@@ -206,6 +216,52 @@ test(
 // =========================================================
 // MongoDB TESTS
 // =========================================================
+
+test(
+    "Phase 5 source: unmatched NAV updates are counted as failures, not unchanged",
+    () => {
+        const source = read("mfSyncService.js");
+
+        assert.match(
+            source,
+            /result\.matchedCount !== 1/
+        );
+
+        assert.match(
+            source,
+            /failed \+= 1/
+        );
+
+        assert.match(
+            source,
+            /Check the stored schemeCode type and duplicate active scheme records/
+        );
+    }
+);
+
+
+test(
+    "Phase 5 source: separate Render cron can own the schedule without disabling startup recovery",
+    () => {
+        const source = read("server.js");
+
+        assert.match(
+            source,
+            /MF_SYNC_EXTERNAL_CRON_ONLY/
+        );
+
+        assert.match(
+            source,
+            /In-process schedule disabled/
+        );
+
+        assert.match(
+            source,
+            /runStartupSync\(\)/
+        );
+    }
+);
+
 
 test(
     "Phase 5 MongoDB: sync monitoring documents exist",
