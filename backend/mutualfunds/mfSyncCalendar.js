@@ -93,11 +93,31 @@ function shouldRecoverStartupSync(
     status?.lastSuccessDate ??
     null;
   const lastSuccessDate = toDateKeyInTimezone(lastSuccessInstant, timeZone);
+  const lastSuccessParts = lastSuccessInstant
+    ? getPartsInTimezone(
+        lastSuccessInstant instanceof Date
+          ? lastSuccessInstant
+          : new Date(lastSuccessInstant),
+        timeZone,
+      )
+    : null;
+  const lastSuccessMinute = lastSuccessParts
+    ? Number(lastSuccessParts.hour) * 60 + Number(lastSuccessParts.minute)
+    : null;
+  const scheduleMinuteOfDay =
+    options.scheduleMinuteOfDay ?? 23 * 60 + 15;
 
   const alreadyCurrent =
     status?.status === "SUCCESS" &&
     Boolean(lastSuccessDate) &&
-    lastSuccessDate >= expectedDate;
+    (
+      lastSuccessDate > expectedDate ||
+      (
+        lastSuccessDate === expectedDate &&
+        Number.isFinite(lastSuccessMinute) &&
+        lastSuccessMinute >= scheduleMinuteOfDay
+      )
+    );
 
   return {
     shouldRun: !alreadyCurrent,
@@ -106,7 +126,42 @@ function shouldRecoverStartupSync(
   };
 }
 
+function didSucceedAfterScheduledTime(
+  status,
+  now = new Date(),
+  options = {},
+) {
+  if (status?.status !== "SUCCESS") return false;
+
+  const timeZone = options.timeZone || "Asia/Kolkata";
+  const scheduleMinuteOfDay =
+    options.scheduleMinuteOfDay ?? 23 * 60 + 15;
+  const lastSuccessInstant =
+    status?.last_success_at ??
+    status?.lastSuccessAt ??
+    null;
+
+  if (!lastSuccessInstant) return false;
+
+  const lastSuccessDate = toDateKeyInTimezone(lastSuccessInstant, timeZone);
+  const todayParts = getPartsInTimezone(now, timeZone);
+  const todayDate = dateKeyFromParts(todayParts);
+
+  if (lastSuccessDate !== todayDate) return false;
+
+  const lastParts = getPartsInTimezone(
+    lastSuccessInstant instanceof Date
+      ? lastSuccessInstant
+      : new Date(lastSuccessInstant),
+    timeZone,
+  );
+  const lastMinute = Number(lastParts.hour) * 60 + Number(lastParts.minute);
+
+  return lastMinute >= scheduleMinuteOfDay;
+}
+
 module.exports = {
   getLatestExpectedScheduleDate,
   shouldRecoverStartupSync,
+  didSucceedAfterScheduledTime,
 };
