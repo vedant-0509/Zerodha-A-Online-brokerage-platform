@@ -1,16 +1,21 @@
-function validCircuitLimit(value) {
+function normalizeCircuitValue(value, fallback = null) {
   if (value === null || value === undefined || value === "") {
-    return false;
+    return fallback;
   }
 
   const number = Number(value);
-  return Number.isFinite(number) && number > 0;
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function validCircuitLimit(value) {
+  return normalizeCircuitValue(value) !== null;
 }
 
 function firstCircuitLimit(...values) {
   for (const value of values) {
-    if (validCircuitLimit(value)) {
-      return Number(value);
+    const number = normalizeCircuitValue(value);
+    if (number !== null) {
+      return number;
     }
   }
 
@@ -68,6 +73,7 @@ function withCircuitLimits(snapshot, quote = null, context = null, previous = nu
 }
 
 module.exports = {
+  normalizeCircuitValue,
   validCircuitLimit,
   withCircuitLimits,
 };
