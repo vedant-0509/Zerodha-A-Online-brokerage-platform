@@ -4649,30 +4649,20 @@ async function primeSnapshot(instrumentKey) {
   }
 
   if (existingIsFinalized) {
-    const hasUpper = validCircuitLimit(
-      existing.upperCircuit ?? existing.upperCircuitLimit,
-    );
-    const hasLower = validCircuitLimit(
-      existing.lowerCircuit ?? existing.lowerCircuitLimit,
-    );
-
-    if (!hasUpper || !hasLower) {
-      try {
-        const quote = await upstox.fetchOhlc(instrumentKey);
-        existing = withCircuitLimits(existing, quote, context, existing);
-        await cacheSnapshot(existing);
-      } catch (error) {
-        // Keep any valid persisted values, but never return zero merely because
-        // Upstox omitted a circuit field from its payload.
-        existing = withCircuitLimits(existing, null, context, existing);
-        logger.warn("Circuit limit refresh failed", {
-          instrumentKey,
-          error: errorMessage(error),
-        });
-        await cacheSnapshot(existing);
-      }
-    } else {
+    // A valid limit cached from yesterday may already be stale before today's
+    // session. Try a fresh quote on every pre-market/post-market snapshot read.
+    try {
+      const quote = await upstox.fetchOhlc(instrumentKey);
+      existing = withCircuitLimits(existing, quote, context, existing);
+      await cacheSnapshot(existing);
+    } catch (error) {
+      // Keep any valid stored limits if the provider is temporarily unavailable.
       existing = withCircuitLimits(existing, null, context, existing);
+      logger.warn("Circuit limit refresh failed", {
+        instrumentKey,
+        error: errorMessage(error),
+      });
+      await cacheSnapshot(existing);
     }
 
     existing.officialSettlementReady = settlementReady;
