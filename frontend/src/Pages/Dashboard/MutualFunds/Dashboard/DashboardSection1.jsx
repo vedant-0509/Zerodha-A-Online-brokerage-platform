@@ -284,8 +284,8 @@ const DashboardSection1 = () => {
 
           ...(token
             ? {
-                Authorization: `Bearer ${token}`,
-              }
+              Authorization: `Bearer ${token}`,
+            }
             : {}),
         },
 
@@ -300,8 +300,8 @@ const DashboardSection1 = () => {
       if (!response.ok) {
         throw new Error(
           data?.message ||
-            data?.error?.message ||
-            "Unable to place SELL order.",
+          data?.error?.message ||
+          "Unable to place SELL order.",
         );
       }
 
@@ -764,65 +764,36 @@ const DashboardSection1 = () => {
                 <strong>{formatMoney(selectedHolding.investedAmount)}</strong>
               </div>
 
+
               <div className="sidebar-row">
                 <span>1D Return</span>
-
-                <strong
-                  className={
-                    Number(selectedHolding.todaysPnL) >= 0 ? "profit" : "loss"
-                  }
-                >
-                  {formatMoney(selectedHolding.todaysPnL)}
-                </strong>
+                <div>
+                  <p className={Number(selectedHolding.totalReturn) >= 0 ? "profit" : "loss"} style={{ margin: 0, fontSize: "1rem", fontWeight: 600 }}>
+                    {formatMoney(selectedHolding.todaysPnL)}
+                    {" "}
+                    <span style={{ color: "black" }}>|</span>
+                    {" "}
+                    {formatPercent(selectedHolding.todaysReturnPercent)}
+                  </p>
+                </div>
               </div>
+
 
               <div className="sidebar-row">
                 <span>Total Return</span>
 
-                <strong
-                  className={
-                    Number(selectedHolding.totalReturn) >= 0 ? "profit" : "loss"
-                  }
-                >
+                <p className={Number(selectedHolding.totalReturn) >= 0 ? "profit" : "loss"} style={{ margin: 0, fontSize: "1rem", fontWeight: 600 }}>
                   {formatMoney(selectedHolding.totalReturn)}
-                </strong>
-              </div>
-
-              <div className="sidebar-row">
-                <span>1D %</span>
-
-                <strong
-                  className={
-                    Number(selectedHolding.todaysReturnPercent) >= 0
-                      ? "profit"
-                      : "loss"
-                  }
-                >
-                  {formatPercent(selectedHolding.todaysReturnPercent)}
-                </strong>
-              </div>
-
-              <div className="sidebar-row">
-                <span>Total %</span>
-
-                <strong
-                  className={
-                    Number(selectedHolding.totalReturnPercent) >= 0
-                      ? "profit"
-                      : "loss"
-                  }
-                >
+                  {" "}
+                  <span style={{ color: "black" }}>|</span>
+                  {" "}
                   {formatPercent(selectedHolding.totalReturnPercent)}
-                </strong>
+                </p>
               </div>
 
               {/* SELL FROM SIDEBAR TOO */}
 
-              <div
-                style={{
-                  marginTop: "20px",
-                }}
-              >
+              <div style={{ marginTop: "20px", }}>
                 <button
                   type="button"
                   onClick={() => openSell(selectedHolding)}
@@ -831,8 +802,8 @@ const DashboardSection1 = () => {
                     border: "none",
                     borderRadius: "7px",
                     padding: "10px",
-                    background: "#e7f8f2",
-                    color: "#00a878",
+                    background: "#ef4444",
+                    color: "white",
                     fontSize: "14px",
                     fontWeight: 600,
                     cursor: "pointer",
@@ -873,51 +844,20 @@ const DashboardSection1 = () => {
             }
           }}
         >
-          <div
-            style={{
-              width: "380px",
-              background: "#fff",
-              borderRadius: "12px",
-              padding: "24px",
-              boxShadow: "0 12px 40px rgba(0,0,0,0.18)",
-            }}
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div style={{ width: "380px", background: "#fff", borderRadius: "12px", padding: "24px", boxShadow: "0 12px 40px rgba(0,0,0,0.18)", }} onClick={(event) => event.stopPropagation()}>
             {/* HEADER */}
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "18px",
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px", }}>
               <div>
-                <h3
-                  style={{
-                    margin: 0,
-                    fontSize: "18px",
-                  }}
-                >
-                  SELL
+                <h3 style={{ margin: 0, fontSize: "18px", }}>
+                  Sell
                 </h3>
 
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    color: "#666",
-                    fontSize: "13px",
-                  }}
-                >
+                <p style={{ margin: "6px 0 0", color: "#666", fontSize: "13px", }}>
                   {sellFund.schemeName}
                 </p>
 
-                <small
-                  style={{
-                    color: "#888",
-                  }}
-                >
+                <small style={{ color: "#888", }}>
                   {sellFund.fundHouse}
                 </small>
               </div>
@@ -926,57 +866,29 @@ const DashboardSection1 = () => {
                 type="button"
                 onClick={closeSell}
                 disabled={sellLoading}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  fontSize: "22px",
-                  cursor: "pointer",
-                }}
-              >
+                style={{ border: "none", background: "transparent", fontSize: "22px", cursor: "pointer", }}>
                 ×
               </button>
             </div>
 
             {/* NAV */}
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: "8px",
-                fontSize: "13px",
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "13px", }}>
               <span>Current NAV</span>
 
               <strong>₹{formatNumber(sellFund.currentNav)}</strong>
             </div>
 
             {/* AVAILABLE UNITS */}
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: "16px",
-                fontSize: "13px",
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", fontSize: "13px", }}>
               <span>Available Units</span>
 
-              <strong>{formatNumber(sellFund.units, 8)}</strong>
+              <strong>{formatNumber(sellFund.units, 2)}</strong>
             </div>
 
             {/* UNITS INPUT */}
 
-            <label
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "13px",
-                color: "#555",
-              }}
-            >
+            <label style={{ display: "block", marginBottom: "7px", fontSize: "13px", color: "#555", }}>
               Units
             </label>
 
@@ -1077,10 +989,9 @@ const DashboardSection1 = () => {
                 fontSize: "14px",
                 fontWeight: 600,
                 cursor: sellLoading ? "not-allowed" : "pointer",
-                opacity: sellLoading || !sellUnits ? 0.6 : 1,
               }}
             >
-              {sellLoading ? "Processing..." : "Confirm SELL"}
+              {sellLoading ? "Processing..." : "Confirm Sell"}
             </button>
           </div>
         </div>
