@@ -1,7 +1,4 @@
-const {
-  connectMongoDB,
-  getMongoDB,
-} = require("../config/mongodb");
+const { connectMongoDB, getMongoDB } = require("../config/mongodb");
 
 const {
   getLatestFunds,
@@ -14,9 +11,7 @@ const {
   roundNav,
 } = require("./mfapiService");
 
-const {
-  calculateRisk,
-} = require("./mfRatingRiskService");
+const { calculateRisk } = require("./mfRatingRiskService");
 
 const NAV_LOCK_NAME = "mf_latest_nav_sync";
 const RETURNS_LOCK_NAME = "mf_returns_sync";
@@ -24,23 +19,16 @@ const RETURNS_LOCK_NAME = "mf_returns_sync";
 const CONCURRENCY = Math.max(
   1,
   Number(
-    process.env.MF_SYNC_CONCURRENCY ||
-      process.env.MF_RETURN_CONCURRENCY ||
-      10
-  )
+    process.env.MF_SYNC_CONCURRENCY || process.env.MF_RETURN_CONCURRENCY || 10,
+  ),
 );
 
 const DELAY_MS = Math.max(
   0,
-  Number(
-    process.env.MF_SYNC_DELAY_MS ||
-      process.env.MF_RETURN_DELAY_MS ||
-      0
-  )
+  Number(process.env.MF_SYNC_DELAY_MS || process.env.MF_RETURN_DELAY_MS || 0),
 );
 
-const sleep = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function getDb() {
   await connectMongoDB();
@@ -63,17 +51,14 @@ async function acquireLock(name, timeoutMs = 0) {
 
   const now = new Date();
   const expiresAt = new Date(
-    now.getTime() + Math.max(timeoutMs, 10 * 60 * 1000)
+    now.getTime() + Math.max(timeoutMs, 10 * 60 * 1000),
   );
 
   try {
     const result = await collection.updateOne(
       {
         _id: name,
-        $or: [
-          { expiresAt: { $lte: now } },
-          { expiresAt: { $exists: false } },
-        ],
+        $or: [{ expiresAt: { $lte: now } }, { expiresAt: { $exists: false } }],
       },
       {
         $set: {
@@ -81,7 +66,7 @@ async function acquireLock(name, timeoutMs = 0) {
           expiresAt,
           updatedAt: now,
         },
-      }
+      },
     );
 
     if (result.matchedCount === 1) {
@@ -129,52 +114,24 @@ async function releaseLock(name, owner) {
 
 function normalizeLatestFund(fund) {
   return {
-    schemeCode: Number(
-      fund.schemeCode ??
-        fund.scheme_code
-    ),
+    schemeCode: Number(fund.schemeCode ?? fund.scheme_code),
 
-    nav: roundNav(
-      fund.nav ??
-        fund.currentNav ??
-        fund.current_nav
-    ),
+    nav: roundNav(fund.nav ?? fund.currentNav ?? fund.current_nav),
 
-    navDate: parseNavDate(
-      fund.date ??
-        fund.navDate ??
-        fund.nav_date
-    ),
+    navDate: parseNavDate(fund.date ?? fund.navDate ?? fund.nav_date),
 
-    schemeName:
-      fund.schemeName ??
-      fund.scheme_name ??
-      null,
+    schemeName: fund.schemeName ?? fund.scheme_name ?? null,
 
-    fundHouse:
-      fund.fundHouse ??
-      fund.fund_house ??
-      null,
+    fundHouse: fund.fundHouse ?? fund.fund_house ?? null,
 
-    schemeType:
-      fund.schemeType ??
-      fund.scheme_type ??
-      null,
+    schemeType: fund.schemeType ?? fund.scheme_type ?? null,
 
-    schemeCategory:
-      fund.schemeCategory ??
-      fund.scheme_category ??
-      null,
+    schemeCategory: fund.schemeCategory ?? fund.scheme_category ?? null,
 
-    isinGrowth:
-      fund.isinGrowth ??
-      fund.isin_growth ??
-      null,
+    isinGrowth: fund.isinGrowth ?? fund.isin_growth ?? null,
 
     isinDivReinvestment:
-      fund.isinDivReinvestment ??
-      fund.isin_div_reinvestment ??
-      null,
+      fund.isinDivReinvestment ?? fund.isin_div_reinvestment ?? null,
   };
 }
 
@@ -220,35 +177,19 @@ async function syncLatestNAV() {
       .toArray();
 
     if (!activeRows.length) {
-      throw new Error(
-        "No active mutual funds configured"
-      );
+      throw new Error("No active mutual funds configured");
     }
 
-    console.log(
-      `[MF NAV] Active DB universe: ${activeRows.length}`
-    );
+    console.log(`[MF NAV] Active DB universe: ${activeRows.length}`);
 
-    const activeByCode = new Map(
-      activeRows.map((row) => [
-        Number(row.schemeCode),
-        row,
-      ])
-    );
+    const activeByCode = new Map(activeRows.map((row) => [Number(row.schemeCode), row]),);
 
-    console.log(
-      "[MF NAV] Downloading latest NAV data..."
-    );
+    console.log("[MF NAV] Downloading latest NAV data...");
 
     const providerFunds = await getLatestFunds();
 
-    if (
-      !Array.isArray(providerFunds) ||
-      !providerFunds.length
-    ) {
-      throw new Error(
-        "NAV provider returned zero records"
-      );
+    if (!Array.isArray(providerFunds) || !providerFunds.length) {
+      throw new Error("NAV provider returned zero records");
     }
 
     /*
@@ -260,25 +201,14 @@ async function syncLatestNAV() {
     for (const raw of providerFunds) {
       const fund = normalizeLatestFund(raw);
 
-      if (
-        !Number.isFinite(fund.schemeCode) ||
-        fund.schemeCode <= 0
-      ) {
+      if (!Number.isFinite(fund.schemeCode) || fund.schemeCode <= 0) {
         continue;
       }
 
-      const previous =
-        bySchemeCode.get(fund.schemeCode);
+      const previous = bySchemeCode.get(fund.schemeCode);
 
-      if (
-        !previous ||
-        String(fund.navDate) >
-          String(previous.navDate)
-      ) {
-        bySchemeCode.set(
-          fund.schemeCode,
-          fund
-        );
+      if (!previous || String(fund.navDate) > String(previous.navDate)) {
+        bySchemeCode.set(fund.schemeCode, fund);
       }
     }
 
@@ -286,9 +216,7 @@ async function syncLatestNAV() {
     let missingActive = 0;
 
     for (const active of activeRows) {
-      const fund = bySchemeCode.get(
-        Number(active.schemeCode)
-      );
+      const fund = bySchemeCode.get(Number(active.schemeCode));
 
       if (fund) {
         selectedFunds.push(fund);
@@ -297,13 +225,8 @@ async function syncLatestNAV() {
       }
     }
 
-    console.log(
-      `[MF NAV] Provider records: ${providerFunds.length}`
-    );
-
-    console.log(
-      `[MF NAV] Active records selected: ${selectedFunds.length}/${activeRows.length}`
-    );
+    console.log(`[MF NAV] Provider records: ${providerFunds.length}`);
+    console.log(`[MF NAV] Active records selected: ${selectedFunds.length}/${activeRows.length}`,);
 
     let updated = 0;
     let unchanged = 0;
@@ -325,69 +248,30 @@ async function syncLatestNAV() {
         continue;
       }
 
-      if (
-        !latestActiveNavDate ||
-        fund.navDate > latestActiveNavDate
-      ) {
+      if (!latestActiveNavDate || fund.navDate > latestActiveNavDate) {
         latestActiveNavDate = fund.navDate;
       }
 
-      const existing =
-        activeByCode.get(fund.schemeCode);
+      const existing = activeByCode.get(fund.schemeCode);
+      const existingDate = parseNavDate(existing?.navDate);
 
-      const existingDate =
-        parseNavDate(existing?.navDate);
-
-      if (
-        existingDate &&
-        fund.navDate < existingDate
-      ) {
+      if (existingDate && fund.navDate < existingDate) {
         unchanged += 1;
         continue;
       }
 
       try {
-        const isNewDate =
-          !existingDate ||
-          fund.navDate > existingDate;
-
-        const isSameDate =
-          existingDate &&
-          fund.navDate === existingDate;
-
-        const existingNav =
-          Number(existing?.currentNav);
-
-        const navChangedSameDate =
-          isSameDate &&
-          Number.isFinite(existingNav) &&
-          Math.abs(
-            existingNav - fund.nav
-          ) > 0.0000001;
-
-        const shouldRecalculateDerivedMetrics =
-          isNewDate ||
-          navChangedSameDate;
-
+        const isNewDate = !existingDate || fund.navDate > existingDate;
+        const isSameDate = existingDate && fund.navDate === existingDate;
+        const existingNav = Number(existing?.currentNav);
+        const navChangedSameDate = isSameDate && Number.isFinite(existingNav) && Math.abs(existingNav - fund.nav) > 0.0000001;
+        const shouldRecalculateDerivedMetrics = isNewDate || navChangedSameDate;
         const update = {
-          schemeName:
-            fund.schemeName ??
-            existing?.schemeName ??
-            null,
-
-          isinGrowth:
-            fund.isinGrowth ??
-            existing?.isinGrowth ??
-            null,
-
-          isinDivReinvestment:
-            fund.isinDivReinvestment ??
-            existing?.isinDivReinvestment ??
-            null,
-
+          schemeName: fund.schemeName ?? existing?.schemeName ?? null,
+          isinGrowth: fund.isinGrowth ?? existing?.isinGrowth ?? null,
+          isinDivReinvestment: fund.isinDivReinvestment ?? existing?.isinDivReinvestment ?? null,
           currentNav: fund.nav,
           navDate: fund.navDate,
-
           updatedAt: new Date(),
         };
 
@@ -397,76 +281,143 @@ async function syncLatestNAV() {
          *
          * A same-day correction keeps previous NAV.
          */
+        /*
+ * Preserve the previous NAV when a new NAV date arrives.
+ */
         if (isNewDate) {
           if (
             Number.isFinite(existingNav) &&
             existingNav > 0
           ) {
-            update.previousNav =
-              existingNav;
+            update.previousNav = existingNav;
           }
 
           if (existingDate) {
-            update.previousNavDate =
-              existingDate;
+            update.previousNavDate = existingDate;
           }
         }
 
         /*
-         * Recalculate 1D return for both:
-         * - new NAV date
-         * - same-day NAV correction
+         * Detect stale previous NAV dates.
+         * Allow up to 4 calendar days for weekends and holidays.
          */
-        if (
-          shouldRecalculateDerivedMetrics &&
-          Number.isFinite(
-            Number(
-              existing?.previousNav
-            )
-          ) &&
-          Number(existing.previousNav) > 0
-        ) {
-          update.return1d = Number(
-            (
-              ((fund.nav -
-                Number(existing.previousNav)) /
-                Number(existing.previousNav)) *
-              100
-            ).toFixed(4)
-          );
+        const previousDateToCheck = isNewDate
+          ? existingDate
+          : parseNavDate(existing?.previousNavDate);
 
-          update.return1dNavDate =
-            fund.navDate;
+        const previousGapDays = previousDateToCheck
+          ? (
+            Date.parse(`${fund.navDate}T00:00:00Z`) -
+            Date.parse(`${previousDateToCheck}T00:00:00Z`)
+          ) / 86400000
+          : null;
+
+        let previousNavRepaired = false;
+
+        if (
+          existingDate &&
+          (
+            !previousDateToCheck ||
+            previousGapDays > 4
+          )
+        ) {
+          try {
+            const history = await getSchemeHistory(
+              fund.schemeCode,
+              subtractDays(fund.navDate, 30),
+              subtractDays(fund.navDate, 1)
+            );
+
+            // Use the latest valid NAV strictly before the current NAV date.
+            const validHistory = history.filter(
+              (row) =>
+                row.date < fund.navDate &&
+                Number.isFinite(Number(row.nav)) &&
+                Number(row.nav) > 0
+            );
+
+            const previousRecord =
+              validHistory[validHistory.length - 1];
+
+            if (previousRecord) {
+              update.previousNav = Number(previousRecord.nav);
+              update.previousNavDate = previousRecord.date;
+              previousNavRepaired = true;
+            } else {
+              console.warn(
+                `[MF NAV] No valid previous NAV found for scheme ${fund.schemeCode}`
+              );
+            }
+          } catch (error) {
+            console.warn(
+              `[MF NAV] Historical NAV repair failed for scheme ${fund.schemeCode}: ${error.message}`
+            );
+          }
         }
+
+        /*
+         * Recalculate 1D return using the selected previous NAV.
+         */
+        const comparisonNav = Number(
+          update.previousNav ?? existing?.previousNav
+        );
+
+        const comparisonDate = parseNavDate(
+          update.previousNavDate ?? existing?.previousNavDate
+        );
+
+        const comparisonGapDays = comparisonDate
+          ? (
+            Date.parse(`${fund.navDate}T00:00:00Z`) -
+            Date.parse(`${comparisonDate}T00:00:00Z`)
+          ) / 86400000
+          : null;
+
+        const canCalculateDailyReturn =
+          Number.isFinite(comparisonNav) &&
+          comparisonNav > 0 &&
+          comparisonDate &&
+          comparisonDate < fund.navDate &&
+          comparisonGapDays > 0 &&
+          comparisonGapDays <= 4;
+
+        if (
+          shouldRecalculateDerivedMetrics ||
+          previousNavRepaired
+        ) {
+          if (canCalculateDailyReturn) {
+            update.return1d = Number(
+              (
+                ((fund.nav - comparisonNav) / comparisonNav) *
+                100
+              ).toFixed(4)
+            );
+
+            update.return1dNavDate = fund.navDate;
+          } else {
+            update.return1d = null;
+            update.return1dNavDate = null;
+          }
+        }
+
 
         /*
          * New NAV or same-day correction invalidates
          * historical return/risk calculations.
          */
-        if (
-          shouldRecalculateDerivedMetrics
-        ) {
-          update.returnsForNavDate =
-            null;
-
+        if (shouldRecalculateDerivedMetrics) {
+          update.returnsForNavDate = null;
           update.return1yNavDate = null;
           update.return3yNavDate = null;
           update.return5yNavDate = null;
-
           update.riskSource = null;
           update.riskUpdatedAt = null;
         }
 
-        const result =
-          await schemes.updateOne(
-            {
-              schemeCode: fund.schemeCode,
-              isActive: true,
-            },
-            {
-              $set: update,
-            }
-          );
+        const result = await schemes.updateOne(
+          { schemeCode: fund.schemeCode, isActive: true, },
+          { $set: update, },
+        );
 
         if (result.matchedCount === 1) {
           updated += 1;
@@ -476,10 +427,7 @@ async function syncLatestNAV() {
 
         if (isNewDate) {
           newNavDays += 1;
-        } else if (
-          isSameDate &&
-          !navChangedSameDate
-        ) {
+        } else if (isSameDate && !navChangedSameDate) {
           sameNavDays += 1;
         }
 
@@ -487,33 +435,26 @@ async function syncLatestNAV() {
          * Update our local copy so subsequent processing
          * uses the latest state if needed.
          */
-        activeByCode.set(
-          fund.schemeCode,
-          {
-            ...existing,
-            ...update,
-          }
-        );
+        activeByCode.set(fund.schemeCode, {
+          ...existing,
+          ...update,
+        });
       } catch (error) {
         failed += 1;
 
-        console.error(
-          `[MF NAV] schemeCode=${fund.schemeCode}: ${error.message}`
-        );
+        console.error(`[MF NAV] schemeCode=${fund.schemeCode}: ${error.message}`,);
       }
     }
 
     if (missingActive > 0) {
-      console.warn(
-        `[MF NAV] ${missingActive} active DB funds were not present in the provider report.`
-      );
+      console.warn(`[MF NAV] ${missingActive} active DB funds were not present in the provider report.`,);
     }
 
     console.log(
       `[MF NAV] active=${activeRows.length}, provider=${providerFunds.length}, ` +
-        `selected=${selectedFunds.length}, updated=${updated}, unchanged=${unchanged}, ` +
-        `newDate=${newNavDays}, sameDate=${sameNavDays}, invalid=${invalid}, ` +
-        `failed=${failed}, missing=${missingActive}`
+      `selected=${selectedFunds.length}, updated=${updated}, unchanged=${unchanged}, ` +
+      `newDate=${newNavDays}, sameDate=${sameNavDays}, invalid=${invalid}, ` +
+      `failed=${failed}, missing=${missingActive}`,
     );
 
     return {
@@ -533,10 +474,7 @@ async function syncLatestNAV() {
     };
   } finally {
     if (lock?.acquired) {
-      await releaseLock(
-        NAV_LOCK_NAME,
-        lock.owner
-      );
+      await releaseLock(NAV_LOCK_NAME, lock.owner);
     }
   }
 }
@@ -547,70 +485,32 @@ async function syncLatestNAV() {
 |--------------------------------------------------------------------------
 */
 
-async function calculateSchemeReturns(
-  scheme
-) {
-  const currentNav = roundNav(
-    scheme.currentNav
-  );
+async function calculateSchemeReturns(scheme) {
+  const currentNav = roundNav(scheme.currentNav);
 
-  const currentDate = parseNavDate(
-    scheme.navDate
-  );
+  const currentDate = parseNavDate(scheme.navDate);
 
-  if (
-    !Number.isFinite(currentNav) ||
-    currentNav <= 0 ||
-    !currentDate
-  ) {
+  if (!Number.isFinite(currentNav) || currentNav <= 0 || !currentDate) {
     return {
       success: false,
       reason: "Invalid current NAV/date",
     };
   }
 
-  const start = subtractDays(
-    subtractYears(currentDate, 5),
-    10
-  );
+  const start = subtractDays(subtractYears(currentDate, 5), 10);
+  const end = addDays(currentDate, 1);
+  const history = await getSchemeHistory(scheme.schemeCode, start, end);
 
-  const end = addDays(
-    currentDate,
-    1
-  );
-
-  const history =
-    await getSchemeHistory(
-      scheme.schemeCode,
-      start,
-      end
-    );
-
-  if (
-    !Array.isArray(history) ||
-    !history.length
-  ) {
+  if (!Array.isArray(history) || !history.length) {
     return {
       success: false,
       reason: "No historical NAV",
     };
   }
 
-  const returns =
-    calculateReturns(
-      history,
-      currentNav,
-      currentDate
-    );
-
-  const riskVolatility =
-    calculateVolatility(history);
-
-  const risk = calculateRisk(
-    riskVolatility,
-    scheme.fundType,
-    scheme.schemeCategory
-  );
+  const returns = calculateReturns(history, currentNav, currentDate);
+  const riskVolatility = calculateVolatility(history);
+  const risk = calculateRisk(riskVolatility, scheme.fundType, scheme.schemeCategory,);
 
   return {
     success: true,
@@ -633,16 +533,8 @@ function calculateVolatility(history) {
       date: row.date,
       nav: Number(row.nav),
     }))
-    .filter(
-      (row) =>
-        Number.isFinite(row.nav) &&
-        row.nav > 0
-    )
-    .sort((a, b) =>
-      String(a.date).localeCompare(
-        String(b.date)
-      )
-    );
+    .filter((row) => Number.isFinite(row.nav) && row.nav > 0)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   if (values.length < 181) {
     return null;
@@ -650,21 +542,12 @@ function calculateVolatility(history) {
 
   const dailyReturns = [];
 
-  for (
-    let i = 1;
-    i < values.length;
-    i += 1
-  ) {
+  for (let i = 1; i < values.length; i += 1) {
     const prev = values[i - 1].nav;
     const curr = values[i].nav;
 
-    if (
-      prev > 0 &&
-      curr > 0
-    ) {
-      dailyReturns.push(
-        curr / prev - 1
-      );
+    if (prev > 0 && curr > 0) {
+      dailyReturns.push(curr / prev - 1);
     }
   }
 
@@ -672,31 +555,15 @@ function calculateVolatility(history) {
     return null;
   }
 
-  const mean =
-    dailyReturns.reduce(
-      (a, b) => a + b,
-      0
-    ) / dailyReturns.length;
+  const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
 
   const variance =
-    dailyReturns.reduce(
-      (sum, value) =>
-        sum +
-        Math.pow(
-          value - mean,
-          2
-        ),
-      0
-    ) /
+    dailyReturns.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) /
     (dailyReturns.length - 1);
 
-  const volatility =
-    Math.sqrt(variance) *
-    Math.sqrt(252);
+  const volatility = Math.sqrt(variance) * Math.sqrt(252);
 
-  return Number.isFinite(volatility)
-    ? Number(volatility.toFixed(6))
-    : null;
+  return Number.isFinite(volatility) ? Number(volatility.toFixed(6)) : null;
 }
 
 /*
@@ -710,19 +577,15 @@ async function syncAllReturns() {
 
   try {
     const db = await getDb();
-    const schemes =
-      db.collection("mfSchemes");
+    const schemes = db.collection("mfSchemes");
 
-    lock = await acquireLock(
-      RETURNS_LOCK_NAME
-    );
+    lock = await acquireLock(RETURNS_LOCK_NAME);
 
     if (!lock.acquired) {
       return {
         success: true,
         skipped: true,
-        reason:
-          "another return sync is running",
+        reason: "another return sync is running",
         total: 0,
         processed: 0,
         updated: 0,
@@ -734,42 +597,37 @@ async function syncAllReturns() {
      * Only active schemes whose returns are stale
      * relative to the current NAV date.
      */
-    const schemeRows =
-      await schemes
-        .find({
-          isActive: true,
+    const schemeRows = await schemes
+      .find({
+        isActive: true,
 
-          currentNav: {
-            $ne: null,
+        currentNav: {
+          $ne: null,
+        },
+
+        navDate: {
+          $ne: null,
+        },
+
+        $or: [
+          {
+            returnsForNavDate: null,
           },
-
-          navDate: {
-            $ne: null,
+          {
+            $expr: {
+              $ne: ["$returnsForNavDate", "$navDate"],
+            },
           },
-
-          $or: [
-            {
-              returnsForNavDate:
-                null,
-            },
-            {
-              $expr: {
-                $ne: [
-                  "$returnsForNavDate",
-                  "$navDate",
-                ],
-              },
-            },
-          ],
-        })
-        .sort({
-          mysqlId: 1,
-          schemeCode: 1,
-        })
-        .toArray();
+        ],
+      })
+      .sort({
+        mysqlId: 1,
+        schemeCode: 1,
+      })
+      .toArray();
 
     console.log(
-      `[MF RETURNS] Schemes requiring recalculation: ${schemeRows.length}`
+      `[MF RETURNS] Schemes requiring recalculation: ${schemeRows.length}`,
     );
 
     let cursor = 0;
@@ -781,74 +639,53 @@ async function syncAllReturns() {
       while (true) {
         const index = cursor++;
 
-        if (
-          index >= schemeRows.length
-        ) {
+        if (index >= schemeRows.length) {
           return;
         }
 
-        const scheme =
-          schemeRows[index];
+        const scheme = schemeRows[index];
 
         try {
-          const result =
-            await calculateSchemeReturns(
-              scheme
-            );
+          const result = await calculateSchemeReturns(scheme);
 
           if (!result.success) {
             failed += 1;
 
-            console.warn(
-              `[MF RETURNS] ${scheme.schemeCode}: ${result.reason}`
-            );
+            console.warn(`[MF RETURNS] ${scheme.schemeCode}: ${result.reason}`);
           } else {
             await schemes.updateOne(
               {
                 _id: scheme._id,
-                schemeCode:
-                  scheme.schemeCode,
+                schemeCode: scheme.schemeCode,
                 isActive: true,
               },
               {
                 $set: {
-                  return1y:
-                    result.return1Y,
+                  return1y: result.return1Y,
 
-                  return3y:
-                    result.return3Y,
+                  return3y: result.return3Y,
 
-                  return5y:
-                    result.return5Y,
+                  return5y: result.return5Y,
 
-                  returnsForNavDate:
-                    result.currentDate,
+                  returnsForNavDate: result.currentDate,
 
-                  return1yNavDate:
-                    result.nav1YDate,
+                  return1yNavDate: result.nav1YDate,
 
-                  return3yNavDate:
-                    result.nav3YDate,
+                  return3yNavDate: result.nav3YDate,
 
-                  return5yNavDate:
-                    result.nav5YDate,
+                  return5yNavDate: result.nav5YDate,
 
-                  risk:
-                    result.risk,
+                  risk: result.risk,
 
-                  riskSource:
-                    "Internal NAV Risk Model",
+                  riskSource: "Internal NAV Risk Model",
 
-                  riskUpdatedAt:
-                    new Date(),
+                  riskUpdatedAt: new Date(),
 
-                  returnUpdatedAt:
-                    new Date(),
+                  returnUpdatedAt: new Date(),
 
-                  updatedAt:
-                    new Date(),
+                  updatedAt: new Date(),
                 },
-              }
+              },
             );
 
             updated += 1;
@@ -856,20 +693,15 @@ async function syncAllReturns() {
         } catch (error) {
           failed += 1;
 
-          console.error(
-            `[MF RETURNS] ${scheme.schemeCode}: ${error.message}`
-          );
+          console.error(`[MF RETURNS] ${scheme.schemeCode}: ${error.message}`);
         }
 
         processed += 1;
 
-        if (
-          processed % 100 === 0 ||
-          processed === schemeRows.length
-        ) {
+        if (processed % 100 === 0 || processed === schemeRows.length) {
           console.log(
             `[MF RETURNS] progress=${processed}/${schemeRows.length}, ` +
-              `updated=${updated}, failed=${failed}`
+            `updated=${updated}, failed=${failed}`,
           );
         }
 
@@ -883,19 +715,16 @@ async function syncAllReturns() {
       await Promise.all(
         Array.from(
           {
-            length: Math.min(
-              CONCURRENCY,
-              schemeRows.length
-            ),
+            length: Math.min(CONCURRENCY, schemeRows.length),
           },
-          worker
-        )
+          worker,
+        ),
       );
     }
 
     console.log(
       `[MF RETURNS] total=${schemeRows.length}, ` +
-        `processed=${processed}, updated=${updated}, failed=${failed}`
+      `processed=${processed}, updated=${updated}, failed=${failed}`,
     );
 
     return {
@@ -908,10 +737,7 @@ async function syncAllReturns() {
     };
   } finally {
     if (lock?.acquired) {
-      await releaseLock(
-        RETURNS_LOCK_NAME,
-        lock.owner
-      );
+      await releaseLock(RETURNS_LOCK_NAME, lock.owner);
     }
   }
 }
