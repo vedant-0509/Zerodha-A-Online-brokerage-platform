@@ -1380,6 +1380,30 @@ input:focus {
   border-bottom: 2.5px solid #387ed1;
 }
 
+
+/* Dashboard: Stocks and Mutual Funds tabs */
+.DashboardSection1-nav .navlink,
+.DashboardSection1-nav .navlink:visited {
+  position: relative;
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 500;
+  color: #424242;
+  padding-bottom: 5px;
+}
+
+/* Hover */
+.DashboardSection1-nav .navlink:hover {
+  color: #387ed1;
+}
+
+/* Active tab */
+.DashboardSection1-nav .navlink.active-link {
+  color: #387ed1 !important;
+  border-bottom: 2.5px solid #387ed1;
+}
+
+
 /* =========================================================
    AUTHENTICATION FORMS
 ========================================================= */
