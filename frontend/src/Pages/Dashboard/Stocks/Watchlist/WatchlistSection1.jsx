@@ -15,6 +15,7 @@ export default function WatchlistSection1() {
     const [error, setError] = useState("");
     const [editMode, setEditMode] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [successMessage, setSuccessMessage] = useState("");
 
     // =====================================================
     // GET LOGGED-IN USER
