@@ -157,7 +157,9 @@ export default function WatchlistSection1() {
 
     async function handleRemoveStock(stock) {
         try {
-            if (!localStorage.getItem("token")) {
+            const token = localStorage.getItem("token");
+
+            if (!token) {
                 alert("Please login first");
                 return;
             }
@@ -167,34 +169,31 @@ export default function WatchlistSection1() {
                 return;
             }
 
-            const confirmed = window.confirm(
-                `Remove ${stock.name || stock.symbol} from your watchlist?`,
-            );
-
-            if (!confirmed) {
-                return;
-            }
-
-            const token = localStorage.getItem("token");
+            // Remove the native browser confirmation popup.
+            setSuccessMessage("");
 
             await axios.delete(
-                `/api/watchlist/${encodeURIComponent(
-                    stock.instrument_key,
-                )}`,
+                `/api/watchlist/${encodeURIComponent(stock.instrument_key)}`,
                 {
-                    headers: token
-                        ? { Authorization: `Bearer ${token}` }
-                        : {},
-                },
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                }
             );
 
-            // Refresh this list and notify other mounted watchlist views.
             notifyDashboardDataChanged("watchlist", "watchlist");
             await fetchWatchlist({ force: true });
+
+            // Show green success message.
+            setSuccessMessage(
+                `${stock.name || stock.symbol} removed from your watchlist.`
+            );
         } catch (err) {
             console.error("Remove Stock Error:", err);
-
-            alert(err.response?.data?.message || "Unable to remove stock");
+            alert(
+                err.response?.data?.message ||
+                "Unable to remove stock"
+            );
         }
     }
 
@@ -266,7 +265,7 @@ export default function WatchlistSection1() {
                 {/* SEARCH */}
 
                 <button onClick={() => setSearchOpen(true)} style={{ width: "400px", height: "50px", border: "1px solid #ddd", borderRadius: "9px", background: "#fff", display: "flex", alignItems: "center", padding: "0 15px", cursor: "text", color: "#777", fontSize: "16px", }}>
-                    <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "12px", color:"#616161"}} />
+                    <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "12px", color: "#616161" }} />
                     Search your watchlist
                 </button>
 
@@ -296,6 +295,28 @@ export default function WatchlistSection1() {
                 </div>
             </div>
 
+
+
+
+            {/* SUCCESS MESSAGE */}
+            {successMessage && (
+                <div role="status" style={{ margin: "16px 20px", padding: "12px 14px", border: "1px solid #A7F3D0", borderRadius: "9px", background: "#ECFDF5", color: "#00b386", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", }}>
+                    <span>
+                        <i className="fa-solid fa-circle-check" style={{ marginRight: "8px" }} />
+                        {successMessage}
+                    </span>
+
+                    <button
+                        type="button"
+                        onClick={() => setSuccessMessage("")}
+                        aria-label="Dismiss message"
+                        style={{ border: "none", background: "transparent", color: "#059669", fontSize: "20px", cursor: "pointer", }}>
+                        ×
+                    </button>
+                </div>
+            )}
+
+
             {/* =====================================================
                 TABLE
             ===================================================== */}
@@ -303,7 +324,7 @@ export default function WatchlistSection1() {
             <div style={{ overflowX: "auto", }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", }}>
                     <thead>
-                        <tr style={{ background: "#fafafa", cursor:"default"}}>
+                        <tr style={{ background: "#fafafa", cursor: "default" }}>
                             <th style={{ padding: "18px", textAlign: "left", color: "#777", width: editMode ? "23%" : "25%", }}>
                                 Company ({stocks.length})
                             </th>
