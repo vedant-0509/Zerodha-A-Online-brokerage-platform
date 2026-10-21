@@ -150,6 +150,13 @@ function startMarketWatch(io) {
 function initializeUpstoxFeed(io) {
     startMarketWatch(io);
 
+    // Outside a trading session, keep serving the Redis/RAM snapshot and let
+    // the market-watch timer start the live feed at the next open session.
+    // This avoids trying to subscribe during closed-session socket setup.
+    if (!isMarketOpen()) {
+        return;
+    }
+
     if (!process.env.UPSTOX_ANALYTIC_TOKEN && !process.env.UPSTOX_ACCESS_TOKEN) {
         console.error("🔴 Upstox access token is missing.");
         return;
@@ -163,15 +170,40 @@ function initializeUpstoxFeed(io) {
 
     console.log("⏳ Connecting Upstox WebSocket...");
 
-    streamer = new UpstoxClient.MarketDataStreamerV3(
-        instruments,
-        process.env.UPSTOX_STREAM_MODE || "ltpc",
-    );
+    const streamMode = process.env.UPSTOX_STREAM_MODE || "ltpc";
+
+    // Do not pass instrument keys into the SDK constructor. Some SDK versions
+    // attempt an automatic subscription during their internal socket setup,
+    // before the underlying WebSocket is fully OPEN. That is the crash shown
+    // in the Render logs ("Failed to subscribe: WebSocket is not open").
+    streamer = new UpstoxClient.MarketDataStreamerV3([], streamMode);
 
     streamer.on("open", () => {
-        console.log(
-            `🟢 UPSTOX CONNECTED | subscribed=${instruments.length} | marketOpen=${isMarketOpen()}`,
-        );
+        const activeStreamer = streamer;
+        if (!activeStreamer) return;
+
+        try {
+            // Subscribe only after the SDK emits its open event.
+            activeStreamer.subscribe(instruments, streamMode);
+            console.log(
+                `[Index Market] UPSTOX CONNECTED | subscribed=${instruments.length} | marketOpen=${isMarketOpen()}`,
+            );
+        } catch (err) {
+            console.error(
+                "[Index Market] Subscription failed after socket open:",
+                err?.message || err,
+            );
+
+            // Force this failed connection through the normal reconnect path.
+            try {
+                activeStreamer.disconnect();
+            } catch (_) {
+                // The SDK may already have closed the transport.
+            }
+            if (streamer === activeStreamer) streamer = null;
+            if (isMarketOpen()) scheduleReconnect(io, 5000);
+            return;
+        }
 
         // Send the freshest cache immediately after the stream is established.
         io.emit("market_snapshot", getLatestCache());
@@ -257,7 +289,7 @@ function initializeUpstoxFeed(io) {
     } catch (err) {
         console.error("🔴 UPSTOX CONNECT FAILED:", err?.message || err);
         streamer = null;
-        scheduleReconnect(io, 5000);
+        if (isMarketOpen()) scheduleReconnect(io, 5000);
     }
 }
 
