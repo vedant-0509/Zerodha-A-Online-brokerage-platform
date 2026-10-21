@@ -5,24 +5,30 @@ function startClosingPriceScheduler(io) {
     console.log("⏰ Closing Price Scheduler Started");
     console.log("📅 Schedule: Monday-Friday at 3:35 PM (Asia/Kolkata)");
 
-    cron.schedule("35 15 * * 1-5", async () => {
-        console.log("\n======================================");
-        console.log("🕒 3:35 PM Scheduler Triggered");
-        console.log("======================================");
+    cron.schedule(
+        "35 15 * * 1-5",
+        async () => {
+            console.log("\n======================================");
+            console.log("🕒 Closing Price Scheduler Triggered");
+            console.log("======================================");
 
-        try {
-            console.log("📥 Fetching official closing prices...");
+            try {
+                const result = await updateClosingPricesFromUpstox(io);
 
-            await updateClosingPricesFromUpstox(io);
-
-            console.log("✅ Closing prices updated successfully.");
-        } catch (err) {
-            console.error(err);
+                console.log(
+                    `✅ Closing-price sync completed: ${result.succeeded}/${result.total}`
+                );
+            } catch (err) {
+                console.error(
+                    "❌ Closing-price scheduler failed:",
+                    err?.message || err
+                );
+            }
+        },
+        {
+            timezone: "Asia/Kolkata",
         }
-    }, {
-        scheduled: true,
-        timezone: "Asia/Kolkata",
-    });
+    );
 }
 
-module.exports = {startClosingPriceScheduler};
+module.exports = { startClosingPriceScheduler };

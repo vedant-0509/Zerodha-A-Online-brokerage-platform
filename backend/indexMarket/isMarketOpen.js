@@ -1,53 +1,77 @@
-function getIndiaDateKey(date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
 
-  const values = Object.fromEntries(
-    parts.map(({ type, value }) => [type, value])
-  );
+const MARKET_TIMEZONE = "Asia/Kolkata";
 
-  return `${values.year}-${values.month}-${values.day}`;
+function getIndiaDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: MARKET_TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+
+    const values = Object.fromEntries(
+        parts.map(({ type, value }) => [type, value])
+    );
+
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getIndiaMarketTime(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: MARKET_TIMEZONE,
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    }).formatToParts(date);
+
+    return Object.fromEntries(
+        parts.map(({ type, value }) => [type, value])
+    );
 }
 
 function getConfiguredHolidays() {
-  return new Set(
-    String(process.env.NSE_MARKET_HOLIDAYS || "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
-  );
+    return new Set(
+        String(process.env.NSE_MARKET_HOLIDAYS || "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) =>
+                /^\d{4}-\d{2}-\d{2}$/.test(value)
+            )
+    );
 }
 
 function isMarketOpen(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
+    const marketTime = getIndiaMarketTime(date);
+    const indiaDate = getIndiaDateKey(date);
 
-  const values = Object.fromEntries(
-    parts.map(({ type, value }) => [type, value])
-  );
+    // Normal NSE equity market is closed on weekends.
+    if (
+        marketTime.weekday === "Sat" ||
+        marketTime.weekday === "Sun"
+    ) {
+        return false;
+    }
 
-  // Weekends and explicitly configured NSE holidays are closed.
-  if (values.weekday === "Sat" || values.weekday === "Sun") {
-    return false;
-  }
+    // Configure official exchange holidays through environment variables.
+    if (getConfiguredHolidays().has(indiaDate)) {
+        return false;
+    }
 
-  if (getConfiguredHolidays().has(getIndiaDateKey(date))) {
-    return false;
-  }
+    const hour = Number(marketTime.hour);
+    const minute = Number(marketTime.minute);
+    const currentMinutes = hour * 60 + minute;
 
-  const minutes = Number(values.hour) * 60 + Number(values.minute);
+    const marketOpenMinutes = 9 * 60 + 15;
+    const marketCloseMinutes = 15 * 60 + 30;
 
-  // NSE regular session: 09:15–15:30 IST.
-  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+    return (
+        currentMinutes >= marketOpenMinutes &&
+        currentMinutes < marketCloseMinutes
+    );
 }
 
-module.exports = { isMarketOpen };
+module.exports = {
+    isMarketOpen,
+    getIndiaDateKey,
+};

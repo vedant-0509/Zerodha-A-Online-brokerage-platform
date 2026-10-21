@@ -5,216 +5,226 @@ const { getDailyClose } = require("./historicalCloseService");
 const { instruments } = require("./indexMarketService");
 const { initDb, requireDb } = require("./db");
 
+function getIndiaDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+
+    const values = Object.fromEntries(
+        parts.map(({ type, value }) => [type, value])
+    );
+
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+function redisHSet(key, field, value) {
+    return new Promise((resolve, reject) => {
+        redis.hset(key, field, value, (err, result) => {
+            if (err) return reject(err);
+            resolve(result);
+        });
+    });
+}
+
+function getPreviousDateKey(timestamp) {
+    if (!timestamp || !Number.isFinite(new Date(timestamp).getTime())) {
+        throw new Error(`Invalid candle timestamp: ${timestamp}`);
+    }
+
+    return getIndiaDateKey(new Date(timestamp));
+}
+
 async function updateClosingPricesFromUpstox(io = null) {
-    console.log("📥 Fetching official closing prices from Upstox...");
+    console.log("📥 Fetching latest daily closing candles from Upstox...");
 
-    try {
-        // Make sure MongoDB is connected. Keep initialization inside the
-        // guarded block so failures are logged and propagated consistently.
-        await initDb();
+    await initDb();
 
-        const db = requireDb();
-        const collection = db.collection("indexClosingPrices");
-        const failures = [];
-        let succeeded = 0;
+    const db = requireDb();
+    const collection = db.collection("indexClosingPrices");
 
-        for (const instrumentKey of instruments) {
-            try {
-                // ------------------------------------------
-                // Fetch today's official close from Upstox
-                // ------------------------------------------
-                const candle = await getDailyClose(instrumentKey);
+    const failures = [];
+    let succeeded = 0;
+    let latestTradingDate = null;
 
-                if (!candle) {
-                    const reason = "No historical candle returned";
-                    console.log(`⚠ Skipping ${instrumentKey}: ${reason}.`);
-                    failures.push({ instrumentKey, reason });
-                    continue;
+    for (const instrumentKey of instruments) {
+        try {
+            const candle = await getDailyClose(instrumentKey);
+
+            if (!candle) {
+                throw new Error("No valid historical candle returned");
+            }
+
+            const tradingDate = getPreviousDateKey(candle.timestamp);
+            const closePrice = Number(candle.close);
+
+            if (!Number.isFinite(closePrice) || closePrice <= 0) {
+                throw new Error(`Invalid closing price: ${candle.close}`);
+            }
+
+            if (
+                candle.open == null ||
+                candle.high == null ||
+                candle.low == null ||
+                !Number.isFinite(Number(candle.open)) ||
+                !Number.isFinite(Number(candle.high)) ||
+                !Number.isFinite(Number(candle.low))
+            ) {
+                throw new Error("Invalid OHLC data returned");
+            }
+
+            const previousRecord = await collection.findOne(
+                {
+                    instrumentKey,
+                    tradingDate: { $lt: tradingDate },
+                },
+                {
+                    sort: { tradingDate: -1 },
                 }
+            );
 
-                console.log(candle);
+            const previousClose = previousRecord
+                ? Number(previousRecord.closePrice)
+                : Number(candle.previousClose);
 
-                // ------------------------------------------
-                // Read previous trading day's close
-                // ------------------------------------------
-                const previousRecord = await collection.findOne(
+            const latest = {
+                ltp: closePrice,
+                close: Number.isFinite(previousClose) ? previousClose : closePrice,
+                previousClose: Number.isFinite(previousClose)
+                    ? previousClose
+                    : closePrice,
+                change: Number.isFinite(previousClose)
+                    ? closePrice - previousClose
+                    : 0,
+                changePercent:
+                    Number.isFinite(previousClose) && previousClose !== 0
+                        ? ((closePrice - previousClose) / previousClose) * 100
+                        : 0,
+                ohlc: [
                     {
-                        instrumentKey,
-                        tradingDate: {
-                            $lt: candle.timestamp.split("T")[0],
-                        },
+                        interval: "1d",
+                        open: Number(candle.open),
+                        high: Number(candle.high),
+                        low: Number(candle.low),
+                        close: closePrice,
                     },
-                    {
-                        sort: {
-                            tradingDate: -1,
-                        },
+                ],
+                updatedAt: Date.now(),
+                tradingDate,
+                source: "Upstox Historical",
+            };
+
+            await collection.updateOne(
+                { instrumentKey, tradingDate },
+                {
+                    $set: {
+                        closePrice,
+                        updatedAt: new Date(),
                     },
-                );
-
-                const previousClose = previousRecord ? Number(previousRecord.closePrice) : Number(candle.previousClose ?? candle.close);
-
-                // ------------------------------------------
-                // Prepare latest object for Redis
-                // ------------------------------------------
-                const latest = {
-                    ltp: candle.close,
-                    close: previousClose,
-                    ohlc: [
-                        {
-                            interval: "1d",
-                            open: candle.open,
-                            high: candle.high,
-                            low: candle.low,
-                            close: candle.close,
-                        },
-                    ],
-                    updatedAt: Date.now(),
-                    source: "Upstox Historical",
-                };
-
-                const tradingDate = candle.timestamp.split("T")[0];
-
-                // ------------------------------------------
-                // Store today's official close
-                // ------------------------------------------
-                await collection.updateOne(
-                    {
+                    $setOnInsert: {
                         instrumentKey,
                         tradingDate,
+                        createdAt: new Date(),
                     },
-                    {
-                        $set: {
-                            closePrice: Number(candle.close),
-                            updatedAt: new Date(),
-                        },
-                        $setOnInsert: {
-                            instrumentKey,
-                            tradingDate,
-                            createdAt: new Date(),
-                        },
-                    },
-                    {
-                        upsert: true,
-                    },
-                );
+                },
+                { upsert: true }
+            );
 
-                // ------------------------------------------
-                // Keep only latest 2 trading days
-                // ------------------------------------------
-                const oldRecords = await collection
-                    .find({
-                        instrumentKey,
-                    })
-                    .sort({
-                        tradingDate: -1,
-                    })
-                    .skip(2)
-                    .project({
-                        _id: 1,
-                    })
-                    .toArray();
+            // Update cache only after the database write succeeds.
+            marketCache[instrumentKey] = latest;
 
-                if (oldRecords.length > 0) {
-                    await collection.deleteMany({
-                        _id: {
-                            $in: oldRecords.map((record) => record._id),
-                        },
-                    });
-                }
+            await redisHSet(
+                "market_snapshot",
+                instrumentKey,
+                JSON.stringify(latest)
+            );
 
-                // ------------------------------------------
-                // Update RAM Cache
-                // ------------------------------------------
-                marketCache[instrumentKey] = latest;
+            succeeded += 1;
 
-                // ------------------------------------------
-                // Update Redis
-                // ------------------------------------------
-                await new Promise((resolve, reject) => {
-                    redis.hset(
-                        "market_snapshot",
-                        instrumentKey,
-                        JSON.stringify(latest),
-                        (err) => (err ? reject(err) : resolve()),
-                    );
-                });
-
-                succeeded += 1;
-                console.log(
-                    `✅ ${instrumentKey} | Close: ${candle.close} | Previous: ${previousClose}`,
-                );
-            } catch (err) {
-                failures.push({
-                    instrumentKey,
-                    reason: err?.message || String(err),
-                });
-                console.error(`❌ ${instrumentKey}:`, err.message);
-            }
-        }
-
-        // Broadcast any refreshed values, even when some instruments failed.
-        // The success marker below is deliberately withheld for partial runs.
-        if (io) {
-            io.emit("market_snapshot", marketCache);
-            console.log("📡 Snapshot broadcasted.");
-        }
-
-        if (failures.length > 0 || succeeded !== instruments.length) {
-            const summary = failures
-                .map(({ instrumentKey, reason }) => `${instrumentKey}: ${reason}`)
-                .join("; ");
-
-            // Record diagnostics without claiming the whole update succeeded.
-            const attemptedAt = new Date().toISOString();
-            try {
-                await new Promise((resolve, reject) => {
-                    redis.hset("market_meta", "lastUpstoxPartialUpdate", attemptedAt, (err) =>
-                        err ? reject(err) : resolve(),
-                    );
-                });
-            } catch (metadataError) {
-                console.error(
-                    "[Index Market] Could not save partial-update diagnostic:",
-                    metadataError.message,
-                );
+            if (!latestTradingDate || tradingDate > latestTradingDate) {
+                latestTradingDate = tradingDate;
             }
 
-            throw new Error(
-                `Closing-price update incomplete: succeeded=${succeeded}/${instruments.length}; ${summary}`,
+            console.log(
+                `✅ ${instrumentKey} | Trading date: ${tradingDate} | Close: ${closePrice} | Previous close: ${latest.previousClose}`
+            );
+        } catch (err) {
+            failures.push({
+                instrumentKey,
+                reason: err?.message || String(err),
+            });
+
+            console.error(
+                `❌ Closing-price update failed for ${instrumentKey}:`,
+                err?.message || err
             );
         }
-
-        // ------------------------------------------
-        // Save today's successful update flag
-        // ------------------------------------------
-        const today = new Date().toLocaleDateString("en-CA", {
-            timeZone: "Asia/Kolkata",
-        });
-
-        await new Promise((resolve, reject) => {
-            redis.hset("market_meta", "lastUpstoxUpdate", today, (err) =>
-                err ? reject(err) : resolve(),
-            );
-        });
-
-        console.log(`✅ Saved closing update flag: ${today}`);
-        console.log(
-            `🎉 Official closing prices updated successfully (${succeeded}/${instruments.length}).`,
-        );
-
-        return {
-            success: true,
-            succeeded,
-            total: instruments.length,
-            tradingDate: today,
-        };
-    } catch (err) {
-        console.error("❌ Closing price update failed.");
-        console.error(err);
-        throw err;
     }
+
+    // Broadcast successfully refreshed values, even if some instruments failed.
+    if (io && succeeded > 0) {
+        io.emit("market_snapshot", marketCache);
+        console.log("📡 Updated snapshot broadcasted.");
+    }
+
+    const attemptedAt = new Date().toISOString();
+
+    if (failures.length > 0 || succeeded !== instruments.length) {
+        try {
+            await redisHSet(
+                "market_meta",
+                "lastUpstoxPartialUpdate",
+                JSON.stringify({
+                    attemptedAt,
+                    succeeded,
+                    total: instruments.length,
+                    failures,
+                })
+            );
+        } catch (err) {
+            console.error(
+                "❌ Could not save partial-sync diagnostics:",
+                err?.message || err
+            );
+        }
+
+        throw new Error(
+            `Closing-price sync incomplete: ${succeeded}/${instruments.length} succeeded. ` +
+                failures
+                    .map(({ instrumentKey, reason }) => `${instrumentKey}: ${reason}`)
+                    .join("; ")
+        );
+    }
+
+    // Record the actual candle trading date, not the server's current date.
+    await redisHSet(
+        "market_meta",
+        "lastUpstoxUpdate",
+        latestTradingDate
+    );
+
+    await redisHSet(
+        "market_meta",
+        "lastUpstoxUpdateAt",
+        attemptedAt
+    );
+
+    console.log(
+        `🎉 Closing-price sync complete: ${succeeded}/${instruments.length}; latest trading date: ${latestTradingDate}`
+    );
+
+    return {
+        success: true,
+        succeeded,
+        total: instruments.length,
+        tradingDate: latestTradingDate,
+        updatedAt: attemptedAt,
+    };
 }
 
 module.exports = {
     updateClosingPricesFromUpstox,
+    getIndiaDateKey,
 };

@@ -1,3 +1,4 @@
+
 const UpstoxClient = require("upstox-js-sdk");
 const path = require("path");
 
@@ -5,11 +6,13 @@ const { redis } = require("./redisClient");
 const marketCache = require("./marketCache");
 const { isMarketOpen } = require("./isMarketOpen");
 
-require("dotenv").config({ path: path.join(__dirname, "../.env") });
+require("dotenv").config({
+    path: path.join(__dirname, "../.env"),
+});
 
-const defaultClient = UpstoxClient.ApiClient.instance;
-defaultClient.authentications["OAUTH2"].accessToken =
-    process.env.UPSTOX_ANALYTIC_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
+const token =
+    process.env.UPSTOX_ANALYTIC_TOKEN ||
+    process.env.UPSTOX_ACCESS_TOKEN;
 
 const instruments = [
     "NSE_INDEX|Nifty 50",
@@ -35,30 +38,40 @@ const instruments = [
     "BSE_INDEX|BSEIPO",
 ];
 
+const defaultClient = UpstoxClient.ApiClient.instance;
+
 let streamer = null;
 let reconnectTimer = null;
 let marketWatchTimer = null;
-let lastLogAt = 0;
+let reconnectDelay = 2000;
+let generation = 0;
+let starting = false;
+let lastMessageAt = null;
+
+const MAX_RECONNECT_DELAY = 30000;
+const STALE_AFTER_MS = 60000;
 
 function toNumber(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
 }
 
 function normalizeTimestamp(value) {
-    const n = Number(value);
+    const number = Number(value);
 
-    if (!Number.isFinite(n) || n <= 0) {
-        return Date.now();
+    if (!Number.isFinite(number) || number <= 0) {
+        return null;
     }
 
-    // Upstox timestamps can be expressed in seconds or milliseconds.
-    return n < 1e12 ? n * 1000 : n;
+    return number < 1e12 ? number * 1000 : number;
 }
 
 function getIndexFeed(value) {
     return (
-        value?.ff?.indexFF || value?.fullFeed?.indexFF || value?.indexFF || value
+        value?.ff?.indexFF ||
+        value?.fullFeed?.indexFF ||
+        value?.indexFF ||
+        value
     );
 }
 
@@ -72,46 +85,51 @@ function getLtpc(value, indexData) {
     );
 }
 
-/** Restore cache from Redis. */
-async function loadCache() {
-    return new Promise((resolve, reject) => {
-        redis.hgetall("market_snapshot", (err, data) => {
-            if (err) return reject(err);
-
-            if (!data || Object.keys(data).length === 0) {
-                console.log("⚠ No Redis snapshot found.");
-                return resolve();
-            }
-
-            for (const [key, value] of Object.entries(data)) {
-                try {
-                    marketCache[key] = JSON.parse(value);
-                } catch (parseError) {
-                    console.error(
-                        `[Index Market] Invalid Redis snapshot for ${key}:`,
-                        parseError.message,
-                    );
-                }
-            }
-
-            console.log("✅ Market cache restored from Redis.");
-            resolve();
-        });
-    });
-}
-
-/** Save the latest tick without blocking the websocket broadcast. */
-function saveTick(symbol, latest) {
-    return new Promise((resolve, reject) => {
-        redis.hset("market_snapshot", symbol, JSON.stringify(latest), (err) => {
-            if (err) return reject(err);
-            resolve();
-        });
-    });
-}
-
 function getLatestCache() {
     return marketCache;
+}
+
+function redisHSet(key, field, value) {
+    return new Promise((resolve, reject) => {
+        redis.hset(key, field, value, (error) => {
+            if (error) return reject(error);
+            resolve();
+        });
+    });
+}
+
+async function loadCache() {
+    const data = await new Promise((resolve, reject) => {
+        redis.hgetall("market_snapshot", (error, result) => {
+            if (error) return reject(error);
+            resolve(result || {});
+        });
+    });
+
+    for (const [key, value] of Object.entries(data)) {
+        try {
+            const parsed = JSON.parse(value);
+
+            if (
+                parsed &&
+                Number.isFinite(Number(parsed.ltp))
+            ) {
+                marketCache[key] = {
+                    ...parsed,
+                    freshness: "cached",
+                };
+            }
+        } catch (error) {
+            console.error(
+                `[Index Market] Invalid cached snapshot ${key}:`,
+                error.message
+            );
+        }
+    }
+
+    console.log(
+        `✅ Restored ${Object.keys(marketCache).length} cached index values`
+    );
 }
 
 function clearReconnectTimer() {
@@ -121,13 +139,29 @@ function clearReconnectTimer() {
     }
 }
 
-function scheduleReconnect(io, delay = 2000) {
-    clearReconnectTimer();
+function scheduleReconnect(io, expectedGeneration) {
+    if (reconnectTimer || !isMarketOpen()) return;
+
+    const delay = reconnectDelay;
+
+    reconnectDelay = Math.min(
+        reconnectDelay * 2,
+        MAX_RECONNECT_DELAY
+    );
+
+    console.log(
+        `[Index Market] Reconnecting in ${delay}ms`
+    );
 
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
 
-        if (!streamer) {
+        if (
+            expectedGeneration === generation &&
+            !streamer &&
+            !starting &&
+            isMarketOpen()
+        ) {
             initializeUpstoxFeed(io);
         }
     }, delay);
@@ -137,79 +171,120 @@ function startMarketWatch(io) {
     if (marketWatchTimer) return;
 
     marketWatchTimer = setInterval(() => {
-        if (isMarketOpen() && !streamer) {
-            console.log(
-                "🟢 Market is open and live feed is not connected. Starting Upstox feed...",
-            );
+        if (isMarketOpen() && !streamer && !starting) {
             initializeUpstoxFeed(io);
         }
     }, 5000);
 }
 
-/** Start / maintain Upstox live feed. */
 function initializeUpstoxFeed(io) {
     startMarketWatch(io);
 
-    // Outside a trading session, keep serving the Redis/RAM snapshot and let
-    // the market-watch timer start the live feed at the next open session.
-    // This avoids trying to subscribe during closed-session socket setup.
     if (!isMarketOpen()) {
+        console.log(
+            "[Index Market] Outside normal market hours; retaining cached snapshot."
+        );
         return;
     }
 
-    if (!process.env.UPSTOX_ANALYTIC_TOKEN && !process.env.UPSTOX_ACCESS_TOKEN) {
-        console.error("🔴 Upstox access token is missing.");
+    if (!token) {
+        console.error(
+            "[Index Market] Missing UPSTOX_ANALYTIC_TOKEN / UPSTOX_ACCESS_TOKEN"
+        );
         return;
     }
 
-    if (streamer) {
-        return;
-    }
+    if (streamer || starting) return;
 
     clearReconnectTimer();
+    starting = true;
 
-    console.log("⏳ Connecting Upstox WebSocket...");
+    const currentGeneration = ++generation;
+    defaultClient.authentications["OAUTH2"].accessToken = token;
 
     const streamMode = process.env.UPSTOX_STREAM_MODE || "ltpc";
 
-    // Do not pass instrument keys into the SDK constructor. Some SDK versions
-    // attempt an automatic subscription during their internal socket setup,
-    // before the underlying WebSocket is fully OPEN. That is the crash shown
-    // in the Render logs ("Failed to subscribe: WebSocket is not open").
-    streamer = new UpstoxClient.MarketDataStreamerV3([], streamMode);
+    let activeStreamer;
 
-    streamer.on("open", () => {
-        const activeStreamer = streamer;
-        if (!activeStreamer) return;
+    try {
+        activeStreamer = new UpstoxClient.MarketDataStreamerV3(
+            [],
+            streamMode
+        );
+
+        streamer = activeStreamer;
+    } catch (error) {
+        starting = false;
+        streamer = null;
+
+        console.error(
+            "[Index Market] Could not create streamer:",
+            error.message
+        );
+
+        scheduleReconnect(io, currentGeneration);
+        return;
+    }
+
+    function isCurrentConnection() {
+        return (
+            streamer === activeStreamer &&
+            generation === currentGeneration
+        );
+    }
+
+    function retireConnection(errorMessage) {
+        if (!isCurrentConnection()) return;
+
+        console.error(
+            "[Index Market] Retiring connection:",
+            errorMessage
+        );
+
+        streamer = null;
+        starting = false;
 
         try {
-            // Subscribe only after the SDK emits its open event.
-            activeStreamer.subscribe(instruments, streamMode);
-            console.log(
-                `[Index Market] UPSTOX CONNECTED | subscribed=${instruments.length} | marketOpen=${isMarketOpen()}`,
-            );
-        } catch (err) {
-            console.error(
-                "[Index Market] Subscription failed after socket open:",
-                err?.message || err,
-            );
+            activeStreamer.disconnect();
+        } catch (_) {
+            // The SDK may already have closed the socket.
+        }
 
-            // Force this failed connection through the normal reconnect path.
+        scheduleReconnect(io, currentGeneration);
+    }
+
+    activeStreamer.on("open", () => {
+        if (!isCurrentConnection()) return;
+
+        starting = false;
+        reconnectDelay = 2000;
+
+        if (!isMarketOpen()) {
             try {
                 activeStreamer.disconnect();
-            } catch (_) {
-                // The SDK may already have closed the transport.
-            }
-            if (streamer === activeStreamer) streamer = null;
-            if (isMarketOpen()) scheduleReconnect(io, 5000);
+            } catch (_) {}
+            streamer = null;
             return;
         }
 
-        // Send the freshest cache immediately after the stream is established.
-        io.emit("market_snapshot", getLatestCache());
+        try {
+            activeStreamer.subscribe(instruments, streamMode);
+
+            console.log(
+                `[Index Market] Connected; subscribed to ${instruments.length} instruments`
+            );
+
+            io.emit("market_snapshot", getLatestCache());
+        } catch (error) {
+            retireConnection(
+                `Subscription failed: ${error.message}`
+            );
+        }
     });
 
-    streamer.on("message", async (message) => {
+    activeStreamer.on("message", (message) => {
+        if (!isCurrentConnection()) return;
+
         try {
             const feed =
                 typeof message === "string"
@@ -218,7 +293,11 @@ function initializeUpstoxFeed(io) {
 
             if (!feed?.feeds) return;
 
+            let changed = false;
+
             for (const [symbol, value] of Object.entries(feed.feeds)) {
+                if (!instruments.includes(symbol)) continue;
+
                 const indexData = getIndexFeed(value);
                 const ltpc = getLtpc(value, indexData);
 
@@ -226,71 +305,116 @@ function initializeUpstoxFeed(io) {
 
                 const ltp = toNumber(ltpc.ltp);
                 const previousClose = toNumber(ltpc.cp);
+                const feedTimestamp = normalizeTimestamp(ltpc.ltt);
 
-                if (ltp === null || previousClose === null) continue;
+                if (ltp === null || ltp <= 0) continue;
+                if (
+                    previousClose === null ||
+                    previousClose <= 0
+                ) {
+                    continue;
+                }
 
-                const updatedAt = normalizeTimestamp(ltpc.ltt);
+                // Reject clearly future-dated feed timestamps.
+                const updatedAt = feedTimestamp || Date.now();
+
+                if (updatedAt > Date.now() + 60000) {
+                    console.warn(
+                        `[Index Market] Ignoring future-dated tick for ${symbol}`
+                    );
+                    continue;
+                }
 
                 const latest = {
                     ltp,
-                    // Keep `close` for frontend compatibility.
                     close: previousClose,
                     previousClose,
                     change: ltp - previousClose,
                     changePercent:
-                        previousClose !== 0
-                            ? ((ltp - previousClose) / previousClose) * 100
-                            : 0,
+                        ((ltp - previousClose) / previousClose) * 100,
                     ohlc: indexData?.marketOHLC?.ohlc || [],
                     updatedAt,
                     source: "upstox-websocket",
+                    freshness: "live",
                 };
 
                 marketCache[symbol] = latest;
+                changed = true;
 
-                // Broadcast immediately. Redis persistence must never delay live UI updates.
                 io.emit("market_update", {
                     symbol,
                     data: latest,
                 });
 
-                saveTick(symbol, latest).catch((err) => {
+                redisHSet(
+                    "market_snapshot",
+                    symbol,
+                    JSON.stringify(latest)
+                ).catch((error) => {
                     console.error(
-                        `[Index Market] Redis Write Error for ${symbol}:`,
-                        err.message,
+                        `[Index Market] Redis write failed for ${symbol}:`,
+                        error.message
                     );
                 });
             }
-        } catch (err) {
-            console.error("❌ Feed Parse Error:", err);
+
+            if (changed) {
+                lastMessageAt = Date.now();
+            }
+        } catch (error) {
+            console.error(
+                "[Index Market] Feed parsing error:",
+                error.message
+            );
         }
     });
 
-    streamer.on("error", (err) => {
-        console.error("🔴 UPSTOX ERROR:", err?.message || err);
+    activeStreamer.on("error", (error) => {
+        console.error(
+            "[Index Market] Upstox socket error:",
+            error?.message || error
+        );
+
+        // Do not reconnect immediately on every error event.
+        // The close event normally handles the reconnect path.
     });
 
-    streamer.on("close", () => {
-        console.log("🟡 UPSTOX CLOSED");
-        streamer = null;
+    activeStreamer.on("close", () => {
+        if (!isCurrentConnection()) return;
 
-        // Reconnect during market hours. If closed, the market-watch timer will
-        // start the feed automatically when the next open session begins.
+        console.warn("[Index Market] Upstox connection closed");
+
+        streamer = null;
+        starting = false;
+
         if (isMarketOpen()) {
-            console.log("♻ Reconnecting live feed in 2 seconds...");
-            scheduleReconnect(io, 2000);
-        } else {
-            console.log("🔴 Market Closed. Waiting for next market-open check.");
+            scheduleReconnect(io, currentGeneration);
         }
     });
 
     try {
-        streamer.connect();
-    } catch (err) {
-        console.error("🔴 UPSTOX CONNECT FAILED:", err?.message || err);
-        streamer = null;
-        if (isMarketOpen()) scheduleReconnect(io, 5000);
+        activeStreamer.connect();
+    } catch (error) {
+        retireConnection(
+            `Connect failed: ${error.message}`
+        );
     }
+}
+
+function getFeedHealth() {
+    const ageMs = lastMessageAt
+        ? Date.now() - lastMessageAt
+        : null;
+
+    return {
+        connected: Boolean(streamer),
+        marketOpen: isMarketOpen(),
+        lastMessageAt,
+        ageMs,
+        stale:
+            ageMs === null ||
+            ageMs > STALE_AFTER_MS,
+    };
 }
 
 module.exports = {
@@ -298,4 +422,5 @@ module.exports = {
     getLatestCache,
     loadCache,
     instruments,
+    getFeedHealth,
 };
