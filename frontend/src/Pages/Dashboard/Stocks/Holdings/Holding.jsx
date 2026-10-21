@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import axios from "axios";
+import {
+    invalidateDashboardCache,
+    notifyDashboardDataChanged,
+} from "../../../../utils/dashboardRequestCache";
 
 export default function Holdings() {
     const [summary, setSummary] = useState({
@@ -18,6 +23,7 @@ export default function Holdings() {
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [refreshing, setRefreshing] = useState(false);
 
     // SELL ORDER
     const [sellHolding, setSellHolding] = useState(null);
@@ -30,6 +36,19 @@ export default function Holdings() {
 
     useEffect(() => {
         loadUser();
+    }, []);
+
+    useEffect(() => {
+        const handleDashboardChange = (event) => {
+            const { type, source } = event.detail || {};
+            if (!["trade", "all"].includes(type) || source === "holdings") return;
+
+            invalidateDashboardCache();
+            fetchHoldings({ silent: true, force: true });
+        };
+
+        window.addEventListener("dashboard:data-changed", handleDashboardChange);
+        return () => window.removeEventListener("dashboard:data-changed", handleDashboardChange);
     }, []);
 
     async function loadUser() {
@@ -72,13 +91,15 @@ export default function Holdings() {
     }
 
     // LOAD HOLDINGS
-    async function fetchHoldings() {
+    async function fetchHoldings({ silent = false, force = false } = {}) {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
+            setError("");
 
             const token = localStorage.getItem("token");
 
-            const res = await axios.get("/api/holdings", {
+            const url = force ? `/api/holdings?__refresh=${Date.now()}` : "/api/holdings";
+            const res = await axios.get(url, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
 
@@ -109,7 +130,18 @@ export default function Holdings() {
 
             setError(err.response?.data?.message || "Unable to load holdings.");
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    }
+
+    async function refreshHoldings() {
+        if (refreshing) return;
+        setRefreshing(true);
+        invalidateDashboardCache();
+        try {
+            await fetchHoldings({ silent: true, force: true });
+        } finally {
+            setRefreshing(false);
         }
     }
 
@@ -204,8 +236,9 @@ export default function Holdings() {
 
             setSellQuantity("");
 
-            // Refresh holdings so the sold quantity/current values update immediately.
-            await fetchHoldings();
+            // Refresh mounted portfolio sections after a successful simulated SELL.
+            notifyDashboardDataChanged("trade", "holdings");
+            await fetchHoldings({ force: true });
 
             setTimeout(() => {
                 setSellHolding(null);
@@ -279,7 +312,7 @@ export default function Holdings() {
                 <div className="holdings-main">
                     {/* SUMMARY */}
                     <div className="summary-card">
-                        <div className="summary-top">
+                        <div className="summary-top" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
                             <div>
                                 <p className="summary-label" style={{ margin: "0", marginBottom: ".5rem", fontSize: "1rem", }}>
                                     Current Value
@@ -289,6 +322,15 @@ export default function Holdings() {
                                     {formatMoney(summary.currentValue)}
                                 </h1>
                             </div>
+                            <button
+                                type="button"
+                                onClick={refreshHoldings}
+                                disabled={refreshing}
+                                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "8px", padding: "10px 14px", border: "1px solid #ddd", borderRadius: "9px", background: "#fff", color: "#424242", cursor: refreshing ? "wait" : "pointer", opacity: refreshing ? 0.7 : 1 }}
+                            >
+                                <RefreshCw size={16} />
+                                {refreshing ? "Refreshing..." : "Refresh"}
+                            </button>
                         </div>
 
                         <div className="summary-grid">

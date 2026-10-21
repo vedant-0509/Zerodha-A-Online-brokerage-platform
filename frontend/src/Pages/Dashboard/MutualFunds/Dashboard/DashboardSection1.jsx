@@ -220,9 +220,7 @@ const DashboardSection1 = () => {
       */
 
     if (units > availableUnits) {
-      setSellError(
-        `You can sell maximum ${formatNumber(availableUnits, 8)} units.`,
-      );
+      setSellError(`You can sell maximum ${formatNumber(availableUnits, 8)} units.`);
 
       return;
     }
@@ -245,8 +243,7 @@ const DashboardSection1 = () => {
       ----------------------------------------------------------------------
       */
 
-    const schemeCode =
-      sellFund.schemeCode ?? sellFund.scheme_code ?? sellFund.schemeId;
+    const schemeCode = sellFund.schemeCode ?? sellFund.scheme_code ?? sellFund.schemeId;
 
     if (!schemeCode) {
       setSellError("Scheme code is missing.");
@@ -267,8 +264,7 @@ const DashboardSection1 = () => {
     setSellSuccess("");
 
     try {
-      const token =
-        localStorage.getItem("token") || localStorage.getItem("accessToken");
+      const token = localStorage.getItem("token") || localStorage.getItem("accessToken");
 
       /*
         ------------------------------------------------------------------
@@ -312,7 +308,7 @@ const DashboardSection1 = () => {
         */
 
       setSellSuccess(
-        `SELL successful: ${formatNumber(units, 8)} units for ${formatMoney(
+        `SELL successful: ${formatNumber(units, 2)} units for ${formatMoney(
           amount,
         )}.`,
       );

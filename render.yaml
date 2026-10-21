@@ -1,0 +1,23 @@
+# Separate, ephemeral NAV synchronization job. Render evaluates cron schedules in UTC.
+# 17:45 UTC Monday-Friday = 23:15 Asia/Kolkata Monday-Friday.
+services:
+  - type: cron
+    name: mutual-funds-nav-sync
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: node mutualfunds/cron-runner.js
+    schedule: "45 17 * * 1-5"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        sync: false
+      - key: MF_SYNC_CRON
+        value: "15 23 * * 1-5"
+      - key: MF_SYNC_TIMEZONE
+        value: Asia/Kolkata
+      - key: MF_SYNC_STARTUP_RECOVERY
+        value: "true"

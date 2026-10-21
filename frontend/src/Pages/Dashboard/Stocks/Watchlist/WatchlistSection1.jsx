@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import axios from "axios";
 import SearchModal from "../SearchModal";
+import {
+    invalidateDashboardCache,
+    notifyDashboardDataChanged,
+} from "../../../../utils/dashboardRequestCache";
 
 export default function WatchlistSection1() {
     const [stocks, setStocks] = useState([]);
@@ -9,6 +14,8 @@ export default function WatchlistSection1() {
     const [searchOpen, setSearchOpen] = useState(false);
     const [error, setError] = useState("");
     const [editMode, setEditMode] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [successMessage, setSuccessMessage] = useState("");
 
     // =====================================================
     // GET LOGGED-IN USER
@@ -16,6 +23,19 @@ export default function WatchlistSection1() {
 
     useEffect(() => {
         loadUser();
+    }, []);
+
+    useEffect(() => {
+        const handleDashboardChange = (event) => {
+            const { type, source } = event.detail || {};
+            if (!["watchlist", "all"].includes(type) || source === "watchlist") return;
+
+            invalidateDashboardCache();
+            fetchWatchlist({ silent: true, force: true });
+        };
+
+        window.addEventListener("dashboard:data-changed", handleDashboardChange);
+        return () => window.removeEventListener("dashboard:data-changed", handleDashboardChange);
     }, []);
 
     async function loadUser() {
@@ -55,14 +75,15 @@ export default function WatchlistSection1() {
     // FETCH WATCHLIST
     // =====================================================
 
-    async function fetchWatchlist() {
+    async function fetchWatchlist({ silent = false, force = false } = {}) {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             setError("");
 
             const token = localStorage.getItem("token");
 
-            const res = await axios.get("/api/watchlist", {
+            const url = force ? `/api/watchlist?__refresh=${Date.now()}` : "/api/watchlist";
+            const res = await axios.get(url, {
                 headers: token
                     ? { Authorization: `Bearer ${token}` }
                     : {},
@@ -74,7 +95,18 @@ export default function WatchlistSection1() {
 
             setError(err.response?.data?.message || "Unable to fetch watchlist");
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    }
+
+    async function refreshWatchlist() {
+        if (refreshing) return;
+        setRefreshing(true);
+        invalidateDashboardCache();
+        try {
+            await fetchWatchlist({ silent: true, force: true });
+        } finally {
+            setRefreshing(false);
         }
     }
 
@@ -110,8 +142,8 @@ export default function WatchlistSection1() {
 
             if (res.data?.success) {
                 setSearchOpen(false);
-
-                await fetchWatchlist();
+                notifyDashboardDataChanged("watchlist", "watchlist");
+                await fetchWatchlist({ force: true });
             }
         } catch (err) {
             console.error("Add Stock Error:", err);
@@ -126,7 +158,9 @@ export default function WatchlistSection1() {
 
     async function handleRemoveStock(stock) {
         try {
-            if (!localStorage.getItem("token")) {
+            const token = localStorage.getItem("token");
+
+            if (!token) {
                 alert("Please login first");
                 return;
             }
@@ -136,33 +170,31 @@ export default function WatchlistSection1() {
                 return;
             }
 
-            const confirmed = window.confirm(
-                `Remove ${stock.name || stock.symbol} from your watchlist?`,
-            );
-
-            if (!confirmed) {
-                return;
-            }
-
-            const token = localStorage.getItem("token");
+            // Remove the native browser confirmation popup.
+            setSuccessMessage("");
 
             await axios.delete(
-                `/api/watchlist/${encodeURIComponent(
-                    stock.instrument_key,
-                )}`,
+                `/api/watchlist/${encodeURIComponent(stock.instrument_key)}`,
                 {
-                    headers: token
-                        ? { Authorization: `Bearer ${token}` }
-                        : {},
-                },
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                }
             );
 
-            // Refresh after delete
-            await fetchWatchlist();
+            notifyDashboardDataChanged("watchlist", "watchlist");
+            await fetchWatchlist({ force: true });
+
+            // Show green success message.
+            setSuccessMessage(
+                `${stock.name || stock.symbol} removed from your watchlist.`
+            );
         } catch (err) {
             console.error("Remove Stock Error:", err);
-
-            alert(err.response?.data?.message || "Unable to remove stock");
+            alert(
+                err.response?.data?.message ||
+                "Unable to remove stock"
+            );
         }
     }
 
@@ -234,13 +266,24 @@ export default function WatchlistSection1() {
                 {/* SEARCH */}
 
                 <button onClick={() => setSearchOpen(true)} style={{ width: "400px", height: "50px", border: "1px solid #ddd", borderRadius: "9px", background: "#fff", display: "flex", alignItems: "center", padding: "0 15px", cursor: "text", color: "#777", fontSize: "16px", }}>
-                    <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "12px", color:"#616161"}} />
+                    <i className="fa-solid fa-magnifying-glass" style={{ marginRight: "12px", color: "#616161" }} />
                     Search your watchlist
                 </button>
 
                 {/* ACTIONS */}
 
-                <div style={{ display: "flex", gap: "12px", }}  className="btnonclick">
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", }} className="btnonclick">
+                    <button
+                        type="button"
+                        onClick={refreshWatchlist}
+                        disabled={refreshing}
+                        aria-label="Refresh watchlist"
+                        title="Refresh watchlist"
+                        style={{ height: "50px", padding: "0 15px", display: "inline-flex", alignItems: "center", gap: "8px", border: "1px solid #ddd", borderRadius: "9px", cursor: refreshing ? "wait" : "pointer", fontSize: "15px", color: "#424242", background: "#fff", opacity: refreshing ? 0.7 : 1 }}
+                    >
+                        <RefreshCw size={16} />
+                        {refreshing ? "Refreshing..." : "Refresh"}
+                    </button>
                     <button onClick={() => setSearchOpen(true)} style={{ height: "50px", padding: "0 15px", border: "1px solid #ddd", borderRadius: "9px", cursor: "pointer", fontSize: "15px", color: "#424242", }}>
                         <i className="fa-solid fa-plus" /> Add stocks
                     </button>
@@ -253,6 +296,28 @@ export default function WatchlistSection1() {
                 </div>
             </div>
 
+
+
+
+            {/* SUCCESS MESSAGE */}
+            {successMessage && (
+                <div role="status" style={{ margin: "16px 20px", padding: "12px 14px", border: "1px solid #A7F3D0", borderRadius: "9px", background: "#ECFDF5", color: "#00b386", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", }}>
+                    <span>
+                        <i className="fa-solid fa-circle-check" style={{ marginRight: "8px" }} />
+                        {successMessage}
+                    </span>
+
+                    <button
+                        type="button"
+                        onClick={() => setSuccessMessage("")}
+                        aria-label="Dismiss message"
+                        style={{ border: "none", background: "transparent", color: "#059669", fontSize: "20px", cursor: "pointer", }}>
+                        ×
+                    </button>
+                </div>
+            )}
+
+
             {/* =====================================================
                 TABLE
             ===================================================== */}
@@ -260,7 +325,7 @@ export default function WatchlistSection1() {
             <div style={{ overflowX: "auto", }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", }}>
                     <thead>
-                        <tr style={{ background: "#fafafa", cursor:"default"}}>
+                        <tr style={{ background: "#fafafa", cursor: "default" }}>
                             <th style={{ padding: "18px", textAlign: "left", color: "#777", width: editMode ? "23%" : "25%", }}>
                                 Company ({stocks.length})
                             </th>

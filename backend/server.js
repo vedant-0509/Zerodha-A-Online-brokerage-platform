@@ -374,6 +374,7 @@ function bridgeIndexSocket(client) {
   });
 
   let lastConnectionState = "disconnected";
+  let closingForFrontendDisconnect = false;
 
   upstream.on("connect", () => {
     lastConnectionState = "connected";
@@ -385,8 +386,16 @@ function bridgeIndexSocket(client) {
 
   upstream.on("disconnect", (reason) => {
     lastConnectionState = "disconnected";
+
+    if (closingForFrontendDisconnect && reason === "io client disconnect") {
+      console.log(
+        "[Central API] Index Market bridge closed because its frontend client disconnected.",
+      );
+      return;
+    }
+
     console.warn(
-      `[Central API] Index Market bridge disconnected (${reason}). Reconnecting...`,
+      `[Central API] Index Market bridge disconnected (${reason}). Socket.IO will retry if this was unexpected.`,
     );
   });
 
@@ -415,7 +424,10 @@ function bridgeIndexSocket(client) {
     }
   });
 
-  client.on("disconnect", () => upstream.close());
+  client.on("disconnect", () => {
+    closingForFrontendDisconnect = true;
+    upstream.close();
+  });
 }
 
 function bridgeDetailSocket(client) {
@@ -430,6 +442,7 @@ function bridgeDetailSocket(client) {
   });
 
   let lastConnectionState = "disconnected";
+  let closingForFrontendDisconnect = false;
 
   upstream.on("connect", () => {
     lastConnectionState = "connected";
@@ -440,8 +453,16 @@ function bridgeDetailSocket(client) {
 
   upstream.on("disconnect", (reason) => {
     lastConnectionState = "disconnected";
+
+    if (closingForFrontendDisconnect && reason === "io client disconnect") {
+      console.log(
+        "[Central API] Detail Stock bridge closed because its frontend client disconnected.",
+      );
+      return;
+    }
+
     console.warn(
-      `[Central API] Detail Stock bridge disconnected (${reason}). Reconnecting...`,
+      `[Central API] Detail Stock bridge disconnected (${reason}). Socket.IO will retry if this was unexpected.`,
     );
   });
 
@@ -489,7 +510,10 @@ function bridgeDetailSocket(client) {
     }
   });
 
-  client.on("disconnect", () => upstream.close());
+  client.on("disconnect", () => {
+    closingForFrontendDisconnect = true;
+    upstream.close();
+  });
 }
 
 io.on("connection", (client) => {
