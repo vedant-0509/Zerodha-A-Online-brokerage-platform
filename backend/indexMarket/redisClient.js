@@ -43,27 +43,6 @@
 
 // module.exports = {redis: client, connectRedis};
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const path = require("path");
 const dotenv = require("dotenv");
 const redis = require("redis");
@@ -75,11 +54,7 @@ const redis = require("redis");
 */
 
 dotenv.config({
-    path: path.join(
-        __dirname,
-        "..",
-        ".env"
-    ),
+  path: path.join(__dirname, "..", ".env"),
 });
 
 /*
@@ -88,9 +63,7 @@ dotenv.config({
 |--------------------------------------------------------------------------
 */
 
-const REDIS_URL =
-    process.env.REDIS_URL ||
-    "redis://127.0.0.1:6379";
+const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 /*
 |--------------------------------------------------------------------------
@@ -98,10 +71,9 @@ const REDIS_URL =
 |--------------------------------------------------------------------------
 */
 
-const client =
-    redis.createClient({
-        url: REDIS_URL,
-    });
+const client = redis.createClient({
+  url: REDIS_URL,
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -109,51 +81,25 @@ const client =
 |--------------------------------------------------------------------------
 */
 
-client.on(
-    "connect",
-    () => {
-        console.log(
-            "🔌 Connecting to Redis..."
-        );
-    }
-);
+client.on("connect", () => {
+  console.log("🔌 Connecting to Redis...");
+});
 
-client.on(
-    "ready",
-    () => {
-        console.log(
-            "✅ Redis Ready"
-        );
-    }
-);
+client.on("ready", () => {
+  console.log("✅ Redis Ready");
+});
 
-client.on(
-    "error",
-    (err) => {
-        console.error(
-            "❌ Redis Error:",
-            err.message
-        );
-    }
-);
+client.on("error", (err) => {
+  console.error("❌ Redis Error:", err.message);
+});
 
-client.on(
-    "end",
-    () => {
-        console.log(
-            "🔴 Redis Connection Closed"
-        );
-    }
-);
+client.on("end", () => {
+  console.log("🔴 Redis Connection Closed");
+});
 
-client.on(
-    "reconnecting",
-    () => {
-        console.log(
-            "♻ Reconnecting to Redis..."
-        );
-    }
-);
+client.on("reconnecting", () => {
+  console.log("♻ Reconnecting to Redis...");
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -161,8 +107,7 @@ client.on(
 |--------------------------------------------------------------------------
 */
 
-let connectingPromise =
-    null;
+let connectingPromise = null;
 
 /*
 |--------------------------------------------------------------------------
@@ -171,59 +116,46 @@ let connectingPromise =
 */
 
 async function connectRedis() {
-    /*
-     * Already ready.
-     */
-    if (
-        client.isReady
-    ) {
-        return client;
-    }
+  /*
+   * Already ready.
+   */
+  if (client.isReady) {
+    return client;
+  }
 
-    /*
-     * Already connecting.
-     */
-    if (
-        connectingPromise
-    ) {
-        return connectingPromise;
-    }
-
-    connectingPromise =
-        (async () => {
-            try {
-                /*
-                 * Redis v4/v5 requires
-                 * connect() before commands.
-                 */
-                if (
-                    !client.isOpen
-                ) {
-                    await client.connect();
-                }
-
-                /*
-                 * Verify connection.
-                 */
-                await client.ping();
-
-                console.log(
-                    "✅ Redis connection verified"
-                );
-
-                return client;
-            } finally {
-                if (
-                    client.isReady ||
-                    !client.isOpen
-                ) {
-                    connectingPromise =
-                        null;
-                }
-            }
-        })();
-
+  /*
+   * Already connecting.
+   */
+  if (connectingPromise) {
     return connectingPromise;
+  }
+
+  connectingPromise = (async () => {
+    try {
+      /*
+       * Redis v4/v5 requires
+       * connect() before commands.
+       */
+      if (!client.isOpen) {
+        await client.connect();
+      }
+
+      /*
+       * Verify connection.
+       */
+      await client.ping();
+
+      console.log("✅ Redis connection verified");
+
+      return client;
+    } finally {
+      if (client.isReady || !client.isOpen) {
+        connectingPromise = null;
+      }
+    }
+  })();
+
+  return connectingPromise;
 }
 
 /*
@@ -233,20 +165,13 @@ async function connectRedis() {
 */
 
 async function closeRedis() {
-    try {
-        if (
-            client.isOpen
-        ) {
-            await client.quit();
-        }
-    } catch (
-        error
-    ) {
-        console.error(
-            "Redis shutdown error:",
-            error.message
-        );
+  try {
+    if (client.isOpen) {
+      await client.quit();
     }
+  } catch (error) {
+    console.error("Redis shutdown error:", error.message);
+  }
 }
 
 /*
@@ -259,34 +184,16 @@ async function closeRedis() {
 |--------------------------------------------------------------------------
 */
 
-function hGetAll(
-    key
-) {
-    return client.hGetAll(
-        key
-    );
+function hGetAll(key) {
+  return client.hGetAll(key);
 }
 
-function hGet(
-    key,
-    field
-) {
-    return client.hGet(
-        key,
-        field
-    );
+function hGet(key, field) {
+  return client.hGet(key, field);
 }
 
-function hSet(
-    key,
-    field,
-    value
-) {
-    return client.hSet(
-        key,
-        field,
-        value
-    );
+function hSet(key, field, value) {
+  return client.hSet(key, field, value);
 }
 
 /*
@@ -313,112 +220,46 @@ function hSet(
 |--------------------------------------------------------------------------
 */
 
-function hgetall(
-    key,
-    callback
-) {
-    const promise =
-        client.hGetAll(
-            key
-        );
+function hgetall(key, callback) {
+  const promise = client.hGetAll(key);
 
-    if (
-        typeof callback ===
-        "function"
-    ) {
-        promise
-            .then(
-                (result) =>
-                    callback(
-                        null,
-                        result
-                    )
-            )
-            .catch(
-                (error) =>
-                    callback(
-                        error
-                    )
-            );
+  if (typeof callback === "function") {
+    promise
+      .then((result) => callback(null, result))
+      .catch((error) => callback(error));
 
-        return;
-    }
+    return;
+  }
 
-    return promise;
+  return promise;
 }
 
-function hget(
-    key,
-    field,
-    callback
-) {
-    const promise =
-        client.hGet(
-            key,
-            field
-        );
+function hget(key, field, callback) {
+  const promise = client.hGet(key, field);
 
-    if (
-        typeof callback ===
-        "function"
-    ) {
-        promise
-            .then(
-                (result) =>
-                    callback(
-                        null,
-                        result
-                    )
-            )
-            .catch(
-                (error) =>
-                    callback(
-                        error
-                    )
-            );
+  if (typeof callback === "function") {
+    promise
+      .then((result) => callback(null, result))
+      .catch((error) => callback(error));
 
-        return;
-    }
+    return;
+  }
 
-    return promise;
+  return promise;
 }
 
-function hset(
-    key,
-    field,
-    value,
-    callback
-) {
-    const promise =
-        client.hSet(
-            key,
-            field,
-            value
-        );
+function hset(key, field, value, callback) {
+  const promise = client.hSet(key, field, value);
 
-    if (
-        typeof callback ===
-        "function"
-    ) {
-        promise
-            .then(
-                (result) =>
-                    callback(
-                        null,
-                        result
-                    )
-            )
-            .catch(
-                (error) =>
-                    callback(
-                        error
-                    )
-            );
+  if (typeof callback === "function") {
+    promise
+      .then((result) => callback(null, result))
+      .catch((error) => callback(error));
 
-        return;
-    }
+    return;
+  }
 
-    return promise;
+  return promise;
 }
 
 /*
@@ -427,32 +268,16 @@ function hset(
 |--------------------------------------------------------------------------
 */
 
-function get(
-    key
-) {
-    return client.get(
-        key
-    );
+function get(key) {
+  return client.get(key);
 }
 
-function set(
-    key,
-    value,
-    options
-) {
-    return client.set(
-        key,
-        value,
-        options
-    );
+function set(key, value, options) {
+  return client.set(key, value, options);
 }
 
-function del(
-    key
-) {
-    return client.del(
-        key
-    );
+function del(key) {
+  return client.del(key);
 }
 
 /*
@@ -477,77 +302,67 @@ function del(
 */
 
 const redisClient = {
-    /*
-     * Connection state
-     */
-    get isOpen() {
-        return client.isOpen;
-    },
+  /*
+   * Connection state
+   */
+  get isOpen() {
+    return client.isOpen;
+  },
 
-    get isReady() {
-        return client.isReady;
-    },
+  get isReady() {
+    return client.isReady;
+  },
 
-    /*
-     * Connection
-     */
-    connect: () =>
-        connectRedis(),
+  /*
+   * Connection
+   */
+  connect: () => connectRedis(),
 
-    ping: () =>
-        client.ping(),
+  ping: () => client.ping(),
 
-    quit: () =>
-        closeRedis(),
+  quit: () => closeRedis(),
 
-    disconnect:
-        () => {
-            if (
-                typeof client.disconnect ===
-                "function"
-            ) {
-                return client.disconnect();
-            }
-        },
+  disconnect: () => {
+    if (typeof client.disconnect === "function") {
+      return client.disconnect();
+    }
+  },
 
-    /*
-     * String
-     */
-    get,
+  /*
+   * String
+   */
+  get,
 
-    set,
+  set,
 
-    del,
+  del,
 
-    /*
-     * Modern Hash API
-     */
-    hGetAll,
+  /*
+   * Modern Hash API
+   */
+  hGetAll,
 
-    hGet,
+  hGet,
 
-    hSet,
+  hSet,
+  multi() {
+    return client.multi();
+  },
 
-    /*
-     * Legacy Hash API
-     */
-    hgetall,
+  /*
+   * Legacy Hash API
+   */
+  hgetall,
 
-    hget,
+  hget,
 
-    hset,
+  hset,
 
-    /*
-     * Expose events where existing
-     * modules may need them.
-     */
-    on:
-        (
-            ...args
-        ) =>
-            client.on(
-                ...args
-            ),
+  /*
+   * Expose events where existing
+   * modules may need them.
+   */
+  on: (...args) => client.on(...args),
 };
 
 /*
@@ -557,15 +372,13 @@ const redisClient = {
 */
 
 module.exports = {
-    redis:
-        redisClient,
+  redis: redisClient,
 
-    redisClient:
-        redisClient,
+  redisClient: redisClient,
 
-    client,
+  client,
 
-    connectRedis,
+  connectRedis,
 
-    closeRedis,
+  closeRedis,
 };

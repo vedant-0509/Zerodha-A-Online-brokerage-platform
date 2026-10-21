@@ -1,8 +1,7 @@
 const axios = require("axios");
 
 const ACCESS_TOKEN =
-    process.env.UPSTOX_ANALYTIC_TOKEN ||
-    process.env.UPSTOX_ACCESS_TOKEN;
+    process.env.UPSTOX_ANALYTIC_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
 
 function getIndiaDate(daysOffset = 0) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -13,16 +12,14 @@ function getIndiaDate(daysOffset = 0) {
     }).formatToParts(new Date());
 
     const values = Object.fromEntries(
-        parts.map(({ type, value }) => [type, value])
+        parts.map(({ type, value }) => [type, value]),
     );
 
     const year = Number(values.year);
     const month = Number(values.month);
     const day = Number(values.day);
 
-    const date = new Date(
-        Date.UTC(year, month - 1, day + daysOffset)
-    );
+    const date = new Date(Date.UTC(year, month - 1, day + daysOffset));
 
     return [
         date.getUTCFullYear(),
@@ -33,15 +30,29 @@ function getIndiaDate(daysOffset = 0) {
 
 function getIndiaDateKey(date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
     }).formatToParts(date);
-    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    const values = Object.fromEntries(
+        parts.map(({ type, value }) => [type, value]),
+    );
     return `${values.year}-${values.month}-${values.day}`;
 }
 
 async function getDailyClose(instrumentKey, expectedTradingDate = null) {
     if (!ACCESS_TOKEN) {
         throw new Error("Upstox access token is missing");
+    }
+
+    if (
+        !expectedTradingDate ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(expectedTradingDate)
+    ) {
+        throw new Error(
+            `A valid expectedTradingDate is required for ${instrumentKey}`,
+        );
     }
 
     const today = getIndiaDate(0);
@@ -64,9 +75,7 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
         const candles = data?.data?.candles;
 
         if (!Array.isArray(candles) || candles.length === 0) {
-            throw new Error(
-                `No historical candles returned for ${instrumentKey}`
-            );
+            throw new Error(`No historical candles returned for ${instrumentKey}`);
         }
 
         const sortedCandles = candles
@@ -76,31 +85,23 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
                     candle.length >= 5 &&
                     candle[0] &&
                     Number.isFinite(Number(candle[4])) &&
-                    Number(candle[4]) > 0
+                    Number(candle[4]) > 0,
             )
-            .sort(
-                (a, b) =>
-                    new Date(b[0]).getTime() -
-                    new Date(a[0]).getTime()
-            );
+            .sort((a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
 
         if (sortedCandles.length === 0) {
-            throw new Error(
-                `No valid daily candles returned for ${instrumentKey}`
-            );
+            throw new Error(`No valid daily candles returned for ${instrumentKey}`);
         }
 
         // Select the candle for the expected session, not simply the newest
         // candle returned. If Upstox has not published today's final candle,
         // fail and let the scheduler retry instead of relabelling old data.
         const validTimestampCandles = sortedCandles.filter((candle) =>
-            Number.isFinite(new Date(candle[0]).getTime())
+            Number.isFinite(new Date(candle[0]).getTime()),
         );
-        const latest = expectedTradingDate
-            ? validTimestampCandles.find((candle) =>
-                getIndiaDateKey(new Date(candle[0])) === expectedTradingDate
-            )
-            : validTimestampCandles[0];
+        const latest = validTimestampCandles.find(
+            (candle) => getIndiaDateKey(new Date(candle[0])) === expectedTradingDate,
+        );
 
         if (!latest) {
             const newestDate = validTimestampCandles[0]
@@ -108,26 +109,36 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
                 : "none";
             throw new Error(
                 `No candle for expected trading date ${expectedTradingDate || "latest"} ` +
-                `for ${instrumentKey}; newest returned date is ${newestDate}`
+                `for ${instrumentKey}; newest returned date is ${newestDate}`,
             );
         }
 
         const timestamp = latest[0];
-        const previous = validTimestampCandles.find((candle) =>
-            new Date(candle[0]).getTime() < new Date(timestamp).getTime()
-        ) || null;
+        const previous =
+            validTimestampCandles.find(
+                (candle) =>
+                    new Date(candle[0]).getTime() < new Date(timestamp).getTime(),
+            ) || null;
         const open = Number(latest[1]);
         const high = Number(latest[2]);
         const low = Number(latest[3]);
         const close = Number(latest[4]);
-        if (![open, high, low, close].every(Number.isFinite) ||
-            open <= 0 || high <= 0 || low <= 0 || close <= 0 ||
-            high < Math.max(open, close, low) || low > Math.min(open, close, high)) {
-            throw new Error(`Invalid OHLC values for ${instrumentKey} on ${getIndiaDateKey(new Date(timestamp))}`);
+        if (
+            ![open, high, low, close].every(Number.isFinite) ||
+            open <= 0 ||
+            high <= 0 ||
+            low <= 0 ||
+            close <= 0 ||
+            high < Math.max(open, close, low) ||
+            low > Math.min(open, close, high)
+        ) {
+            throw new Error(
+                `Invalid OHLC values for ${instrumentKey} on ${getIndiaDateKey(new Date(timestamp))}`,
+            );
         }
 
         console.log(
-            `📊 ${instrumentKey} | Candle: ${timestamp} | Close: ${latest[4]} | Previous close: ${previous?.[4] ?? "N/A"}`
+            `📊 ${instrumentKey} | Candle: ${timestamp} | Close: ${latest[4]} | Previous close: ${previous?.[4] ?? "N/A"}`,
         );
 
         return {
@@ -144,7 +155,7 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
     } catch (err) {
         console.error(
             `❌ Historical close error for ${instrumentKey}:`,
-            err.response?.data || err.message
+            err.response?.data || err.message,
         );
 
         throw err;

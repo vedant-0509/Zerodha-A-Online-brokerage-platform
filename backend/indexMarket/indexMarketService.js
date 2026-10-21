@@ -1,4 +1,3 @@
-
 const UpstoxClient = require("upstox-js-sdk");
 const path = require("path");
 
@@ -11,8 +10,7 @@ require("dotenv").config({
 });
 
 const token =
-    process.env.UPSTOX_ANALYTIC_TOKEN ||
-    process.env.UPSTOX_ACCESS_TOKEN;
+    process.env.UPSTOX_ANALYTIC_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
 
 const instruments = [
     "NSE_INDEX|Nifty 50",
@@ -68,10 +66,7 @@ function normalizeTimestamp(value) {
 
 function getIndexFeed(value) {
     return (
-        value?.ff?.indexFF ||
-        value?.fullFeed?.indexFF ||
-        value?.indexFF ||
-        value
+        value?.ff?.indexFF || value?.fullFeed?.indexFF || value?.indexFF || value
     );
 }
 
@@ -91,7 +86,9 @@ function getLatestCache() {
 
     for (const [symbol, value] of Object.entries(marketCache)) {
         const updatedAt = Number(value?.updatedAt);
-        const ageMs = Number.isFinite(updatedAt) ? Math.max(0, now - updatedAt) : null;
+        const ageMs = Number.isFinite(updatedAt)
+            ? Math.max(0, now - updatedAt)
+            : null;
         const isLiveSource =
             value?.source === "upstox-websocket" && value?.freshness !== "cached";
         const isFresh = ageMs !== null && ageMs <= STALE_AFTER_MS;
@@ -127,10 +124,7 @@ async function loadCache() {
         try {
             const parsed = JSON.parse(value);
 
-            if (
-                parsed &&
-                Number.isFinite(Number(parsed.ltp))
-            ) {
+            if (parsed && Number.isFinite(Number(parsed.ltp))) {
                 marketCache[key] = {
                     ...parsed,
                     freshness: "cached",
@@ -139,13 +133,13 @@ async function loadCache() {
         } catch (error) {
             console.error(
                 `[Index Market] Invalid cached snapshot ${key}:`,
-                error.message
+                error.message,
             );
         }
     }
 
     console.log(
-        `✅ Restored ${Object.keys(marketCache).length} cached index values`
+        `✅ Restored ${Object.keys(marketCache).length} cached index values`,
     );
 }
 
@@ -161,14 +155,9 @@ function scheduleReconnect(io, expectedGeneration) {
 
     const delay = reconnectDelay;
 
-    reconnectDelay = Math.min(
-        reconnectDelay * 2,
-        MAX_RECONNECT_DELAY
-    );
+    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 
-    console.log(
-        `[Index Market] Reconnecting in ${delay}ms`
-    );
+    console.log(`[Index Market] Reconnecting in ${delay}ms`);
 
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -199,14 +188,14 @@ function initializeUpstoxFeed(io) {
 
     if (!isMarketOpen()) {
         console.log(
-            "[Index Market] Outside normal market hours; retaining cached snapshot."
+            "[Index Market] Outside normal market hours; retaining cached snapshot.",
         );
         return;
     }
 
     if (!token) {
         console.error(
-            "[Index Market] Missing UPSTOX_ANALYTIC_TOKEN / UPSTOX_ACCESS_TOKEN"
+            "[Index Market] Missing UPSTOX_ANALYTIC_TOKEN / UPSTOX_ACCESS_TOKEN",
         );
         return;
     }
@@ -224,39 +213,27 @@ function initializeUpstoxFeed(io) {
     let activeStreamer;
 
     try {
-        activeStreamer = new UpstoxClient.MarketDataStreamerV3(
-            [],
-            streamMode
-        );
+        activeStreamer = new UpstoxClient.MarketDataStreamerV3([], streamMode);
 
         streamer = activeStreamer;
     } catch (error) {
         starting = false;
         streamer = null;
 
-        console.error(
-            "[Index Market] Could not create streamer:",
-            error.message
-        );
+        console.error("[Index Market] Could not create streamer:", error.message);
 
         scheduleReconnect(io, currentGeneration);
         return;
     }
 
     function isCurrentConnection() {
-        return (
-            streamer === activeStreamer &&
-            generation === currentGeneration
-        );
+        return streamer === activeStreamer && generation === currentGeneration;
     }
 
     function retireConnection(errorMessage) {
         if (!isCurrentConnection()) return;
 
-        console.error(
-            "[Index Market] Retiring connection:",
-            errorMessage
-        );
+        console.error("[Index Market] Retiring connection:", errorMessage);
 
         streamer = null;
         starting = false;
@@ -279,7 +256,7 @@ function initializeUpstoxFeed(io) {
         if (!isMarketOpen()) {
             try {
                 activeStreamer.disconnect();
-            } catch (_) {}
+            } catch (_) { }
             streamer = null;
             return;
         }
@@ -288,19 +265,18 @@ function initializeUpstoxFeed(io) {
             activeStreamer.subscribe(instruments, streamMode);
 
             console.log(
-                `[Index Market] Connected; subscribed to ${instruments.length} instruments`
+                `[Index Market] Connected; subscribed to ${instruments.length} instruments`,
             );
 
             io.emit("market_snapshot", getLatestCache());
         } catch (error) {
-            retireConnection(
-                `Subscription failed: ${error.message}`
-            );
+            retireConnection(`Subscription failed: ${error.message}`);
         }
     });
 
     activeStreamer.on("message", (message) => {
         if (!isCurrentConnection()) return;
+        if (!isMarketOpen()) return;
 
         try {
             const feed =
@@ -325,19 +301,39 @@ function initializeUpstoxFeed(io) {
                 const feedTimestamp = normalizeTimestamp(ltpc.ltt);
 
                 if (ltp === null || ltp <= 0) continue;
-                if (
-                    previousClose === null ||
-                    previousClose <= 0
-                ) {
+                if (previousClose === null || previousClose <= 0) {
                     continue;
                 }
 
                 // Reject clearly future-dated feed timestamps.
-                const updatedAt = feedTimestamp || Date.now();
+                // Require a valid exchange timestamp so delayed or malformed ticks
+                // cannot silently be treated as fresh updates.
+                if (feedTimestamp === null) {
+                    console.warn(
+                        `[Index Market] Ignoring tick without a valid timestamp for ${symbol}`,
+                    );
+                    continue;
+                }
+
+                const updatedAt = feedTimestamp;
 
                 if (updatedAt > Date.now() + 60000) {
                     console.warn(
-                        `[Index Market] Ignoring future-dated tick for ${symbol}`
+                        `[Index Market] Ignoring future-dated tick for ${symbol}`,
+                    );
+                    continue;
+                }
+
+                // Reject ticks that are not newer than the value already cached.
+                const existing = marketCache[symbol];
+                const existingUpdatedAt = Number(existing?.updatedAt);
+
+                if (
+                    Number.isFinite(existingUpdatedAt) &&
+                    updatedAt <= existingUpdatedAt
+                ) {
+                    console.warn(
+                        `[Index Market] Ignoring stale/out-of-order tick for ${symbol}`,
                     );
                     continue;
                 }
@@ -347,8 +343,7 @@ function initializeUpstoxFeed(io) {
                     close: previousClose,
                     previousClose,
                     change: ltp - previousClose,
-                    changePercent:
-                        ((ltp - previousClose) / previousClose) * 100,
+                    changePercent: ((ltp - previousClose) / previousClose) * 100,
                     ohlc: indexData?.marketOHLC?.ohlc || [],
                     updatedAt,
                     source: "upstox-websocket",
@@ -363,26 +358,21 @@ function initializeUpstoxFeed(io) {
                     data: latest,
                 });
 
-                redisHSet(
-                    "market_snapshot",
-                    symbol,
-                    JSON.stringify(latest)
-                ).catch((error) => {
-                    console.error(
-                        `[Index Market] Redis write failed for ${symbol}:`,
-                        error.message
-                    );
-                });
+                redisHSet("market_snapshot", symbol, JSON.stringify(latest)).catch(
+                    (error) => {
+                        console.error(
+                            `[Index Market] Redis write failed for ${symbol}:`,
+                            error.message,
+                        );
+                    },
+                );
             }
 
             if (changed) {
                 lastMessageAt = Date.now();
             }
         } catch (error) {
-            console.error(
-                "[Index Market] Feed parsing error:",
-                error.message
-            );
+            console.error("[Index Market] Feed parsing error:", error.message);
         }
     });
 
@@ -413,25 +403,19 @@ function initializeUpstoxFeed(io) {
     try {
         activeStreamer.connect();
     } catch (error) {
-        retireConnection(
-            `Connect failed: ${error.message}`
-        );
+        retireConnection(`Connect failed: ${error.message}`);
     }
 }
 
 function getFeedHealth() {
-    const ageMs = lastMessageAt
-        ? Date.now() - lastMessageAt
-        : null;
+    const ageMs = lastMessageAt ? Date.now() - lastMessageAt : null;
 
     return {
         connected: Boolean(streamer),
         marketOpen: isMarketOpen(),
         lastMessageAt,
         ageMs,
-        stale:
-            ageMs === null ||
-            ageMs > STALE_AFTER_MS,
+        stale: ageMs === null || ageMs > STALE_AFTER_MS,
     };
 }
 
