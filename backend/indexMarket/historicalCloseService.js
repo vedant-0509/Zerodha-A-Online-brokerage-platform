@@ -103,26 +103,59 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
             (candle) => getIndiaDateKey(new Date(candle[0])) === expectedTradingDate,
         );
 
-        if (!latest) {
+        let selectedCandle = latest;
+
+        // Upstox's historical daily endpoint can lag behind the current session.
+        // For today's expected session only, fall back to the documented intraday
+        // daily candle endpoint; never relabel a previous session as today's close.
+        if (!selectedCandle && expectedTradingDate === today) {
+            const intradayUrl =
+                `https://api.upstox.com/v3/historical-candle/intraday/` +
+                `${encodeURIComponent(instrumentKey)}/days/1`;
+
+            const { data: intradayData } = await axios.get(intradayUrl, {
+                headers: {
+                    Authorization: `Bearer ${ACCESS_TOKEN}`,
+                    Accept: "application/json",
+                },
+                timeout: 15000,
+            });
+
+            const intradayCandles = intradayData?.data?.candles;
+            if (Array.isArray(intradayCandles)) {
+                selectedCandle = intradayCandles.find((candle) =>
+                    Array.isArray(candle) &&
+                    candle.length >= 5 &&
+                    candle[0] &&
+                    Number.isFinite(new Date(candle[0]).getTime()) &&
+                    getIndiaDateKey(new Date(candle[0])) === expectedTradingDate &&
+                    Number.isFinite(Number(candle[4])) &&
+                    Number(candle[4]) > 0
+                ) || null;
+            }
+        }
+
+        if (!selectedCandle) {
             const newestDate = validTimestampCandles[0]
                 ? getIndiaDateKey(new Date(validTimestampCandles[0][0]))
                 : "none";
             throw new Error(
                 `No candle for expected trading date ${expectedTradingDate || "latest"} ` +
-                `for ${instrumentKey}; newest returned date is ${newestDate}`,
+                `for ${instrumentKey}; newest historical date is ${newestDate}; ` +
+                `current-session fallback ${expectedTradingDate === today ? "also returned no valid candle" : "not applicable"}`,
             );
         }
 
-        const timestamp = latest[0];
+        const timestamp = selectedCandle[0];
         const previous =
             validTimestampCandles.find(
                 (candle) =>
                     new Date(candle[0]).getTime() < new Date(timestamp).getTime(),
             ) || null;
-        const open = Number(latest[1]);
-        const high = Number(latest[2]);
-        const low = Number(latest[3]);
-        const close = Number(latest[4]);
+        const open = Number(selectedCandle[1]);
+        const high = Number(selectedCandle[2]);
+        const low = Number(selectedCandle[3]);
+        const close = Number(selectedCandle[4]);
         if (
             ![open, high, low, close].every(Number.isFinite) ||
             open <= 0 ||
@@ -138,7 +171,7 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
         }
 
         console.log(
-            `📊 ${instrumentKey} | Candle: ${timestamp} | Close: ${latest[4]} | Previous close: ${previous?.[4] ?? "N/A"}`,
+            `📊 ${instrumentKey} | Candle: ${timestamp} | Close: ${selectedCandle[4]} | Previous close: ${previous?.[4] ?? "N/A"}`,
         );
 
         return {
@@ -147,7 +180,7 @@ async function getDailyClose(instrumentKey, expectedTradingDate = null) {
             high,
             low,
             close,
-            volume: Number(latest[5] || 0),
+            volume: Number(selectedCandle[5] || 0),
             timestamp,
             previousClose: previous ? Number(previous[4]) : null,
             previousTimestamp: previous?.[0] || null,
