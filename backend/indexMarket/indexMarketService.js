@@ -86,7 +86,24 @@ function getLtpc(value, indexData) {
 }
 
 function getLatestCache() {
-    return marketCache;
+    const now = Date.now();
+    const snapshot = {};
+
+    for (const [symbol, value] of Object.entries(marketCache)) {
+        const updatedAt = Number(value?.updatedAt);
+        const ageMs = Number.isFinite(updatedAt) ? Math.max(0, now - updatedAt) : null;
+        const isLiveSource =
+            value?.source === "upstox-websocket" && value?.freshness !== "cached";
+        const isFresh = ageMs !== null && ageMs <= STALE_AFTER_MS;
+
+        snapshot[symbol] = {
+            ...value,
+            ageMs,
+            freshness: isLiveSource && isFresh ? "live" : "stale",
+        };
+    }
+
+    return snapshot;
 }
 
 function redisHSet(key, field, value) {
@@ -370,13 +387,14 @@ function initializeUpstoxFeed(io) {
     });
 
     activeStreamer.on("error", (error) => {
-        console.error(
-            "[Index Market] Upstox socket error:",
-            error?.message || error
-        );
+        const message = error?.message || String(error);
+        console.error("[Index Market] Upstox socket error:", message);
 
-        // Do not reconnect immediately on every error event.
-        // The close event normally handles the reconnect path.
+        // Some SDK/transport failures emit error without a subsequent close.
+        // Retire this connection once; generation guards prevent duplicate retries.
+        if (isCurrentConnection() && isMarketOpen()) {
+            retireConnection(message);
+        }
     });
 
     activeStreamer.on("close", () => {

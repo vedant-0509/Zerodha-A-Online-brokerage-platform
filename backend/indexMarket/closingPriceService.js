@@ -85,22 +85,24 @@ async function updateClosingPricesFromUpstox(io = null) {
                 }
             );
 
-            const previousClose = previousRecord
+            const candidatePreviousClose = previousRecord
                 ? Number(previousRecord.closePrice)
                 : Number(candle.previousClose);
+            const hasPreviousClose =
+                Number.isFinite(candidatePreviousClose) && candidatePreviousClose > 0;
+            const effectivePreviousClose = hasPreviousClose
+                ? candidatePreviousClose
+                : closePrice;
 
             const latest = {
                 ltp: closePrice,
-                close: Number.isFinite(previousClose) ? previousClose : closePrice,
-                previousClose: Number.isFinite(previousClose)
-                    ? previousClose
-                    : closePrice,
-                change: Number.isFinite(previousClose)
-                    ? closePrice - previousClose
-                    : 0,
+                // `close` is retained as the previous-close field for existing UI compatibility.
+                close: effectivePreviousClose,
+                previousClose: effectivePreviousClose,
+                change: hasPreviousClose ? closePrice - effectivePreviousClose : 0,
                 changePercent:
-                    Number.isFinite(previousClose) && previousClose !== 0
-                        ? ((closePrice - previousClose) / previousClose) * 100
+                    hasPreviousClose
+                        ? ((closePrice - effectivePreviousClose) / effectivePreviousClose) * 100
                         : 0,
                 ohlc: [
                     {
@@ -148,7 +150,7 @@ async function updateClosingPricesFromUpstox(io = null) {
             }
 
             console.log(
-                `✅ ${instrumentKey} | Trading date: ${tradingDate} | Close: ${closePrice} | Previous close: ${latest.previousClose}`
+                `✅ ${instrumentKey} | Trading date: ${tradingDate} | Close: ${closePrice} | Previous close: ${hasPreviousClose ? effectivePreviousClose : "unavailable"}`
             );
         } catch (err) {
             failures.push({
