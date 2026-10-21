@@ -192,12 +192,27 @@ async function getTopReturns(req, res) {
 
     const schemes = db.collection("mfSchemes");
 
+    // Find the newest NAV date actually persisted in MongoDB. Do not mix
+    // older schemes into a "Top Returns Today" list when a provider record is
+    // missing or a sync is still catching up.
+    const latestNavRecord = await schemes
+      .find({
+        isActive: true,
+        navDate: { $exists: true, $ne: null },
+      })
+      .sort({ navDate: -1 })
+      .limit(1)
+      .next();
+
+    const latestNavDate = latestNavRecord?.navDate || null;
+
     /*
-     * Return all eligible mutual-fund schemes ordered by 1D return.
-     * Pagination is applied to individual funds, not fund houses.
+     * Return eligible schemes on the latest persisted NAV date, ordered by
+     * fresh 1D return. Pagination is applied to individual funds.
      */
     const baseMatch = {
       isActive: true,
+      ...(latestNavDate ? { navDate: latestNavDate } : {}),
       fundHouse: {
         $exists: true,
         $nin: ["", null],
@@ -210,6 +225,12 @@ async function getTopReturns(req, res) {
       },
       return1d: {
         $ne: null,
+      },
+      // Never advertise an old 1D return as a current top-return result.
+      // The sync pipeline repairs these fields from the same historical
+      // response used for longer-period returns.
+      $expr: {
+        $eq: ["$return1dNavDate", "$navDate"],
       },
     };
 
@@ -283,6 +304,7 @@ async function getTopReturns(req, res) {
       totalHouses: total,
       total: total,
       returned: rows.length,
+      navDate: latestNavDate,
       offset,
       limit,
       hasMore: offset + rows.length < total,

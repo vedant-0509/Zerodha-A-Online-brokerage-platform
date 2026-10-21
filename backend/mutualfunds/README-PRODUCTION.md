@@ -1,10 +1,10 @@
 # Mutual Fund Backend – Production/Development Sync Model
 
-## Database is the runtime truth source
+## MongoDB is the runtime truth source
 
-User-facing mutual-fund endpoints read from `mf_schemes`. Opening a fund does not call MFAPI/AMFI. The active DB row is the value returned to the frontend.
+User-facing mutual-fund endpoints read from the `mfSchemes` MongoDB collection. Opening a fund does not call MFAPI/AMFI. The active DB document is the value returned to the frontend.
 
-Only `is_active = 1` rows participate in the application and daily sync.
+Only documents with `isActive: true` participate in the application and daily sync.
 
 ## Daily flow
 
@@ -16,7 +16,7 @@ At 23:15 Asia/Kolkata on weekdays:
 4. Fetch historical NAV only for schemes whose `returns_for_nav_date` does not match the current `nav_date`.
 5. Calculate 1Y/3Y/5Y returns and risk from the same historical response.
 6. Calculate ratings from values already stored in MySQL; ratings do not make another historical-provider sweep.
-7. Store everything in MySQL.
+7. Store everything in MongoDB.
 8. Mark `mf_daily_sync` SUCCESS with the processed NAV date.
 
 ## Development startup behavior
@@ -37,7 +37,7 @@ If the server was down at 23:15, starting it after the scheduled time triggers a
 
 ## Concurrency
 
-MySQL advisory locks prevent concurrent NAV and full-sync jobs.
+MongoDB documents in `mfSyncLocks` prevent concurrent NAV and full-sync jobs.
 
 ## Required SQL migration
 
@@ -45,7 +45,7 @@ Run:
 
 `sql/005_mf_sync_state_upgrade.sql`
 
-against the `zerodha` database after deploying this backend.
+Only apply SQL migrations if they belong to a separate legacy deployment. This module's runtime repository uses MongoDB collections; do not run the SQL migration against MongoDB.
 
 ## Active fund universe
 

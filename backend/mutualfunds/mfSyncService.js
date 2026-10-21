@@ -298,63 +298,13 @@ async function syncLatestNAV() {
         }
 
         /*
-         * Detect stale previous NAV dates.
-         * Allow up to 4 calendar days for weekends and holidays.
+         * Do not perform one sequential historical-provider request per scheme
+         * here. After a missed sync, thousands of schemes can have a NAV gap
+         * greater than four days; fetching history inside this loop delays
+         * every subsequent currentNav update and can leave the UI stale for a
+         * long time. The concurrent returns stage below fetches each scheme's
+         * history once and repairs previousNav + 1D return from that response.
          */
-        const previousDateToCheck = isNewDate
-          ? existingDate
-          : parseNavDate(existing?.previousNavDate);
-
-        const previousGapDays = previousDateToCheck
-          ? (
-            Date.parse(`${fund.navDate}T00:00:00Z`) -
-            Date.parse(`${previousDateToCheck}T00:00:00Z`)
-          ) / 86400000
-          : null;
-
-        let previousNavRepaired = false;
-
-        if (
-          existingDate &&
-          (
-            !previousDateToCheck ||
-            previousGapDays > 4
-          )
-        ) {
-          try {
-            const history = await getSchemeHistory(
-              fund.schemeCode,
-              subtractDays(fund.navDate, 30),
-              subtractDays(fund.navDate, 1)
-            );
-
-            // Use the latest valid NAV strictly before the current NAV date.
-            const validHistory = history.filter(
-              (row) =>
-                row.date < fund.navDate &&
-                Number.isFinite(Number(row.nav)) &&
-                Number(row.nav) > 0
-            );
-
-            const previousRecord =
-              validHistory[validHistory.length - 1];
-
-            if (previousRecord) {
-              update.previousNav = Number(previousRecord.nav);
-              update.previousNavDate = previousRecord.date;
-              previousNavRepaired = true;
-            } else {
-              console.warn(
-                `[MF NAV] No valid previous NAV found for scheme ${fund.schemeCode}`
-              );
-            }
-          } catch (error) {
-            console.warn(
-              `[MF NAV] Historical NAV repair failed for scheme ${fund.schemeCode}: ${error.message}`
-            );
-          }
-        }
-
         /*
          * Recalculate 1D return using the selected previous NAV.
          */
@@ -381,10 +331,7 @@ async function syncLatestNAV() {
           comparisonGapDays > 0 &&
           comparisonGapDays <= 4;
 
-        if (
-          shouldRecalculateDerivedMetrics ||
-          previousNavRepaired
-        ) {
+        if (shouldRecalculateDerivedMetrics) {
           if (canCalculateDailyReturn) {
             update.return1d = Number(
               (
@@ -516,12 +463,28 @@ async function calculateSchemeReturns(scheme) {
 
   const returns = calculateReturns(history, currentNav, currentDate);
   const riskVolatility = calculateVolatility(history);
-  const risk = calculateRisk(riskVolatility, scheme.fundType, scheme.schemeCategory,);
+  const risk = calculateRisk(riskVolatility, scheme.fundType, scheme.schemeCategory);
+
+  // Reuse the same historical response to repair the previous NAV after a
+  // missed daily sync. This avoids a second provider request per scheme.
+  const previous = [...history]
+    .reverse()
+    .find((row) =>
+      row.date < currentDate &&
+      Number.isFinite(Number(row.nav)) &&
+      Number(row.nav) > 0
+    );
 
   return {
     success: true,
     currentDate,
     ...returns,
+    previousNav: previous ? Number(previous.nav) : null,
+    previousNavDate: previous ? previous.date : null,
+    return1d: previous
+      ? Number((((currentNav - Number(previous.nav)) / Number(previous.nav)) * 100).toFixed(4))
+      : null,
+    return1dNavDate: previous ? currentDate : null,
     risk,
     volatility: riskVolatility,
   };
@@ -672,6 +635,11 @@ async function syncAllReturns() {
                   return3y: result.return3Y,
 
                   return5y: result.return5Y,
+
+                  previousNav: result.previousNav,
+                  previousNavDate: result.previousNavDate,
+                  return1d: result.return1d,
+                  return1dNavDate: result.return1dNavDate,
 
                   returnsForNavDate: result.currentDate,
 

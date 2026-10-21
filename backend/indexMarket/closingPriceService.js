@@ -8,13 +8,16 @@ const { initDb, requireDb } = require("./db");
 async function updateClosingPricesFromUpstox(io = null) {
     console.log("📥 Fetching official closing prices from Upstox...");
 
-    // Make sure MongoDB is connected
-    await initDb();
-
-    const db = requireDb();
-    const collection = db.collection("indexClosingPrices");
-
     try {
+        // Make sure MongoDB is connected. Keep initialization inside the
+        // guarded block so failures are logged and propagated consistently.
+        await initDb();
+
+        const db = requireDb();
+        const collection = db.collection("indexClosingPrices");
+        const failures = [];
+        let succeeded = 0;
+
         for (const instrumentKey of instruments) {
             try {
                 // ------------------------------------------
@@ -23,7 +26,9 @@ async function updateClosingPricesFromUpstox(io = null) {
                 const candle = await getDailyClose(instrumentKey);
 
                 if (!candle) {
-                    console.log(`⚠ Skipping ${instrumentKey}: No candle found.`);
+                    const reason = "No historical candle returned";
+                    console.log(`⚠ Skipping ${instrumentKey}: ${reason}.`);
+                    failures.push({ instrumentKey, reason });
                     continue;
                 }
 
@@ -134,16 +139,53 @@ async function updateClosingPricesFromUpstox(io = null) {
                     );
                 });
 
+                succeeded += 1;
                 console.log(
-                    `✅ ${instrumentKey} | Today: ${candle.close} | Previous: ${previousClose}`,
+                    `✅ ${instrumentKey} | Close: ${candle.close} | Previous: ${previousClose}`,
                 );
             } catch (err) {
+                failures.push({
+                    instrumentKey,
+                    reason: err?.message || String(err),
+                });
                 console.error(`❌ ${instrumentKey}:`, err.message);
             }
         }
 
+        // Broadcast any refreshed values, even when some instruments failed.
+        // The success marker below is deliberately withheld for partial runs.
+        if (io) {
+            io.emit("market_snapshot", marketCache);
+            console.log("📡 Snapshot broadcasted.");
+        }
+
+        if (failures.length > 0 || succeeded !== instruments.length) {
+            const summary = failures
+                .map(({ instrumentKey, reason }) => `${instrumentKey}: ${reason}`)
+                .join("; ");
+
+            // Record diagnostics without claiming the whole update succeeded.
+            const attemptedAt = new Date().toISOString();
+            try {
+                await new Promise((resolve, reject) => {
+                    redis.hset("market_meta", "lastUpstoxPartialUpdate", attemptedAt, (err) =>
+                        err ? reject(err) : resolve(),
+                    );
+                });
+            } catch (metadataError) {
+                console.error(
+                    "[Index Market] Could not save partial-update diagnostic:",
+                    metadataError.message,
+                );
+            }
+
+            throw new Error(
+                `Closing-price update incomplete: succeeded=${succeeded}/${instruments.length}; ${summary}`,
+            );
+        }
+
         // ------------------------------------------
-        // Save today's update flag
+        // Save today's successful update flag
         // ------------------------------------------
         const today = new Date().toLocaleDateString("en-CA", {
             timeZone: "Asia/Kolkata",
@@ -156,16 +198,16 @@ async function updateClosingPricesFromUpstox(io = null) {
         });
 
         console.log(`✅ Saved closing update flag: ${today}`);
+        console.log(
+            `🎉 Official closing prices updated successfully (${succeeded}/${instruments.length}).`,
+        );
 
-        // ------------------------------------------
-        // Broadcast latest snapshot
-        // ------------------------------------------
-        if (io) {
-            io.emit("market_snapshot", marketCache);
-            console.log("📡 Snapshot broadcasted.");
-        }
-
-        console.log("🎉 Official closing prices updated successfully.");
+        return {
+            success: true,
+            succeeded,
+            total: instruments.length,
+            tradingDate: today,
+        };
     } catch (err) {
         console.error("❌ Closing price update failed.");
         console.error(err);
