@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
+#Copy .. So it will copy everything from the same place as the dockerfile, to “where i am now” in the container.
 COPY . .
 
 ARG REACT_APP_API_URL=/api

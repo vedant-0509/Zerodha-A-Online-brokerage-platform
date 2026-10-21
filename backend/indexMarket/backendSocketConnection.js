@@ -1,6 +1,15 @@
 import { io } from "socket.io-client";
 
-const socket = io("http://localhost:3000", {
+// Set REACT_APP_API_URL (or REACT_APP_BACKEND_URL) to the deployed Central
+// API origin in the frontend build environment. Localhost is only a fallback
+// for local development; browsers visiting Render cannot reach your PC's
+// localhost.
+const socketOrigin =
+    (typeof process !== "undefined" &&
+        (process.env.REACT_APP_API_URL || process.env.REACT_APP_BACKEND_URL)) ||
+    "http://localhost:3000";
+
+const socket = io(socketOrigin, {
     transports: ["websocket"],
     autoConnect: true,
     reconnection: true,

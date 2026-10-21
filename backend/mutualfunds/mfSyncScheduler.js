@@ -465,12 +465,14 @@ async function runPipeline(
       );
     }
 
-    if (
-      navResult.missingActive >
-      0
-    ) {
-      throw new Error(
-        `${navResult.missingActive} active schemes are missing from the provider report`
+    if (navResult.missingActive > 0) {
+      // Continue processing the schemes that did arrive in the provider
+      // report. A few missing scheme codes must not block current NAV updates,
+      // historical returns, risk and ratings for the entire active universe.
+      // The count is persisted in sync status so the missing schemes remain
+      // visible for investigation instead of silently appearing fresh.
+      console.warn(
+        `[MF NAV] Continuing with available provider records; ${navResult.missingActive} active schemes were absent and will remain visibly stale until resolved.`
       );
     }
 
@@ -498,12 +500,9 @@ async function runPipeline(
             navResult.updated || 0
           ),
         failed:
-          Number(
-            navResult.failed || 0
-          ) +
-          Number(
-            navResult.invalid || 0
-          ),
+          Number(navResult.failed || 0) +
+          Number(navResult.invalid || 0) +
+          Number(navResult.missingActive || 0),
       },
       navResult.latestActiveNavDate
     );
@@ -640,7 +639,7 @@ async function runPipeline(
             ratingResult.updated ||
               0
           ),
-        failed: 0,
+        failed: Number(navResult.missingActive || 0),
       },
       latestNavDate
     );
@@ -672,6 +671,12 @@ async function runPipeline(
     console.log(
       `[MF SYNC] NAV date: ${latestNavDate}`
     );
+
+    if (navResult.missingActive > 0) {
+      console.warn(
+        `[MF SYNC] Partial provider coverage: ${navResult.missingActive} active schemes missing from AMFI; sync status is SUCCESS for processed records, with recordsFailed showing the missing count.`
+      );
+    }
 
     console.log(
       "================================================"
