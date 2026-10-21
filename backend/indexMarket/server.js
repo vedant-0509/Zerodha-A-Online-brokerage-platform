@@ -12,7 +12,13 @@ const {
     getLatestCache,
     loadCache,
 } = require("./indexMarketService");
-const { isMarketOpen, isTradingDay, hasVerifiedHolidayCalendar, getIndiaDateKey, getIndiaMarketTime } = require("./isMarketOpen");
+const {
+    isMarketOpen,
+    isTradingDay,
+    hasVerifiedHolidayCalendar,
+    getIndiaDateKey,
+    getIndiaMarketTime,
+} = require("./isMarketOpen");
 const { startClosingPriceScheduler } = require("./scheduler");
 const { updateClosingPricesFromUpstox } = require("./closingPriceService");
 
@@ -76,18 +82,63 @@ async function bootstrap() {
         const minutes = Number(local.hour) * 60 + Number(local.minute);
         const afterRegularClose = minutes >= 15 * 60 + 30;
 
-        if (!marketOpen && hasVerifiedHolidayCalendar(now) && isTradingDay(now) && afterRegularClose) {
+        if (
+            !marketOpen &&
+            hasVerifiedHolidayCalendar(now) &&
+            isTradingDay(now) &&
+            afterRegularClose
+        ) {
             const lastUpstoxUpdate = await readLastUpstoxUpdate();
             if (lastUpstoxUpdate === dateKey) {
-                console.log(`[Index Market] Closing data already recorded for trading date ${dateKey}; serving cache.`);
+                console.log(
+                    `[Index Market] Closing marker: ${lastUpstoxUpdate}; expected: ${dateKey}`,
+                );
+
+                for (const key of ["NSE_INDEX|Nifty 50", "BSE_INDEX|SENSEX"]) {
+                    const raw = await new Promise((resolve, reject) => {
+                        redis.hget("market_snapshot", key, (err, value) => {
+                            if (err) return reject(err);
+                            resolve(value);
+                        });
+                    });
+
+                    try {
+                        const item = raw ? JSON.parse(raw) : null;
+
+                        console.log("[Index Market] Cached index diagnostic:", {
+                            key,
+                            ltp: item?.ltp,
+                            close: item?.close,
+                            previousClose: item?.previousClose,
+                            tradingDate: item?.tradingDate ?? null,
+                            updatedAt: item?.updatedAt ?? null,
+                            source: item?.source ?? null,
+                        });
+                    } catch {
+                        console.error(`[Index Market] Invalid cached JSON for ${key}`);
+                    }
+                }
+
+                console.log(
+                    `[Index Market] Closing data already recorded for trading date ${dateKey}; serving cache.`,
+                );
             } else {
-                console.log(`[Index Market] Post-close catch-up required for ${dateKey}; validating all daily candles.`);
-                updateClosingPricesFromUpstox(io, { expectedTradingDate: dateKey }).catch((error) => {
-                    console.error("[Index Market] Closing-price catch-up failed; cached snapshot retained:", error?.message || error);
+                console.log(
+                    `[Index Market] Post-close catch-up required for ${dateKey}; validating all daily candles.`,
+                );
+                updateClosingPricesFromUpstox(io, {
+                    expectedTradingDate: dateKey,
+                }).catch((error) => {
+                    console.error(
+                        "[Index Market] Closing-price catch-up failed; cached snapshot retained:",
+                        error?.message || error,
+                    );
                 });
             }
         } else if (!marketOpen) {
-            console.log("[Index Market] No post-close catch-up needed (pre-market, weekend, holiday, or before close). Serving cached snapshot.");
+            console.log(
+                "[Index Market] No post-close catch-up needed (pre-market, weekend, holiday, or before close). Serving cached snapshot.",
+            );
         }
     } catch (err) {
         console.error("❌ Bootstrap Error");
