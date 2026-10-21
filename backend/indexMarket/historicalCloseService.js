@@ -31,7 +31,15 @@ function getIndiaDate(daysOffset = 0) {
     ].join("-");
 }
 
-async function getDailyClose(instrumentKey) {
+function getIndiaDateKey(date) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function getDailyClose(instrumentKey, expectedTradingDate = null) {
     if (!ACCESS_TOKEN) {
         throw new Error("Upstox access token is missing");
     }
@@ -82,15 +90,40 @@ async function getDailyClose(instrumentKey) {
             );
         }
 
-        const latest = sortedCandles[0];
-        const previous = sortedCandles[1] || null;
+        // Select the candle for the expected session, not simply the newest
+        // candle returned. If Upstox has not published today's final candle,
+        // fail and let the scheduler retry instead of relabelling old data.
+        const validTimestampCandles = sortedCandles.filter((candle) =>
+            Number.isFinite(new Date(candle[0]).getTime())
+        );
+        const latest = expectedTradingDate
+            ? validTimestampCandles.find((candle) =>
+                getIndiaDateKey(new Date(candle[0])) === expectedTradingDate
+            )
+            : validTimestampCandles[0];
+
+        if (!latest) {
+            const newestDate = validTimestampCandles[0]
+                ? getIndiaDateKey(new Date(validTimestampCandles[0][0]))
+                : "none";
+            throw new Error(
+                `No candle for expected trading date ${expectedTradingDate || "latest"} ` +
+                `for ${instrumentKey}; newest returned date is ${newestDate}`
+            );
+        }
 
         const timestamp = latest[0];
-
-        if (!Number.isFinite(new Date(timestamp).getTime())) {
-            throw new Error(
-                `Invalid candle timestamp for ${instrumentKey}: ${timestamp}`
-            );
+        const previous = validTimestampCandles.find((candle) =>
+            new Date(candle[0]).getTime() < new Date(timestamp).getTime()
+        ) || null;
+        const open = Number(latest[1]);
+        const high = Number(latest[2]);
+        const low = Number(latest[3]);
+        const close = Number(latest[4]);
+        if (![open, high, low, close].every(Number.isFinite) ||
+            open <= 0 || high <= 0 || low <= 0 || close <= 0 ||
+            high < Math.max(open, close, low) || low > Math.min(open, close, high)) {
+            throw new Error(`Invalid OHLC values for ${instrumentKey} on ${getIndiaDateKey(new Date(timestamp))}`);
         }
 
         console.log(
@@ -99,10 +132,10 @@ async function getDailyClose(instrumentKey) {
 
         return {
             instrumentKey,
-            open: Number(latest[1]),
-            high: Number(latest[2]),
-            low: Number(latest[3]),
-            close: Number(latest[4]),
+            open,
+            high,
+            low,
+            close,
             volume: Number(latest[5] || 0),
             timestamp,
             previousClose: previous ? Number(previous[4]) : null,

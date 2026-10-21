@@ -1,67 +1,48 @@
 const cron = require("node-cron");
-const { updateClosingPricesFromUpstox } = require("./closingPriceService");
+const { updateClosingPricesFromUpstox, getIndiaDateKey } = require("./closingPriceService");
+const { isTradingDay, hasVerifiedHolidayCalendar, getIndiaMarketTime } = require("./isMarketOpen");
+const { redis } = require("./redisClient");
+
+function redisHGet(key, field) {
+    return new Promise((resolve, reject) => {
+        redis.hget(key, field, (err, value) => err ? reject(err) : resolve(value));
+    });
+}
 
 function startClosingPriceScheduler(io) {
     console.log("⏰ Closing Price Scheduler Started");
-    console.log("📅 Schedule: Monday-Friday at 3:35 PM (Asia/Kolkata)");
+    console.log("📅 Checks every 5 minutes from 3:35 PM to 5:55 PM IST on verified NSE trading days");
 
-    cron.schedule(
-        "35 15 * * 1-5",
-        async () => {
-            console.log("\n======================================");
-            console.log("🕒 Closing Price Scheduler Triggered");
-            console.log("======================================");
+    // Retry during the post-market window. The service itself validates the
+    // candle date and does not overwrite cached values with stale candles.
+    cron.schedule("*/5 15-17 * * 1-5", async () => {
+        const now = new Date();
+        const local = getIndiaMarketTime(now);
+        const minutes = Number(local.hour) * 60 + Number(local.minute);
+        if (minutes < 15 * 60 + 35 || minutes >= 18 * 60) return;
 
-            try {
-                const now = new Date();
-                const parts = new Intl.DateTimeFormat("en-GB", {
-                    timeZone: "Asia/Kolkata",
-                    weekday: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hourCycle: "h23",
-                }).formatToParts(now);
-                const local = Object.fromEntries(
-                    parts.map(({ type, value }) => [type, value])
-                );
-                const dateParts = new Intl.DateTimeFormat("en-CA", {
-                    timeZone: "Asia/Kolkata",
-                    year: "numeric",
-                    month: "2-digit",
-                    day: "2-digit",
-                }).formatToParts(now);
-                const dateValues = Object.fromEntries(
-                    dateParts.map(({ type, value }) => [type, value])
-                );
-                const today = `${dateValues.year}-${dateValues.month}-${dateValues.day}`;
-                const holidays = new Set(
-                    String(process.env.NSE_MARKET_HOLIDAYS || "")
-                        .split(",")
-                        .map((value) => value.trim())
-                        .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
-                );
-
-                if (local.weekday === "Sat" || local.weekday === "Sun" || holidays.has(today)) {
-                    console.log(`[Index Market] Skipping closing-price sync on non-trading date ${today}.`);
-                    return;
-                }
-
-                const result = await updateClosingPricesFromUpstox(io);
-
-                console.log(
-                    `✅ Closing-price sync completed: ${result.succeeded}/${result.total}`
-                );
-            } catch (err) {
-                console.error(
-                    "❌ Closing-price scheduler failed:",
-                    err?.message || err
-                );
-            }
-        },
-        {
-            timezone: "Asia/Kolkata",
+        const dateKey = getIndiaDateKey(now);
+        if (!hasVerifiedHolidayCalendar(now) || !isTradingDay(now)) {
+            console.log(`[Index Market] EOD sync skipped: ${dateKey} is a holiday/non-trading date or this year's official NSE calendar is not installed.`);
+            return;
         }
-    );
+
+        try {
+            const completedDate = await redisHGet("market_meta", "lastUpstoxUpdate");
+            if (completedDate === dateKey) {
+                console.log(`[Index Market] EOD close already complete for ${dateKey}; no retry needed.`);
+                return;
+            }
+
+            console.log(`[Index Market] EOD close attempt for ${dateKey} at ${local.hour}:${local.minute}`);
+            const result = await updateClosingPricesFromUpstox(io, { expectedTradingDate: dateKey });
+            console.log(`✅ Closing-price sync completed: ${result.succeeded}/${result.total}, trading date ${result.tradingDate}`);
+        } catch (err) {
+            // No success marker is written on an incomplete run, so the next
+            // 5-minute pass retries without clearing the existing snapshot.
+            console.error(`[Index Market] EOD attempt failed; will retry within window: ${err?.message || err}`);
+        }
+    }, { timezone: "Asia/Kolkata" });
 }
 
 module.exports = { startClosingPriceScheduler };

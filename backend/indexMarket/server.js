@@ -12,7 +12,7 @@ const {
     getLatestCache,
     loadCache,
 } = require("./indexMarketService");
-const { isMarketOpen, getIndiaDateKey } = require("./isMarketOpen");
+const { isMarketOpen, isTradingDay, hasVerifiedHolidayCalendar, getIndiaDateKey, getIndiaMarketTime } = require("./isMarketOpen");
 const { startClosingPriceScheduler } = require("./scheduler");
 const { updateClosingPricesFromUpstox } = require("./closingPriceService");
 
@@ -72,30 +72,22 @@ async function bootstrap() {
         // trading date, not the server's calendar date.
         const now = new Date();
         const dateKey = getIndiaDateKey(now);
-        const parts = new Intl.DateTimeFormat("en-GB", {
-            timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit",
-            minute: "2-digit", hourCycle: "h23",
-        }).formatToParts(now);
-        const local = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+        const local = getIndiaMarketTime(now);
         const minutes = Number(local.hour) * 60 + Number(local.minute);
-        const holidaySet = new Set(String(process.env.NSE_MARKET_HOLIDAYS || "")
-            .split(",").map((value) => value.trim()).filter(Boolean));
-        const normalTradingWeekday = local.weekday !== "Sat" && local.weekday !== "Sun";
         const afterRegularClose = minutes >= 15 * 60 + 30;
 
-        if (!marketOpen && normalTradingWeekday && !holidaySet.has(dateKey) && afterRegularClose) {
+        if (!marketOpen && hasVerifiedHolidayCalendar(now) && isTradingDay(now) && afterRegularClose) {
             const lastUpstoxUpdate = await readLastUpstoxUpdate();
-
             if (lastUpstoxUpdate === dateKey) {
                 console.log(`[Index Market] Closing data already recorded for trading date ${dateKey}; serving cache.`);
             } else {
-                console.log(`[Index Market] Post-close catch-up required for ${dateKey}; fetching latest daily candles.`);
-                updateClosingPricesFromUpstox().catch((error) => {
-                    console.error("[Index Market] Closing-price catch-up failed:", error?.message || error);
+                console.log(`[Index Market] Post-close catch-up required for ${dateKey}; validating all daily candles.`);
+                updateClosingPricesFromUpstox(io, { expectedTradingDate: dateKey }).catch((error) => {
+                    console.error("[Index Market] Closing-price catch-up failed; cached snapshot retained:", error?.message || error);
                 });
             }
         } else if (!marketOpen) {
-            console.log("[Index Market] No post-close catch-up needed at startup (pre-market, weekend, holiday, or before close). Serving cached snapshot.");
+            console.log("[Index Market] No post-close catch-up needed (pre-market, weekend, holiday, or before close). Serving cached snapshot.");
         }
     } catch (err) {
         console.error("❌ Bootstrap Error");
