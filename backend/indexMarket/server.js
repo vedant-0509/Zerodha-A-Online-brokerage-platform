@@ -5,6 +5,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
+const { isClosingSnapshotComplete } = require("./closingSnapshotValidator");
 
 const { connectRedis, redis } = require("./redisClient");
 const {
@@ -89,48 +90,22 @@ async function bootstrap() {
             afterRegularClose
         ) {
             const lastUpstoxUpdate = await readLastUpstoxUpdate();
-            if (lastUpstoxUpdate === dateKey) {
+            const snapshotComplete = await isClosingSnapshotComplete(dateKey);
+
+            if (lastUpstoxUpdate === dateKey && snapshotComplete) {
                 console.log(
-                    `[Index Market] Closing marker: ${lastUpstoxUpdate}; expected: ${dateKey}`,
-                );
-
-                for (const key of ["NSE_INDEX|Nifty 50", "BSE_INDEX|SENSEX"]) {
-                    const raw = await new Promise((resolve, reject) => {
-                        redis.hget("market_snapshot", key, (err, value) => {
-                            if (err) return reject(err);
-                            resolve(value);
-                        });
-                    });
-
-                    try {
-                        const item = raw ? JSON.parse(raw) : null;
-
-                        console.log("[Index Market] Cached index diagnostic:", {
-                            key,
-                            ltp: item?.ltp,
-                            close: item?.close,
-                            previousClose: item?.previousClose,
-                            tradingDate: item?.tradingDate ?? null,
-                            updatedAt: item?.updatedAt ?? null,
-                            source: item?.source ?? null,
-                        });
-                    } catch {
-                        console.error(`[Index Market] Invalid cached JSON for ${key}`);
-                    }
-                }
-
-                console.log(
-                    `[Index Market] Closing data already recorded for trading date ${dateKey}; serving cache.`,
+                    `[Index Market] Valid closing snapshot confirmed for ${dateKey}; serving cache.`,
                 );
             } else {
-                console.log(
-                    `[Index Market] Post-close catch-up required for ${dateKey}; validating all daily candles.`,
+                console.warn(
+                    `[Index Market] Closing marker/snapshot mismatch for ${dateKey}; attempting validated refresh.`,
                 );
+
                 updateClosingPricesFromUpstox(io, {
                     expectedTradingDate: dateKey,
                 }).catch((error) => {
                     console.error(
-                        "[Index Market] Closing-price catch-up failed; cached snapshot retained:",
+                        "[Index Market] Closing-price catch-up failed; existing snapshot retained:",
                         error?.message || error,
                     );
                 });
